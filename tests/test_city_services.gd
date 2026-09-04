@@ -238,35 +238,83 @@ func test_the_founding_assistance_tapers_on_a_clock() -> void:
 func test_a_level_up_grant_is_paid_once_per_rung() -> void:
 	var curves := _curves()
 	assert_eq(curves.level_up_grant(0), 0, "the founding level celebrates nothing")
-	assert_eq(curves.level_up_grant(1), 2500)
-	# Rungs 5 and 6 were re-derived in Wave 17 by doc 03 §2.5a's OWN rule — half
-	# of what the next chapter asks you to buy — because rung 5's basis is an
-	# upgrade and doc 93 §Y7 re-priced the upgrade ladder (73,572 → 58,350).
-	assert_eq(curves.level_up_grant(5), 29000)
-	assert_eq(curves.level_up_grant(6), 65000)
-	assert_eq(curves.level_up_grant(7), 0,
+	# RE-SCALED in Wave 22 (doc 92 §61) to the scale the player asked for —
+	# "each level … a few hundred thousand dollars", and $5,000,000 for the
+	# capstone. The curve between the two anchors is geometric at 1.08616, and
+	# the anchors themselves are the two claims worth asserting here.
+	assert_eq(curves.level_up_grant(1), 45000)
+	assert_eq(curves.level_up_grant(5), 215000)
+	assert_eq(curves.level_up_grant(6), 325000)
+	# **The ratio is the derivation** (doc 92 §61.2): 1.5 = sqrt(2.25), doc 09
+	# §2.11's own rung ratio square-rooted, so the grant grows at half the
+	# exponent the city does. Asserted as the RUN rather than as six literals,
+	# because six literals are six chances for a retune to land on five of them.
+	for level in range(1, 6):
+		var exact := 325000.0 / pow(1.5, float(6 - level))
+		assert_almost_eq(float(curves.level_up_grant(level)), exact,
+				0.06 * exact,
+				("rung %d is %d; the run 325,000 / 1.5^%d puts it at %.0f, and the "
+						+ "published figure rounds to a readable one")
+						% [level, curves.level_up_grant(level), 6 - level, exact])
+	assert_eq(curves.level_up_grant(7), 5000000,
+			"the capstone rung pays the graduation the player named")
+	assert_eq(curves.level_up_grant(8), 0,
 			"a level above the published ladder pays nothing rather than "
 			+ "extrapolating itself")
+	# **The curve rises and never doubles back**, which is the shape assertion
+	# the old six-cell table never had and which a re-scale most needs: a rung
+	# that paid less than the one below it would be the game asking the player
+	# to stop climbing.
+	var previous_grant := 0
+	for level in range(1, GoalSystem.top_level() + 1):
+		var grant := curves.level_up_grant(level)
+		assert_true(grant > previous_grant,
+				"rung %d pays more than rung %d" % [level, level - 1])
+		previous_grant = grant
+	# **Every rung of the ladder has a grant row**, asserted against
+	# `GoalSystem.top_level()` rather than against a number, because this
+	# project's signature defect is a level the ladder can reach that no data row
+	# describes. A seventh curriculum rung with a six-cell grant table would have
+	# celebrated the hardest level in the game by paying nothing.
+	assert_eq(GoalSystem.top_level(),
+			(curves.grants()["LEVEL_UP_GRANT_BY_CITY_LEVEL"] as Array).size() - 1,
+			"the grant table has exactly one row per curriculum rung, plus the "
+			+ "founding level's zero")
+	assert_eq(GoalSystem.top_level(), ProgressionSystem.city_level_pop().size() - 1,
+			"and the population ladder reaches the same top rung — "
+			+ "`grant_level` clamps to it, so a curriculum rung above it could "
+			+ "be earned in `GoalSystem` and never paid")
 
+	# **The runtime half, on the CURRICULUM's transition** (Wave 22, ruling
+	# 93 §AU6). The grant used to be paid from `publish_progression` on
+	# `city_level_changed`; it is now paid when doc 09 §2.14's objectives for a
+	# rung are met, because a grant is payment for a lesson and the population
+	# backstop teaches none.
 	var sim := CitySim.boot_from_files(SEED)
 	var before := sim.treasury.balance
 	var paid: Array[int] = []
 	sim.bus.drain()
-	# One move that crosses TWO rungs: both are paid, because doc 93 §G1's
-	# `max()` can jump a level and a rung that was earned must not be skipped.
-	sim.publish_progression([{"type": "city_level_changed", "from": 0, "to": 2}])
+	sim._pay_level_up_grant(1)
+	sim._pay_level_up_grant(2)
 	for event_variant in sim.bus.drain():
 		var event: Dictionary = event_variant
 		if String(event.get("type", "")) == "level_up_grant_paid":
 			paid.append(int(event["amount"]))
-	assert_eq(paid, [2500, 7000] as Array[int], "both rungs, in order")
-	assert_eq(sim.treasury.balance, before + 9500)
+	assert_eq(paid, [45000, 65000] as Array[int], "both rungs, in order")
+	assert_eq(sim.treasury.balance, before + 110000)
 
-	# And a rung is never sold twice — `city_level` is monotone, so a repeat
-	# event for ground already covered pays nothing.
+	# **The population route pays NOTHING**, which is the whole of the Wave-22
+	# change and the reason doc 92's balance matrix does not move: every scripted
+	# agent in it climbs this ladder and none of them can read a goals sheet.
 	var after := sim.treasury.balance
-	sim.publish_progression([{"type": "city_level_changed", "from": 2, "to": 2}])
-	assert_eq(sim.treasury.balance, after, "a rung already crossed pays nothing")
+	sim.publish_progression([{"type": "city_level_changed", "from": 0, "to": 3}])
+	assert_eq(sim.treasury.balance, after,
+			"a city level crossed on the population ladder pays no celebration "
+			+ "grant — the level is a permission, the grant is a lesson's fee")
+	# …and it still opens an ERA, because an era IS a city level (doc 93 §AP4)
+	# and a permission may not depend on how the level was reached.
+	assert_eq(sim.treasury.relief_era_level, 3,
+			"the era still opens on the composed level")
 
 
 # ============== 50 the dispatcher's premium grows with the city (Wave 19)
@@ -308,8 +356,14 @@ func test_the_dispatchers_premium_grows_with_the_city_and_nothing_else_does() ->
 				"the curve at level %d is the authored one" % level)
 		assert_true(mult > previous, "and it is monotone at level %d" % level)
 		previous = mult
+	# The top of the ladder is READ, not written down: it was 6 and the assertion
+	# said `6.00`, and Wave 22's seventh rung moved the answer to 6.90 without
+	# moving one authored number (`base` 1.50 + `k` 0.90 × 6). A gate that names
+	# a rung by number goes stale on the next wave that adds one.
 	assert_almost_eq(curves.manual_dispatch_mult_at_level(GoalSystem.top_level()),
-			6.00, 1e-9, "and reaches 6.00x at the top of doc 09's ladder")
+			base + k * float(GoalSystem.top_level() - 1), 1e-9,
+			"and reaches the authored curve's own value at the top of doc 09's "
+			+ "ladder — 6.90x at the seven-rung ladder Wave 22 published")
 
 	# (3) and (4): the runtime, not the table. A booted city, one incident type
 	# with a PRICED target and one with an unpriced one, at level 1 and at the top

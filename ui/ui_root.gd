@@ -1437,9 +1437,38 @@ func _cue_events(raised: Array) -> void:
 ## ladder with no rung: this raises the toast **and** marks the build cards the
 ## level just unlocked so the reward is visible on the thing that was rewarded.
 ##
+## **And since Wave 22 it says what it paid** (99-PA PA-44). The celebration
+## grant is now the largest single receipt of a session — $215,000 at the first
+## rung and $5,000,000 at the last — and until this wave no foreground surface
+## carried the amount: the toast said *"new buildings unlocked"* while the money
+## landed silently in a log line. The figure comes off the sim's own
+## `level_up_grant_paid` events **in the same batch** rather than from a second
+## read of `data/economy.json`, because a toast that predicted a payment could
+## be right about the table and wrong about the city.
+##
+## It is ONE toast, not two, and that is the point: doc 12 §2.15's toasts replace
+## each other, so a separate grant toast would have eaten the level-up toast a
+## frame later and the rung would have gone unnamed. The money is felt on the
+## §2.21 payday surfaces instead — the treasury chip flashes and the coin cue
+## sounds through `data/audio.json`'s existing `level_fanfare` rule.
+##
 ## Guarded on the level itself rather than on the event, so a replayed batch, a
 ## save reload or a doubled feed cannot celebrate twice.
 func _check_city_level(batch: Array) -> void:
+	# Grants first, because the toast below needs them and both events arrive in
+	# the same batch: `CitySim.publish_progression` emits `city_level_changed`
+	# and then pays, on the one call. A rung with no grant row leaves the
+	# dictionary empty and the toast falls back to its old copy.
+	var grant_by_level: Dictionary = {}
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var paid: Dictionary = entry
+		if StringName(str(paid.get("type", ""))) != &"level_up_grant_paid":
+			continue
+		var paid_level := int(paid.get("city_level", 0))
+		grant_by_level[paid_level] = int(grant_by_level.get(paid_level, 0)) \
+				+ int(paid.get("amount", 0))
 	for entry: Variant in batch:
 		if not (entry is Dictionary):
 			continue
@@ -1456,8 +1485,20 @@ func _check_city_level(batch: Array) -> void:
 		var unlocked: PackedStringArray = []
 		if build_sheet != null:
 			unlocked = build_sheet.reveal_unlocked(level)
-		push_toast(UIWidgets.t_args(config, "ui_toast_city_level", {"level": level}),
-				HudModel.STATE_NORMAL)
+		var grant := int(grant_by_level.get(level, 0))
+		if grant > 0:
+			push_toast(UIWidgets.t_args(config, "ui_toast_city_level_grant",
+					{"level": level, "amount": HudModel.money_exact(grant)}),
+					HudModel.STATE_NORMAL)
+			# §2.21's payday surfaces, spent on the largest receipt in the game.
+			# The chip pulse is the only thing that makes a treasury jump of
+			# $5,000,000 legible on a bar the eye is not looking at.
+			if hud != null:
+				hud.flash_chip(StringName(HudModel.CHIP_TREASURY),
+						street.chip_flash_s() if street != null else 0.9)
+		else:
+			push_toast(UIWidgets.t_args(config, "ui_toast_city_level",
+					{"level": level}), HudModel.STATE_NORMAL)
 		city_level_changed.emit(level, unlocked)
 
 

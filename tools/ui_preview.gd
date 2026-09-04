@@ -76,6 +76,12 @@ const SCREENS: Array[String] = [
 	"alerts", "alerts_empty",
 	"overlay", "overlay_police", "overlay_fire", "overlay_folded", "overlay_power",
 	"goals", "goals_late", "goals_done",
+	# Wave 22's capstone rung (doc 09 §2.14.2 level 7, doc 92 §61). TWELVE
+	# objective rows against a previous maximum of five, and a reward card whose
+	# only line is $5,000,000 — the two ways this level could break a 360 dp
+	# sheet, in one photograph. Same commit as the level, which is A91-D-28's
+	# lesson applied on the way in.
+	"goals_capstone",
 	# Wave 19's commissions band (doc 12 §2.19 D-90), in the two states that
 	# decide whether it is a decision or a wall: an OFFER on the board with the
 	# money on the ACCEPT button, and a commission FINISHED with the primary
@@ -904,9 +910,16 @@ func _apply(screen: String) -> void:
 			# their first session, and the one the copy is written for.
 			_goals_at(0, 1)
 		"goals_late":
-			# Level 5's four objectives with two of them landed: the widest the
-			# sheet ever gets, and where its reward card is longest.
+			# Level 5's four objectives with two of them landed, and where the
+			# reward card is longest in UNLOCK lines. It stopped being the widest
+			# sheet in Wave 22 — `goals_capstone` below is — but it is still the
+			# state the mid-game copy is written for.
 			_goals_at(4, 2)
+		"goals_capstone":
+			# Level 7 with three of its twelve rows ticked (doc 09 §2.14.2). The
+			# tallest objective list the sheet can be asked to draw, over the
+			# only reward card in the game whose single line is money.
+			_goals_at(6, 3)
 		"goals_contract":
 			# The board with something on it and nothing taken: an offer, priced,
 			# with a client and a window, and the ACCEPT button carrying the
@@ -924,7 +937,14 @@ func _apply(screen: String) -> void:
 		"goals_done":
 			# The curriculum finished. The chip has left the bar and the sheet is
 			# a payoff card — the one state with no objective rows at all.
-			_goals_at(5, 0)
+			#
+			# Asked of `GoalSystem.top_level()` rather than written down, because
+			# the literal `5` this line used to carry became a lie the moment
+			# Wave 10 authored a sixth rung and this state quietly started
+			# photographing an ACTIVE level 6 instead of a finished curriculum.
+			# A preview that names a rung by number goes stale on the next wave
+			# that adds one; a preview that asks the data cannot.
+			_goals_at(GoalSystem.top_level(), 0)
 		"settings":
 			# Doc 03 §2.9's read-only city block only exists once a city has been
 			# reported, and the shell reports it — so the preview reports one too,

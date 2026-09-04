@@ -2544,3 +2544,17 @@ player says so.
 **The deck is 72 states**, the two new ones included; `--screen=all --audit
 --strict` exits 0 at 412×915, 360×800, 880×400 and at 360×800 with
 `--text-scale=1.3 --large-targets`.
+
+### Wave 22 delta — the level-up moment names the money, and the capstone rung fits (2026-09-04)
+
+*Two rows. Ruling: doc 93 §AU. Money: doc 03 §2.5a, doc 92 §61. Defect closed:
+99-PA PA-44, open since 2026-09-01.*
+
+| id | change | doc ref | why |
+|---|---|---|---|
+| D-95 | **The level-up toast carries the amount, and the treasury chip feels it.** `ui_root._check_city_level` now walks the batch for `level_up_grant_paid` FIRST, sums the amount for the rung that just landed, and pushes `ui_toast_city_level_grant` — *"City level 3 — $95,000 paid into the treasury"* — instead of `ui_toast_city_level`'s *"new buildings unlocked"*. §2.21's payday surfaces are spent on it: `hud.flash_chip(CHIP_TREASURY)`, and `data/audio.json`'s existing `level_fanfare` rule on `city_level_changed`. **ONE toast, not two**, and that is the whole design: §2.15's toasts replace each other, so a separate grant toast would have eaten the level-up toast a frame later and the rung would have gone unnamed. A rung with no grant row (there is none today) falls back to the old copy. | §2.13, §2.15, §2.21, doc 03 §2.5a | 99-PA PA-44: *"the level-up grant arrives with no amount on any foreground surface; the toast says 'new buildings unlocked'."* It was $2,500–$65,000 then. Wave 22 makes it **$45,000–$5,000,000**, which turns a P2 nicety into the largest unlabelled number in the game. The figure comes off the sim's own event and not from a second read of `data/economy.json`, because a toast that predicted a payment could be right about the table and wrong about the city. |
+| D-96 | **The reward card READS the grant, first line, on every rung.** `GoalsModel.reward()` prepends `ui_goals_reward_grant` — *"$5,000,000 council grant"* — from `CostCurves.level_up_grant(level)`, alongside the three reads it already makes (build cards at that `min_city_level`, the upgrade tier, the land). `data/ui.json.goals.max_reward_rows` **4 → 5**, so the number of UNLOCK lines the card can print is unchanged. One preview state, **`goals_capstone`, same commit**; `goals_done` stops naming rung 5 by number and asks `GoalSystem.top_level()` instead. | §2.19, doc 09 §2.14.2, ruling 93 §G3 | **Ruling 93 §G3 was about to bite for real:** *a level whose reward card is empty is a number, not a goal*, and **nothing in `data/buildings.json` unlocks at city level 7** — so doc 09's new capstone rung would have shown `ui_goals_reward_none` over a $5,000,000 payment. The money is the unlock, so the card says so. It also makes the promise and the payment the same read: D-95's toast and this card both resolve `level_up_grant`, and neither can drift from the other. The capstone's twelve objective rows are the tallest list this sheet has ever drawn — five was the previous maximum — which is what `goals_capstone` exists to photograph. |
+
+**The deck is 83 states**, `goals_capstone` included; `--screen=all --audit
+--strict` exits 0 at 412×915, 360×800, 880×400 and at 360×800 with
+`--text-scale=1.3 --large-targets`.

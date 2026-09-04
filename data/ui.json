@@ -116,8 +116,8 @@
 	},
 	"goals": {
 		"_comment": "S14 (doc 12 §2.19) — the goals SHEET's own tunables. The curriculum itself is data/goals.json (doc 09 §8.3) and nothing about it lives here.",
-		"_max_reward_rows": "How many unlock lines the reward card prints before it stops. The lines are READ — build cards, the upgrade tier, land — so a rung that happens to open nine things would otherwise push the objectives off a 360 dp display.",
-		"max_reward_rows": 4
+		"_max_reward_rows": "How many lines the reward card prints before it stops. The lines are READ — the celebration grant, build cards, the upgrade tier, land — so a rung that happens to open nine things would otherwise push the objectives off a 360 dp display. 4 → 5 in Wave 22 (doc 92 §61): the grant line is NEW and it prints FIRST, so leaving the cap at 4 would have silently dropped an unlock line that used to print. The number of UNLOCK lines the card can show is unchanged at four.",
+		"max_reward_rows": 5
 	},
 	"type_scale_dp": {
 		"display": 28,

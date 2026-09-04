@@ -315,6 +315,46 @@ func test_an_objectives_met_event_raises_the_celebration() -> void:
 	_unmount(mounted)
 
 
+## Wave 22, doc 12 §2.19 D-95 / 99-PA PA-44 — the toast carries the amount.
+##
+## The figure comes off the sim's own `level_up_grant_paid` event in the same
+## batch, not from a second read of `data/economy.json`, and it is ONE toast:
+## §2.15's toasts replace each other, so a separate grant toast would have eaten
+## the level-up toast a frame later and the rung would have gone unnamed.
+func test_the_level_up_toast_names_the_money() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	var sim: CitySim = mounted["sim"]
+	root.set_city_level(sim.progression.city_level)
+	var amount := sim.econ_curves.level_up_grant(1)
+	root.feed_events([
+		{"type": "city_level_changed", "from": 0, "to": 1},
+		{"type": "level_up_grant_paid", "city_level": 1, "amount": amount,
+				"balance": sim.treasury.balance + amount},
+	])
+	assert_true(root.toast_view.is_open(), "the rung is announced")
+	var text := root.toast_view.text()
+	assert_true(text.contains(HudModel.money_exact(amount)),
+			"and it names what was paid (%s): '%s'"
+					% [HudModel.money_exact(amount), text])
+	assert_true(text.contains("1"), "and the level: '%s'" % text)
+	_unmount(mounted)
+
+
+## The other half of the same guard: a rung with NO grant row falls back to the
+## old copy rather than announcing `$0`. There is no such rung in the shipped
+## table, which is exactly why it has to be tested rather than observed.
+func test_a_rung_that_pays_nothing_keeps_the_old_copy() -> void:
+	var mounted := _mount()
+	var root: UIRoot = mounted["root"]
+	root.set_city_level(0)
+	root.feed_events([{"type": "city_level_changed", "from": 0, "to": 1}])
+	assert_true(root.toast_view.is_open(), "the rung is still announced")
+	assert_false(root.toast_view.text().contains("$"),
+			"with no money in it: '%s'" % root.toast_view.text())
+	_unmount(mounted)
+
+
 func test_opening_the_sheet_satisfies_the_tutorials_handoff_step() -> void:
 	# Doc 09 §2.14's handoff: the tutorial's last step points at the chip, and
 	# opening the sheet is one of the two things that finishes it.
@@ -328,3 +368,64 @@ func test_opening_the_sheet_satisfies_the_tutorials_handoff_step() -> void:
 		paths.append(str((raw as Dictionary).get("path", "")))
 	assert_true(paths.has(OnboardingFlow.SCREEN_GOALS_SHEET),
 			"and opening S14 is what satisfies it")
+
+
+# ---------------------------------------------------------------------------
+# Wave 22 — the money on the card (doc 12 §2.19 D-96, 99-PA PA-44)
+# ---------------------------------------------------------------------------
+
+## The card's first line is the grant, on every rung, and it is a READ of doc 03
+## §2.5a rather than a sentence in a data file — so a retune of the table moves
+## this screen with it and cannot leave it lying.
+func test_the_reward_card_names_the_grant_first() -> void:
+	var cfg := _cfg()
+	var sim := CitySim.boot_from_files()
+	var model := GoalsModel.new(sim, cfg, BuildController.new(sim))
+	for level in range(1, GoalSystem.top_level() + 1):
+		var grant := sim.econ_curves.level_up_grant(level)
+		assert_true(grant > 0,
+				"doc 03 §2.5a pays something for rung %d" % level)
+		var lines: PackedStringArray = model.reward(level)["lines"]
+		assert_true(lines.size() > 0, "rung %d's card has a line" % level)
+		assert_true(String(lines[0]).find(HudModel.money_exact(grant)) >= 0,
+				("rung %d's card leads with %s; it says `%s`")
+						% [level, HudModel.money_exact(grant), String(lines[0])])
+
+
+## Ruling 93 §G3, at the one rung that would have broken it. Nothing in
+## `data/buildings.json` unlocks at city level 7, so without the money line the
+## capstone's card would be `ui_goals_reward_none` over a $5,000,000 payment —
+## *a level whose reward card is empty is a number, not a goal.*
+func test_no_rung_has_an_empty_reward_card() -> void:
+	var sim := CitySim.boot_from_files()
+	var model := GoalsModel.new(sim, _cfg(), BuildController.new(sim))
+	for level in range(1, GoalSystem.top_level() + 1):
+		assert_false(bool(model.reward(level)["empty"]),
+				("rung %d's reward card is empty — ruling 93 §G3 says that makes "
+						+ "it a number and not a goal") % level)
+	# And the rung this test was written for, named: the top one, whose card has
+	# nothing on it BUT the money.
+	var top := GoalSystem.top_level()
+	assert_eq(model.unlocked_card_names(top).size(), 0,
+			"nothing in data/buildings.json unlocks at the capstone rung")
+	assert_eq((model.reward(top)["lines"] as PackedStringArray).size(), 1,
+			"so its card is exactly one line, and that line is the grant")
+
+
+## The capstone sheet, rendered: twelve objective rows against a previous
+## maximum of five. It is the state `tools/ui_preview.gd`'s `goals_capstone`
+## photographs, asserted here without a frame.
+func test_the_capstone_sheet_draws_every_archetype_row() -> void:
+	var sim := CitySim.boot_from_files()
+	var model := GoalsModel.new(sim, _cfg(), BuildController.new(sim))
+	var top := GoalSystem.top_level()
+	_finish(sim, top - 1)
+	var view := model.view()
+	assert_eq(int(view["level"]), top, "the sheet is on the capstone rung")
+	var rows: Array = view["rows"]
+	assert_eq(rows.size(), (GoalSystem.level_row(top)["objectives"] as Array).size(),
+			"every capstone objective has a row on the sheet")
+	for raw: Variant in rows:
+		var row: Dictionary = raw
+		assert_true(str(row["text"]) != "" and str(row["text"]) != str(row["id"]),
+				"%s has resolved copy, not its own id" % str(row["id"]))

@@ -2103,42 +2103,62 @@ func publish_progression(events: Array) -> void:
 		bus.emit(type, event)
 		if type == &"city_level_changed":
 			world.refresh_purchasable(progression.city_level)
-			_pay_level_up_grant(event as Dictionary)
+			# Doc 93 §AP4: an ERA is a city LEVEL, and this is the transition
+			# that opens one. It stays here — on the composed level, both routes
+			# — even though Wave 22 moved the GRANT off it, because an era is a
+			# permission to ask for help and a permission may not depend on how
+			# the level was reached. `note_era` is idempotent and monotone, so a
+			# re-crossing that `city_level_monotone` already forbids could not
+			# refill the allowance even if it happened.
+			treasury.note_era(int((event as Dictionary).get("to", 0)))
 
 
-## **The celebration grant** (doc 03 §2.5a, report 98 RR-79).
+## **The celebration grant** (doc 03 §2.5a, report 98 RR-79 / RR-191).
 ##
-## The goals sheet already celebrates a city level; from this wave it also pays
-## for the next chapter. `grant_level` is the one write path onto `city_level`
-## and it emits exactly one `city_level_changed` per move, carrying `from` and
-## `to` — so a jump that crosses two rungs at once (a population surge past a
-## threshold the objectives had not reached) pays BOTH, and neither route to a
-## rung is worth more than the other.
+## Paid for completing curriculum `level`'s objectives — doc 09 §2.14.2's own
+## rung — and NOT for crossing city level `level`. That is a Wave-22 change and
+## it is ruling 93 §AU6; the argument is worth stating here because the call
+## site is the only place it is visible.
+##
+## **Why it moved.** Doc 93 §G1 composes the two routes up the ladder with
+## `max()` because a LEVEL is a permission — what you may build, what land you
+## may buy, how far a building may be upgraded — and a permission must not
+## depend on how you got there. **A celebration grant is not a permission.** It
+## is payment for a lesson completed, and the population backstop completes no
+## lessons: it is a threshold that arrives while you play.
+##
+## At $2,500 a rung the distinction was academic. At $215,000 it is the
+## difference between a curriculum reward and a growth subsidy, and the
+## difference is measured (doc 92 §61.12): paying on the composed level hands
+## every scripted agent in doc 92's balance matrix — none of which can read a
+## goals sheet — the curriculum's money, and it moves **seven** balance gates,
+## including gate 18b, which says a city may not outrun its own power (32.59 %
+## of building-time dark against a ruled 20 %). *The money must not break the
+## game it is meant to open up*, and on the composed level it did.
+##
+## **What a player who ignores the sheet still gets is the LEVEL** — every
+## unlock, every ring of land, every upgrade tier — exactly as before. What they
+## do not get is the money for a lesson they did not take, and the sheet is one
+## chip away on the top bar saying so.
 ##
 ## It is a one-off receipt, not an hourly ledger line: doc 03 §2.4 keeps one-off
 ## capital spends out of the recurring rate, and the symmetric treatment for a
 ## one-off receipt is the same. The player sees it as a treasury event and a
 ## notification; the budget panel's income statement stays an income statement.
 ##
-## `city_level` is monotone (`data/progression.json`'s `city_level_monotone`),
-## so a level can never be re-crossed and a grant can never be paid twice.
-func _pay_level_up_grant(event: Dictionary) -> void:
-	var from_level := int(event.get("from", 0))
-	var to_level := int(event.get("to", 0))
-	for level in range(maxi(1, from_level + 1), to_level + 1):
-		var amount := econ_curves.level_up_grant(level)
-		if amount <= 0:
-			continue
-		treasury.credit(amount, &"grant", "city_level_%d" % level)
-		bus.emit(&"level_up_grant_paid", {"city_level": level, "amount": amount,
-				"balance": treasury.balance})
-	# Doc 93 §AP4: an ERA is a city level, and this is the transition that opens
-	# one. It sits OUTSIDE the loop above and takes `to_level` because a level
-	# whose grant is 0 — the founding level — is still a level, and because a
-	# double promotion opens one era, not two. `note_era` is idempotent and
-	# monotone, so a re-crossing that `city_level_monotone` already forbids could
-	# not refill the allowance even if it happened.
-	treasury.note_era(to_level)
+## **Once per level per city, structurally.** `GoalSystem.earned_level` is
+## monotone, `_settle` emits exactly one `city_level_objectives_met` per rung it
+## promotes through, and `done` is sticky — so a rung cannot be re-earned. A
+## restore emits nothing at all: `bootstrap` drains its own event queue (doc 09
+## §2.14.4 point 3), which is what stops a migrated level-6 city being handed
+## $1,605,000 for work it did last week.
+func _pay_level_up_grant(level: int) -> void:
+	var amount := econ_curves.level_up_grant(level)
+	if amount <= 0:
+		return
+	treasury.credit(amount, &"grant", "city_level_%d" % level)
+	bus.emit(&"level_up_grant_paid", {"city_level": level, "amount": amount,
+			"balance": treasury.balance})
 
 
 ## The O(1) scalars `GoalSystem.STATE_KINDS` reads, once a game-hour.
@@ -2632,7 +2652,15 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 			upgrade_hours, &"construction_crew",
 			{"sim_id": sim_id, "cost": cost})
 	construction.assign_crew(job_id, "YARD-CREW-1")
-	bus.emit(&"upgrade_started_sim", {"sim_id": sim_id, "to_level": next_level, "cost": cost})
+	# `archetype` is NEW (Wave 22, doc 09 §2.14.2's level 7) and it is additive:
+	# every existing reader of this event asks for `sim_id`, `to_level` or
+	# `cost` and none of them can see a fourth key. It is here because
+	# `GoalSystem`'s `upgrade_archetype` kind has to answer *which* building
+	# type went up a rung, and the only alternative — handing the goal system
+	# the roster so it could look the id up — would have made a per-event
+	# evaluator O(buildings) and broken doc 09 §2.14's own cost rule.
+	bus.emit(&"upgrade_started_sim", {"sim_id": sim_id, "to_level": next_level,
+			"cost": cost, "archetype": String(b.archetype)})
 	return CommandQueue.ok({"job_id": job_id, "cost": cost, "to_level": next_level})
 
 
@@ -7491,6 +7519,11 @@ class ReportPhaseSystem extends SimSystem:
 		# goal completed BY a goal event is not a thing the curriculum has.
 		for event in sim.goals.drain_events():
 			sim.bus.emit(StringName(String(event["type"])), event)
+			# Doc 03 §2.5a's celebration grant is paid HERE, on the curriculum's
+			# own transition, and not on the city level's (Wave 22, ruling
+			# 93 §AU6). See `CitySim._pay_level_up_grant` for the whole argument.
+			if StringName(String(event["type"])) == &"city_level_objectives_met":
+				sim._pay_level_up_grant(int(event["level"]))
 		# Objectives ADVANCE the level (doc 93 §G1); the population ladder in
 		# `progression.update` is the other route, and `grant_level` is monotone,
 		# so whichever arrives first wins and neither can take a level back.

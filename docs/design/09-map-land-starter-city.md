@@ -989,11 +989,27 @@ A one-feeder fault costs 2.1 happiness points and 1 % of revenue in three hours 
 
 Doc 02 proposed the population ladder and nothing owned it. Adopted here, and **RETUNED against measurement by doc 92 §19** (audit 91 D-7). `data/progression.json` — the file this section has always named, and which doc 92 §19 is the pass that finally wrote it:
 
-| `city_level` | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|---|
-| min city population | **0** | **200** | **700** | **1,600** | **3,600** | **8,000** | **18,000** |
-| *doc 02's original proposal* | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 | — |
-| `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *unfitted* | *unfitted* | *unfitted* |
+| `city_level` | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| min city population | **0** | **200** | **700** | **1,600** | **3,600** | **8,000** | **18,000** | **40,500** |
+| *doc 02's original proposal* | 0 | 250 | 1,000 | 4,000 | 12,000 | 30,000 | — | — |
+| `balanced` reaches it on game-day | t0 | **2** | **11** | **23** | *unfitted* | *unfitted* | *unfitted* | *unfitted* |
+
+**Rung 7 was added Wave 22** (doc 92 §61), on §19.2's same recipe one rung
+further: `18,000 × 2.25 = 40,500`. It is an APPEND and it is honest
+extrapolation, labelled as such — nothing in this study reaches it by population
+and nothing is meant to, because §2.14.2's level 7 is a capital exercise and the
+curriculum is its route.
+
+**The rung had to exist before the level could**, and this is the sentence to
+remember: `ProgressionSystem.grant_level` clamps its argument to
+`city_level_pop().size() - 1`. A curriculum with a seventh row and a ladder with
+six rungs earns level 7 inside `GoalSystem`, shows the sheet complete, and
+**never fires `city_level_changed` for rung 7 — so doc 03 §2.5a's $5,000,000 is
+never paid.** That is this project's signature defect (a level the ladder can
+reach that no data row describes) and it is closed by the row above rather than
+by a special case in the clamp. Every other `city_level` consumer was walked in
+report 98 §64 RR-189.
 
 **Rung 6 was added Wave 10** (doc 92 §24.6). It is an APPEND — no rung below it
 moved by a single resident, and appending above the top rung cannot un-earn a
@@ -1120,7 +1136,7 @@ The consequences are the point:
 
 The full ruling, with the alternative that was rejected, is doc 93 §G1.
 
-#### 2.14.2 The curriculum — six levels, one system each
+#### 2.14.2 The curriculum — seven levels, one system each
 
 > **Six since Wave 10.** It was five, and the reason was arithmetic: §2.11's
 > ladder had five rungs above the founding level and a sixth would have unlocked
@@ -1142,7 +1158,46 @@ The full ruling, with the alternative that was rejected, is doc 93 §G1.
 | **3** | The budget | 1 apartment · set the tax rate · happiness 70 · 280 residents | doc 03's slider and what it costs in people | High-rise, `road_crew`, L4 upgrades |
 | **4** | When it goes wrong | 1 police station · 2 incidents resolved · 24 clean game-hours · 340 residents | coverage, the drawer, dispatch | Data centre, L5 upgrades |
 | **5** | Room to grow | buy a block · develop it · 1 water pump · 400 residents | doc 09's land pipeline and doc 05's first player-built works | the growth ladder itself |
-| **6** | Up, not out | 1 high-rise · take one building to level 6 · 900 residents | doc 02 §2.14's tower tier, and the power a tall building drinks | the top of the ladder |
+| **6** | Up, not out | 1 high-rise · take one building to level 6 · 900 residents | doc 02 §2.14's tower tier, and the power a tall building drinks | $325,000, and the last build cards |
+| **7** | The whole city | **one upgrade of each of the twelve archetypes** | the city as one asset — the stations and the works you have been paying for since day one | **$5,000,000** |
+
+> **Seven since Wave 22, and the seventh is the player's own** (doc 92 §61,
+> ruling 93 §AU). *"We can even make a SEVENTH level where it's pretty much get a
+> lot of buildings upgraded — get one of each type of building upgraded — and you
+> get the big money when you go through the last level. That'll be five
+> million."* Ruling 93 §G3 — *a level whose reward card is empty is a number, not
+> a goal* — is the test this rung had to pass, and it passes on a reading the
+> §G3 wave could not have made: **nothing in `data/buildings.json` unlocks at city
+> level 7, and the card is not empty, because doc 12 §2.19's reward card now
+> READS doc 03 §2.5a's grant.** The money is the unlock.
+
+**Level 7's three design decisions, and where each one is written down.**
+
+1. **All twelve archetypes count, civic and utility included.** The roster is the
+   build sheet's own: `BuildController.cards()` walks `sim.catalog.archetypes()`
+   with no filter, every one of the twelve has a priced upgrade ladder in
+   `data/building_economy.json`, and `cmd_upgrade_building` accepts every one.
+   Excluding the stations and the works would make the graduation a
+   residential-and-commercial exercise, and doc 03 §2.12 has billed the player for
+   `departments` and `fleet` since game-hour 1 — upgrading the station you have
+   been paying for since founding is the curriculum closing its own loop.
+   `data/starter_city.json` stands **ten of the twelve** up on the founding day,
+   so ten rows are *upgrade what you were given*; only `high_rise` (level 6
+   teaches it) and `data_center` (nothing in the curriculum has ever mentioned it)
+   have to be built first. That is what makes the rung an ask rather than a wall.
+2. **Twelve rows, not one clever row.** A `count the DISTINCT archetypes` kind
+   would have to persist a SET per objective and §2.14.4's body writes `progress`
+   as `id → int`. Twelve integer counters cost one save key each — and they read
+   on the sheet as twelve ticks, which is what a checklist level wants.
+3. **No `reach_population` row — the only level without one.** Level 7 is a
+   CAPITAL level; the twelve rows state the ask completely and a population row
+   would be a wait bolted onto a checklist. §2.11's rung 7 (40,500) is still
+   underneath as the backstop and the sheet still greys it in.
+
+**The ask, priced:** $644,370 — a data centre ($180,000) plus one L1→L2 step of
+each of the twelve ($464,370, itemised in doc 92 §61.5). Doc 03 §2.5a's rung-6
+grant is derived as **half** of exactly that number, which is what stops the
+capstone from being prepaid.
 
 **Every objective is a verb the player can actually perform.** That is a hard
 rule, not a preference: `cmd_place_road`, `cmd_place_water_main` and
@@ -1158,7 +1213,7 @@ shapes:
 
 | shape | kinds | how it is measured |
 |---|---|---|
-| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · **`upgrade_to_level`** · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` · **`collect_opportunities`** | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
+| **event** | `build_archetype` · `place_grid_component` · `place_water_component` · `place_water_main` · `stamp_road_tiles` · `upgrade_building` · **`upgrade_to_level`** · **`upgrade_archetype`** · `repair_buildings` · `resolve_incidents` · `buy_block` · `develop_block` · `set_tax_rate` · **`collect_opportunities`** | counted off `SimEventBus`, from LEVEL ENTRY, on the command rather than on the thing finishing |
 | **state** | `reach_population` · `reach_happiness` · `reach_stability` · `reach_treasury` | one O(1) reading per game-hour |
 | **endurance** | `survive_no_abandonment` | game-hours in a row without `incident_abandoned` / `incident_failed` / `building_destroyed` |
 
@@ -1190,6 +1245,17 @@ you do about them"* is the sentence the objective would be finishing. Doc 92
 stays clean of it until then, so the kind cannot drift into the curriculum
 without the measurement.
 
+**`upgrade_archetype` is the third reading of one button** (Wave 22). It counts
+the same `upgrade_started_sim` event that `upgrade_building` and
+`upgrade_to_level` count, filtered by the `archetype` field that
+`CitySim.cmd_upgrade_building` now stamps onto it. The field is **additive** —
+every existing reader asks for `sim_id`, `to_level` or `cost` — and it is stamped
+at the emit site rather than looked up by the goal system, because handing
+`GoalSystem` the roster so it could resolve a `sim_id` would make a per-event
+evaluator O(buildings) and break this section's own cost rule. Doc 12 §2.19's
+sheet renders the twelve rows it produces; `tools/ui_preview.gd`'s
+`goals_capstone` state is what they were photographed in.
+
 **`upgrade_to_level` is the one kind that filters NUMERICALLY** (Wave 10). It reads the same `upgrade_started_sim` event `upgrade_building` reads and additionally requires `to_level >= ` the row's own `to_level`. The comparison is `>=` and not `==` because doc 02 §2.14's ladder is archetype-shaped — six archetypes have a level 6 and six do not — so an equality row would refuse a player who went further and a per-archetype row would be unanswerable by a police station. It costs one extra dictionary lookup and one comparison per event, so the cost rule above still holds.
 
 #### 2.14.4 Persistence and retroactive safety
@@ -1219,6 +1285,17 @@ restored city as well as on `data/goals.json`, so:
 
 Save → load → advance stays bit-identical with a curriculum in flight
 (`tests/test_goals_system.gd`).
+
+**Wave 22's seventh level moves NO save rung, and this is why.** The body's shape
+is `{version, earned_level, done: [ids], progress: {id → int}}` — two open
+collections keyed by objective id — so twelve new rows add twelve possible keys
+and change no schema. `CitySim.SAVE_SECTION_VERSION` (9 as this wave forks) does not
+move and doc 08's ladder is untouched. **The bootstrap's third rule turned out to be load bearing
+for a second reason**: it empties the event queue, and since doc 03 §2.5a's grant
+is now paid off `city_level_objectives_met` (ruling 93 §AU6), a restore that
+published those events would hand a migrated level-6 city the whole table
+(**$890,000**) for work it did last week. The rule was written to stop four level-up toasts; it stops
+that too.
 
 #### 2.14.5 Events
 
@@ -1628,7 +1705,7 @@ Only constants **owned by this doc**. Land price constants live in `data/economy
 ```json
 {
   "schema_version": 1,
-  "city_level_population_thresholds": [0, 200, 700, 1600, 3600, 8000],
+  "city_level_population_thresholds": [0, 200, 700, 1600, 3600, 8000, 18000, 40500],
   "_source": "Adopted from doc 02's proposal (report 98 G-1), RETUNED against doc 92 §19's measured curves; doc 02's copy is read-only.",
   "city_level_monotone": true,
   "population": {
@@ -1707,10 +1784,26 @@ whatever that kind needs to identify itself.
         {"id": "l1_population", "kind": "reach_population",
          "target": 170, "text_key": "ui_goal_l1_population"}
       ]
+    },
+    {
+      "level": 7,
+      "title_key": "ui_level_7_title",
+      "intent_key": "ui_level_7_intent",
+      "teaches_key": "ui_level_7_teaches",
+      "objectives": [
+        {"id": "l7_house", "kind": "upgrade_archetype", "archetype": "house",
+         "target": 1, "text_key": "ui_goal_l7_house"}
+        // … eleven more, one per archetype in data/buildings.json
+      ]
     }
   ]
 }
 ```
+
+**A row carries its own prose** — `_added`, `_archetype_scope`, `_the_ask` on
+level 7 — for the same reason every other data file in this project does: the
+number is checkable from the file that holds it, and a reader who finds the row
+before they find §2.14.2 still learns why it says what it says.
 
 | field | meaning |
 |---|---|

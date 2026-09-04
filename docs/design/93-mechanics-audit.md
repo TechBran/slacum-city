@@ -5025,3 +5025,250 @@ capital immediately, with no construction time and no crew, against the
 arbitrage's 0.05 after a full rebuild. The exploit is now strictly dominated by
 the button next to it, which is the cheapest possible mitigation and is not a
 fix.
+
+## AU. Wave-22 rulings — what a rung is allowed to be worth, and what the last one has to ask for (2026-09-04)
+
+*The lane's whole brief is one sentence from the player, 2026-09-04, and the
+sentence contains a number: "each level, since we have six, should give let's say
+a few hundred thousand dollars … and then a SEVENTH level … you get the big money
+… that'll be five million." §AU1 rules on what that does to a derivation this
+project has kept since Wave 14; §AU2 on the rung it needs underneath it; §AU3 on
+what the capstone level is allowed to ask for; §AU4 on the one thing this lane
+found and deliberately did not fix.*
+
+### AU1. An authored scale under a derived curve — and it is labelled, not laundered
+
+**Q.** Doc 03 §2.5a's rule is *the city pays half of what the next chapter asks
+you to buy*, applied row by row against doc 09 §2.14's curriculum. The player
+wants figures fifty times larger than that rule produces. Do we re-derive the
+rule so the new numbers fall out of it, or do we admit the numbers are authored?
+
+**RULING: admit it, and then derive everything that CAN be derived.**
+
+The rule is not broken and the fit is not wrong; the SCALE the rule is applied at
+is a policy decision, and it is the player's to make. This project's standard is
+that a placed number is labelled as placed — doc 92 §24.6's population rungs 4–7
+say "honest extrapolation" on their face, and this is the same discipline one
+step further out: the level of the curve is authored, the SHAPE of it is not.
+
+What that buys is a table where every cell has a reason:
+
+* **the bottom anchor is derived, twice, and the two agree to 3.5 %** — the
+  remaining curriculum's whole purchase list at list price ($208,760) and the
+  measured repair bill of a played curriculum ($216,467, `tools/measure_curriculum.gd
+  --days=45`). $215,000 sits between them;
+* **the top anchor of the six is the OLD RULE, kept verbatim** — half of what
+  chapter 7 asks ($644,370 / 2 = $322,185 → $325,000);
+* **the five rungs between them are the geometric run the two anchors imply**,
+  ratio 1.08616, rounded to $5,000 and closing back on its own top anchor;
+* **the capstone is authored and says so** — there is no chapter above it, so
+  the half-rule has nothing to read, and doc 03 §2.5a refuses to invent one.
+  What it publishes instead are three independent sanity checks on the figure.
+
+**The alternative that was rejected: a FLAT run at the literal "few hundred
+thousand each".** It was authored, measured, and it fails eight assertions across
+seven balance gates — see §AU7. **A derivation that has to be bent to hit an
+authored number is an authored number with extra steps**, and a scale that has to
+be held past the point where the city can spend it is a number the game cannot
+keep.
+
+### AU2. A grant that is generous is bounded by its SHARE, not by a cap
+
+**Q.** $5,890,000 across a curriculum is 43.6× what the game used to pay. What
+stops it being a farm?
+
+**RULING: the curve's own slope, and it is checked rather than asserted.**
+
+Three things are true and all three are measured in doc 92 §61.3:
+
+1. **The grant shrinks as a share of the city it lands on.** It rises 7.2×
+   across the six while doc 09 §2.11's ladder rises 57.7× over the same five
+   rungs, so against each band's own income the grant is worth 2.8 / 2.2 / 2.4 /
+   1.2 / 0.44 chapters at rungs 1–5. It starts as three chapters of income and
+   ends as half of one, with no guard written anywhere.
+2. **One-shot per level per city is structural.** `city_level` is monotone by
+   `data/progression.json`'s `city_level_monotone`, `grant_level` is its only
+   writer and returns early on a level it holds, and `_pay_level_up_grant` walks
+   `range(from + 1, to + 1)`. There is no re-crossing to exploit.
+3. **Over a city's life it is capital, not revenue.** $5,890,000 is 35
+   game-days of a level-7 city's own net, collected across an arc that takes
+   15.7–17.9 game-days, and paying nothing after that forever.
+
+**A cap was considered and refused.** A ceiling on the grant as a fraction of the
+treasury would have made the grant smaller exactly when the player needed it — a
+city at −$22,624 would be handed a fraction of nothing — which is the failure the
+lane exists to fix.
+
+### AU3. The capstone asks for the CITY, and the reward card is what makes it a goal
+
+**Q.** Doc 09 §2.14.2's level 7 is "one of each type of building upgraded". Does
+civic and utility stock count, and is one upgrade step enough of an ask for
+$5,000,000?
+
+**RULING: all twelve archetypes count, and the ask stays at one step per type —
+what stops it being trivial is the GRANT below it, not a bigger ask.**
+
+*All twelve*, because the roster is not a judgement call: `BuildController.cards()`
+walks `sim.catalog.archetypes()` with no filter, so twelve is what the build
+sheet offers; all twelve have a priced ladder in `data/building_economy.json`;
+`cmd_upgrade_building` accepts all twelve. And doc 03 §2.12 has billed the player
+for `departments` and `fleet` since game-hour 1 — a graduation that skipped the
+station you have been paying for since founding would be teaching the wrong
+lesson about what a city is.
+
+*One step per type*, because the correct place to fix "the level is prepaid" is
+the grant, not the level. Rung 6 pays **half** of the level's $644,370, which is
+§2.5a's own rule and leaves the other half to be earned. The alternative — asking
+for level 3 on every archetype ($1,828,516) — would have been a bigger number
+that the player did not ask for, bolted on to make a grant safe that could simply
+be halved instead.
+
+*And the reward card had to change for the rung to be legal at all.* Ruling §G3
+says **a level whose reward card is empty is a number, not a goal**, and nothing
+in `data/buildings.json` unlocks at city level 7. The card now READS doc 03
+§2.5a's grant as its first line, on every rung (doc 12 §2.19 D-96), so the money
+is the unlock — and the same read backs D-95's toast, which means the promise and
+the payment cannot drift apart.
+
+### AU4. The wall at level 7 is UTILITIES, and that is the finding, not a defect
+
+**Q.** Measured on the shipped grants, the capstone's twelve rows are refused
+`E_POWER_HEADROOM` and `E_WATER_HEADROOM` on a city with a seven-figure treasury.
+Is that a balance failure?
+
+**RULING: no — it is doc 02 §8's `k_dem > TAX_LEVEL_GROWTH` arriving on schedule,
+and level 7 already contains its own answer.**
+
+Doc 02 §8's deliberate rule is that every upgrade is less utility-efficient than
+the last. A city that has just been handed enough money to build without waiting
+meets that rule sooner and harder, which is exactly what §61.4 measured. Two of
+the twelve rows — `power_facility` and `water_facility` — ARE the answer, and the
+building panel already tells the player what a headroom refusal wants.
+
+What the lane changed is the AGENT, not the game: `tools/playtest.gd`'s
+`curriculum` student now answers a headroom refusal with capacity, holds the open
+checklist back from its growth ladder, and does both on a cooldown. **All three
+changes were measured on the OLD grant table first** (doc 92 §61.4), so nothing
+the student learned is credited to the money.
+
+### AU5. Filed, not fixed — the relief ladder's extra era
+
+`Treasury.note_era(to_level)` resets doc 03 §2.10 layer 5's allowance on the
+transition that pays this grant, because §AP4 ruled that an era is a city level.
+**A seventh rung is therefore one more era: three more relief grants (standard
+preset) for the life of a city.**
+
+That is published as a delta and not fixed here. It is bounded — +1 era, once, at
+the top of the ladder, behind the hardest level in the game, monotone and
+therefore unfarmable — and the ladder it touches belongs to Wave 21's no-spiral
+lane, running beside this one. Doc 92 §61.7 carries the row.
+
+### AU6. The grant is paid for the LESSON, not for the level — §G1 amended, narrowly
+
+**Q.** Doc 93 §G1 composes the two routes up doc 09 §2.11's ladder with `max()`,
+and doc 03 §2.5a has always paid its celebration grant on that composed level, so
+that *"neither route to a rung is worth more than the other."* At $2,500 a rung
+that was uncontroversial. At this wave's scale it hands every scripted agent in doc 92's
+balance matrix — none of which can read a goals sheet — the curriculum's money.
+Is the composition wrong, or is the payment site wrong?
+
+**RULING: the composition is right and the PAYMENT SITE is wrong. §G1 is
+untouched; doc 03 §2.5a's grant moves to `city_level_objectives_met`.**
+
+**The distinction §G1 was making, restated.** A LEVEL is a *permission* — what
+you may build, what land you may buy, how far a building may be upgraded, how
+many relief grants an era allows. A permission must not depend on how you got
+there, or the game is quietly telling a player who plays well without the sheet
+that they played wrong. That argument is sound and this ruling does not touch it:
+`city_level` is still `max(population_ladder, objectives_earned)`, and
+`Treasury.note_era` still fires on the composed transition for exactly the same
+reason (§AP4's era is a permission to ask for help).
+
+**A celebration grant is not a permission.** It is payment for a lesson
+completed, and the population backstop completes no lessons — it is a threshold
+that arrives while you play. Reading §G1's sentence onto the grant was a category
+error that cost nothing while the number was small.
+
+**And the cost, once the number is not small, is measured** (doc 92 §61.12). On
+the flat first draft of the table, paying on the composed level fails **eight
+assertions across seven balance gates**, on agents that have never touched a
+curriculum objective — including gate 18b's *a city may not outrun its own
+power*, at **32.59 %** of building-time dark against a ruled 20 %. Moving the
+payment to the curriculum's own transition removes three of the eight on its own,
+and — more importantly — it removes them for a REASON rather than by making the
+number smaller. §AU7 is what dealt with the other five.
+
+The clean statement of what this ruling buys: **`tests/fixtures/bench_city.json`
+was collecting $135,000 of celebration grants on boot**, for a curriculum it has
+never touched, and both of its `profile_sim` digests moved when it stopped (doc
+92 §61.13). A profiling fixture being paid the curriculum's money is the defect
+in one sentence.
+
+**What a player who ignores the sheet still gets is the LEVEL**: every unlock,
+every ring of land, every upgrade tier, every relief era, exactly as before. What
+they do not get is the money for a lesson they did not take. The sheet is one
+chip away on the top bar, the chip names the rung and the fraction, and doc 12
+§2.19's reward card now prints the figure they are declining.
+
+**Two properties the move had to preserve, and both do.**
+
+1. **A rung is still paid exactly once per city.** `GoalSystem.earned_level` is
+   monotone, `done` is sticky, and `_settle` emits exactly one
+   `city_level_objectives_met` per rung it promotes through.
+2. **A restore pays nothing.** `bootstrap` completes every level at or below the
+   city's own and then *drains its own event queue* (doc 09 §2.14.4 point 3) —
+   which is what stops a migrated level-6 city being handed the whole table
+   ($890,000) for work it did last week. That drain was written for a different reason (four
+   level-up toasts on a returning player) and it turns out to have been load
+   bearing for this one too.
+
+**The alternative that was rejected: re-fit the seven gates.** It is the more
+obvious reading of "publish the measured consequences", and it is wrong here for
+two reasons. The gates are not noise — 32.59 % dark is a worse game, not a
+different one. And re-fitting them would have written the category error into
+seven more places, so that the next wave to look at the matrix would find a
+balance built around scripted agents being paid for a curriculum they cannot
+read.
+
+### AU7. The scale is bounded by the grid, not by the request — and this is where the curve came from
+
+**Q.** §AU6 moves the payment to the curriculum's own transition, and three of
+the eight failing assertions go with it. Five remain, because `balanced`
+*completes levels 1 and 2's objectives incidentally* — two shops, one upgrade,
+four houses, a transformer and 210 residents is what a competent builder does
+anyway — so a non-curriculum agent still collects rungs 1 and 2. On the flat
+draft that is **$450,000 by game-day 4**. Do we re-fit the five, or re-shape the
+curve?
+
+**RULING: re-shape the curve, and let gate 18b set the scale.**
+
+The brief this lane was given says *the money must not break the game it is meant
+to open up*, and *if a grant trivialises a lesson, re-shape the curve, not the
+lesson*. Gate 18b is the assertion that says a city has to be able to power what
+it builds; its own docstring says the 20 % ruling has *"better than 3× of margin,
+deliberately: the point of the gate is to catch the ceiling COMING BACK, not to
+ratchet a measurement into a target."* The flat draft brings it back four times
+over — 26.44 % after §AU6's move, against a fork baseline of 6.25 %.
+
+**So the curve is set where that measurement does not move.** With rungs 1 + 2 at
+$110,000 instead of $450,000 the dark share is **5.99 %**, and every other moved
+reading returns inside its bound (doc 92 §61.12 has the five-row table). The
+shipped curve is 43.6× the old table rather than the ~55× the request read as,
+and the difference is not caution — it is the point at which the city stops being
+able to spend what it is given.
+
+**One gate is re-fitted and it is the pacing one.** Gate 20's level-2 window
+moves 8–14 → 3–14, measured 6 / 4 / 7. Its floor existed so that *"an unlock has
+to be EARNED to read as progression"*; at game-day 4–7 on a 24-minute game-day it
+still is, and what it is no longer is a week's wait. A window's floor is a pacing
+decision and pacing is what this wave deliberately changed; a ceiling on a city's
+dark share is not, and that one was not touched.
+
+**What the player is told, plainly.** They asked for "a few hundred thousand"
+per level and the six run $45,000 → $325,000. The honest sentence is not that the
+request was too big but that it was measured: at the flat figure the default city
+spends a quarter of its building-time unlit and one curriculum seed cannot finish
+the capstone, and *money is not the only thing a city needs in order to build*.
+The thing they actually asked for — that levelling up stops being a wait and that
+the negative balance goes away — holds at every rung: the smallest grant is 2.0×
+their hole and the six together are twice a whole curriculum's repair bill.

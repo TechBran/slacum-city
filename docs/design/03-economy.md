@@ -499,20 +499,33 @@ doc 12 log rows. No dollar moves for it and no state is added: the step is
 detected by asking `founding_assistance_per_hour` what *yesterday's* published
 share was, so `state_hash()` cannot move.
 
-**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 2500, 7000, 9000, 22500, 29000, 65000]` *(rungs 5 and 6 re-derived in Wave 17: the rule is "half of what the next chapter asks you to buy" and rung 5's basis is an UPGRADE, which doc 93 §Y7 re-priced 73,572 → 58,350. Rungs 1–4 are built on build costs, which did not move.)*, indexed by city level, paid once per level for the life of a city, on whichever route earned it (doc 93 §G1 composes the population ladder and doc 09's objectives with `max()`, and this pays the composed level so neither route is worth more than the other).
+**The celebration grant.** `LEVEL_UP_GRANT_BY_CITY_LEVEL = [0, 215000, 235000, 255000, 275000, 300000, 325000, 5000000]`, indexed by curriculum level, paid once per level for the life of a city, **for completing doc 09 §2.14's objectives for that rung** — not for crossing the city level.
 
-The rule is one sentence — **the city pays half of what the next chapter asks you to buy** — applied to doc 09 §2.14's curriculum row above each rung and rounded to a readable figure:
+> **The payment site moved in Wave 22** *(ruling 93 §AU6, report 98 §64 RR-191)*, and only the payment site: doc 93 §G1's `city_level = max(population_ladder, objectives_earned)` is untouched, and §2.10 layer 5's ERA still opens on that composed level. **A level is a permission and a permission may not depend on how it was reached; a grant is payment for a lesson, and the population backstop teaches none.** The distinction cost nothing at $2,500 a rung. At $215,000 it is measurable: paying on the composed level hands every scripted agent in doc 92's balance matrix — none of which can read a goals sheet — the curriculum's money, and it moves seven balance gates including gate 18b, which says a city may not outrun its own power (32.59 % of building-time dark against a ruled 20 %). Doc 92 §61.12 has the table. A player who ignores the goals sheet still gets the LEVEL, every unlock and every era; what they do not get is the fee for a lesson they did not take.
 
-| rung earned | the next chapter's taught purchase | half | published |
+**RE-SCALED in Wave 22** *(doc 92 §61, ruling 93 §AU, report 98 §64 RR-187)*. The table paid **$135,000 across the entire curriculum** and now pays **$5,890,000**, and the reason is the player, 2026-09-04: *"we should get a substantial amount of money so you can start your city … each level, since we have six, should give let's say a few hundred thousand dollars … and then a SEVENTH level … you get the big money … that'll be five million."* **The SCALE is the player's request and the CURVE is derived**, and this doc says which is which rather than dressing the first up as the second.
+
+**One anchor, one ratio, and a seventh rung that is a graduation rather than a rung.**
+
+*The anchor is the top of the six, and it is **the old rule, kept**.* **The city pays half of what the next chapter asks you to buy**: doc 09 §2.14.2's level 7 asks for a data centre ($180,000) plus one upgrade step of each of the twelve archetypes ($464,370) = **$644,370**, and half is $322,185, published **$325,000**. It survives at the one rung where half is real money, and it survives for the reason it was written — *a grant that buys the chapter outright deletes the chapter*.
+
+*The ratio is the ladder's own, square-rooted.* `1.5 = √2.25`, and 2.25 is §2.11's rung ratio — the step doc 92 §24.6 places the population ladder's top two rungs with. **So the grant grows at half the exponent the city does**, and its share of the city it lands on falls by two thirds every rung, by construction and without a guard being written anywhere: measured against each band's own income it is worth 2.8 / 2.2 / 2.4 / 1.2 / 0.44 chapters at rungs 1–5 (doc 92 §61.3).
+
+| rung earned | `325,000 / 1.5^k` | published | what it buys, at list price |
 |---|---|---|---|
-| 1 | two stores @ $2,600 + one upgrade | ~$2,600 | **$2,500** |
-| 2 | one apartment $7,000 + four street tiles $7,200 | $7,100 | **$7,000** |
-| 3 | one police station $18,000 | $9,000 | **$9,000** |
-| 4 | one water works $45,000 | $22,500 | **$22,500** |
-| 5 | the level-6 tower upgrade $58,350 | $29,175 | **$29,000** |
-| 6 | *(no chapter above it)* | — | **$83,000** |
+| 1 | 42,798 | **$45,000** | chapter 2's two shops + an upgrade ($6,580) **6.8×** over — or one water works, exactly |
+| 2 | 64,198 | **$65,000** | chapter 3's apartment + four street tiles ($14,200) **4.6×** over |
+| 3 | 96,296 | **$95,000** | chapter 4's police station ($18,000) **5.3×** over — or the whole of chapter 5 ($85,630) with change |
+| 4 | 144,444 | **$145,000** | chapter 5's pump + block + development, **1.7×** over |
+| 5 | 216,667 | **$215,000** | chapter 6's high-rise + a tower step ($84,350) **2.5×** over |
+| 6 | 325,000 | **$325,000** | **half** of chapter 7's $644,370 — the rung the anchor is derived on |
+| 7 | *(no chapter above it)* | **$5,000,000** | authored, and checked three ways below |
 
-Rung 6 is the extrapolation the rung itself is (doc 92 §24.6): `29,000 × 2.25 = 65,250`, on the same 2.25× step the population ladder uses above rung 3, published as $65,000 and labelled honest extrapolation exactly as ladder rungs 4 and 5 are.
+**The bottom of the run is derived AND bounded, and the bound is a measurement** (doc 92 §61.12). A first draft paid the flat *"few hundred thousand each"* the request suggested — 215,000 / 235,000 / 255,000 / 275,000 / 300,000 / 325,000 — and it fails **eight assertions across seven balance gates**, on agents that never read a goals sheet: the default builder spends **26.44 %** of its building-time dark over 50 game-days against a ruled 20 % and a fork baseline of 6.25 %, reaches city level 2 on game-day 4 against a ruled window of 8–14, and one curriculum seed loses the capstone to a map with no room left for a pump. On the shipped curve the same dark share is **5.99 %**. **Money is not the only thing a city needs in order to build, and this curve is set at the point where the other thing still keeps up.**
+
+**Rung 7 is AUTHORED and this doc refuses to pretend otherwise.** There is no chapter above it, so the half-rule has nothing to read; unlike doc 92 §24.6's population rungs it is not an extrapolation either. What can be checked is whether the figure is sane at the top of this game, and it is: it is **7.76×** chapter 7's own ask; it funds **94.2 %** of the deepest climb doc 02 has (a data centre from level 2 to level 5 is $527,850 + $1,346,018 + $3,432,345 = $5,306,213); and at the measured level-7 net ($6,966.50/gh) it is **29.9 game-days** of a top-rung city's entire net income, handed over at once.
+
+**One-shot per level per city is structural, not a guard.** `GoalSystem.earned_level` is monotone, its `done` set is sticky, and `_settle` emits exactly one `city_level_objectives_met` per rung it promotes through. A restore pays nothing at all, because `bootstrap` drains its own event queue (doc 09 §2.14.4). **The one compounding surface is named rather than assumed:** `Treasury.note_era` resets §2.10 layer 5's relief allowance on the CITY-LEVEL transition (doc 93 §AP4), so a seventh rung is one more era and three more relief grants for the life of a city — +1 era, once, at the top of the ladder, behind the hardest level in the game, and monotone. Doc 92 §61.7 publishes that delta; the relief ladder itself is not re-fitted here.
 
 **A one-off receipt is not an hourly ledger line.** §2.4 keeps one-off capital *spends* out of the recurring rate; the symmetric treatment for a one-off *receipt* is the same. The player sees it as a treasury event and a notification, and the budget panel's income statement stays an income statement.
 
@@ -1889,10 +1902,12 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
     "STREET_IDLE_SHARE": 0.0                           // a written-down zero
   },
 
-  "grants": {                                          // §2.5a, report 98 RR-79
+  "grants": {                                          // §2.5a, report 98 RR-79 / RR-187
     "FOUNDING_ASSISTANCE_PER_HOUR": 172,               // = §2.12 departments 96 + fleet 76
     "FOUNDING_ASSISTANCE_DAYS": 7,
-    "LEVEL_UP_GRANT_BY_CITY_LEVEL": [0, 2500, 7000, 9000, 22500, 37000, 83000]
+                                                       // Wave 22: re-scaled, and one row longer
+    "LEVEL_UP_GRANT_BY_CITY_LEVEL":
+        [0, 215000, 235000, 255000, 275000, 300000, 325000, 5000000]
   },
 
   "land": {
