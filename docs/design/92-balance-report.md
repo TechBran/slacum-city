@@ -10520,8 +10520,18 @@ seed 1337, `do_nothing`, gate 29's own hour-resolution scan:
 | `hard` | 120 | 47 | **47** | **0** | 36 |
 | `crisis` | 70 | 19 | **19** | **0** | 1 |
 
-`STANDARD_LIFETIME_DAYS` is 167 with `STANDARD_LIFETIME_BAND` 12, so 164 sits
-comfortably inside [155, 179]; `PRESET_LIFETIME_CEILING` 290 and
+**The band's own three seeds, because the band is meaningless without them**
+(doc 92 §43.8's rule). `--presets=standard --horizons=standard:200`:
+
+| seed | Wave 20 | **Wave 21** |
+| --- | --- | --- |
+| 1337 | 165 | **164** |
+| 4242 | 167 | **169** |
+| 9001 | 172 | **163** |
+| spread | 7 game-days | **6 game-days** |
+
+`STANDARD_LIFETIME_DAYS` is 167 with `STANDARD_LIFETIME_BAND` 12, so all three
+seeds sit inside [155, 179] and the band still covers the spread twice over; `PRESET_LIFETIME_CEILING` 290 and
 `PRESET_LIFETIME_FLOOR` 18 are both clear; the cascade tripwire's peak is 36
 against a ceiling of 40, **unchanged to the incident** from Wave 20's reading.
 

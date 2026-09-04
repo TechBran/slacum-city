@@ -2223,8 +2223,10 @@ const PRESET_LIFETIME_FLOOR := 18
 ##
 ## **NOT re-fitted in Wave 21, and that is measured** (doc 92 §60.11). Doc 93
 ## §AS1 and §AS2 keep buildings a `do_nothing` city used to lose, and gate 29's
-## own rig reads `standard` at **164** — three game-days SOONER, not later, and
-## well inside this band. The sign is the point: a ruin costs the city nothing
+## own rig reads `standard` at **164 / 169 / 163** on this band's own three seeds
+## (1337 / 4242 / 9001, against Wave 20's 165 / 167 / 172) — three game-days
+## SOONER on the pinned seed, not later, a spread of **6** where Wave 20 measured
+## 7, and all three well inside this band. The sign is the point: a ruin costs the city nothing
 ## (§AR3's guard) while a boarded-up shell still bills `E_building_maint` at
 ## 2.35× and returns 0.184 of the tax, so keeping the roster alive is a cost to a
 ## city that will not act on it. `casual` reads 255 against the 290 ceiling,
