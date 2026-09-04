@@ -5886,11 +5886,21 @@ so `RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = **$24,000 of relief an 
 pays whatever it was measured against**, and every bill under ~$24,615 was
 out-paid — a $2,000 bill drew 12.0× itself. §AS4's own heading says an era may
 never out-pay its bill, and the body disclosed the floor as an exception. **The
-heading is now true as written, and the arithmetic is what makes it true:**
+arithmetic that closes it:**
 
     era_ceiling = max(revenue_term, outstanding_restore_cost)
     grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
                       era_ceiling − relief_era_paid)
+
+**State the guarantee exactly, because the loose form is what went wrong the
+first time.** What is now true is *"an era's relief never exceeds the LARGER of
+what the city earns in a day and a half and the restore bill it was measured
+against"* — not *"an era never out-pays its bill"*. The difference is the case
+where the bill is the smaller of the two: a city with no ruins and real revenue
+still collects its revenue term, which is the pre-Wave-19 ladder and is meant to.
+Wherever the DAMAGE side is what is paying — every case §AP4's inequality was
+written about, and every disaster this ladder exists for — the ceiling IS the
+bill and the era cannot out-pay it.
 
 The ceiling is the BILL and not `RELIEF_DAMAGE_FRACTION × bill`, because the
 fraction is already the damage term's own per-era cap and re-using it here would

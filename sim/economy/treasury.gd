@@ -430,16 +430,24 @@ func defer(amount: int, category: StringName = &"misc", reason: String = "") -> 
 ## from below, outside both. `RELIEF_MIN × relief_grants_per_era` is
 ## $8,000 × 3 = $24,000 of relief an era pays whatever it is measured against, so
 ## every bill under ~$24,615 was out-paid and a $2,000 one drew **12.0×** itself.
-## The claim above is now true as written, and it is the ERA CEILING in
-## [maybe_grant_relief] that makes it true rather than a re-wording:
+## The ERA CEILING in [maybe_grant_relief] is what closes it:
 ##
 ##     era_ceiling = max(revenue_term, outstanding_restore_cost)
 ##     grant       = min(max(revenue_term, damage_term, RELIEF_MIN),
 ##                       era_ceiling − relief_era_paid)
 ##
-## An era never pays more than the largest thing any of its grants was measured
-## on. The floor still lifts a single grant to `RELIEF_MIN` whenever there is
-## room for it, which is every case the floor was written for.
+## **State the guarantee exactly, because the loose form is what went wrong the
+## first time.** What is now true is *"an era's relief never exceeds the LARGER
+## of what the city earns in a day and a half and the restore bill it was
+## measured against"*. That is NOT the same sentence as *"an era never out-pays
+## its bill"*, and the difference is the case where the bill is the smaller of
+## the two: a city with no ruins and real revenue can still collect its revenue
+## term, which is the pre-Wave-19 ladder and is meant to. Wherever the DAMAGE
+## side is what is paying — which is every case §AP4's inequality was written
+## about and every disaster this ladder exists for — the ceiling IS the bill and
+## the era cannot out-pay it. The floor still lifts a single grant to
+## `RELIEF_MIN` whenever there is room for it, which is every case the floor was
+## written for.
 ##
 ## **The revenue term is deliberately outside the DAMAGE cap** — and inside the
 ## era ceiling, which is a different statement and not a retraction. `1.5 × daily

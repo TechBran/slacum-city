@@ -11255,6 +11255,13 @@ ladder is $23,892 over 90 game-days against the $23,760 the arithmetic predicts
 | the player's slot 0, bill $282,078 | $98,727 + $8,000 + $8,000 = **$114,727** in 3 grants | **$114,727 in 3 grants — bit-identical** |
 | `test_the_floor_may_not_multiply_an_era`, bill $2,000 | $8,000 × 3 = **$24,000 — 12.0× the bill** | **$2,000 — 1.0×** |
 
+**What the era ceiling guarantees, stated exactly:** an era's relief never
+exceeds the LARGER of its revenue term and the bill it was measured against. On
+the damage side — the side §AP4's inequality was written about, and the side both
+rows above are measured on — that ceiling IS the bill. A city with no ruins and
+real revenue still collects its revenue term, which is the pre-Wave-19 ladder and
+is not what the 12.0× was about.
+
 The disaster case does not move by a dollar, which is the point of taking the era
 ceiling as the BILL rather than as `RELIEF_DAMAGE_FRACTION × bill`: the fraction
 is already the damage term's own per-era cap, and re-using it here would have

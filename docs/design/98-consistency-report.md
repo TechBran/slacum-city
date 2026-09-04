@@ -9425,8 +9425,12 @@ longer buy it for you. RR-195 is the ruling that the bulldoze has to lose.
 outside both — and a floor is not a term, it does not shrink. So
 `RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = **$24,000 an era pays whatever
 it was measured against**, and a $2,000 bill drew **12.0× itself** while §AS4's
-heading claimed an era may never out-pay its bill. **The heading is now true as
-written.**
+heading claimed an era may never out-pay its bill. **The guarantee, stated
+exactly:** an era's relief never exceeds the LARGER of its revenue term and the
+restore bill it was measured against — so wherever the DAMAGE side is what is
+paying, which is every disaster case this ladder exists for, the ceiling IS the
+bill and the era cannot out-pay it. A city with no ruins still collects its
+revenue term, which is the pre-Wave-19 ladder and is meant to.
 
 The ceiling is the BILL, not `RELIEF_DAMAGE_FRACTION × bill`: the fraction is
 already the damage term's own per-era cap, and re-using it here would have taken
