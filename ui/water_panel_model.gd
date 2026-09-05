@@ -201,10 +201,22 @@ func advice_of(block: Dictionary) -> Dictionary:
 		return {"key": "ui_water_advice_place", "stage": stage, "node": "",
 				"actionable": true,
 				"args": {"stage": "ui_water_stage_%s" % stage}}
-	return {"key": "ui_water_advice_binds", "stage": stage, "node": node_id,
-			"actionable": true,
-			"args": {"stage": "ui_water_stage_%s" % stage,
-					"m3h": String(chain_row.get("text", "")), "at": node_id}}
+	# **…and what would bind after it** (doc 12 §2.26). §2.5's supply is a MIN of
+	# four terms, so raising the narrowest one moves the zone exactly as far as
+	# the second narrowest and not one m³ further. A panel that says "raise the
+	# intake" and stops has sold a purchase whose ceiling the player cannot see —
+	# which is doc 92 §67.4's $5.5M of pumps, told the other way round.
+	# `next_binding` has been on `WaterSystem.supply_chain` since this wave
+	# opened; this is its reader.
+	var next_stage := String(block.get("next_binding", "none"))
+	var args := {"stage": "ui_water_stage_%s" % stage,
+			"m3h": String(chain_row.get("text", "")), "at": node_id,
+			"next": "ui_water_stage_%s" % next_stage,
+			"next_m3h": String(block.get("next_binding_text", ""))}
+	return {"key": "ui_water_advice_binds_next" if next_stage != "none" \
+					else "ui_water_advice_binds",
+			"stage": stage, "node": node_id, "next_stage": next_stage,
+			"actionable": true, "args": args}
 
 
 static func _chain_row(block: Dictionary, stage: String) -> Dictionary:

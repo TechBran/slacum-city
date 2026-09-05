@@ -92,6 +92,10 @@
 		"water_repair_done": {"class": "P3_routine", "severity": 1, "aggregate": true,
 			"cooldown_minutes": 180, "deeplink": "overlay/water", "state": "normal"},
 
+		"_comment_wave28": "report 98 §73 RR-224. `cmd_repair_water_asset` is `cmd_repair_grid_component` one document over, so its ARRIVAL is bound exactly as `grid_repair_done` above is: P3_routine because a thing coming BACK is good news and never urgent, and the same `overlay/water` deeplink so the tap lands where the break's tap lands. It differs from `grid_repair_done` in ONE cell — `aggregate` false, `coalesce_by` the key — for `transformer_removed`'s reason: a main the player paid to dig up is a PLACE, the next one is a different place, and the whole point of the arrival is that the leak at THAT place has stopped. The DISPATCH (`water_asset_repair_started`) is deliberately NOT bound: a player who has just pressed DIG IT UP is standing in S19, which already shows the crew and the ETA — the same ruling `grid_repair_done`'s comment makes one utility over. Cooldown 30 min matches the grid's, not water's 180: this is a purchase the player made, not weather.",
+		"water_asset_repaired": {"class": "P3_routine", "severity": 1, "aggregate": false,
+			"cooldown_minutes": 30, "deeplink": "overlay/water", "state": "normal"},
+
 		"_comment_water_gap": "Doc 91 §18.2's exception, closed. Doc 05 emits a diagnostic half nobody read: a zone whose demand has outrun supply, a tank running down, a tank empty, a pump/treatment/source that FAILED (as opposed to `water_pump_tripped`, which is a recoverable lockout and was already wired), and the boil notice LIFTING — the pair `water_contamination_started` never had. All five describe a state the player can act on and none of them reached a screen. `water_capacity_shortage` is the one worth reading twice: doc 05 §2.9 says out loud that no repair job exists for it, so it is the only water alert whose answer is BUILD, and it was the quietest thing in the game.",
 		"water_capacity_short": {"class": "P2_important", "severity": 3, "aggregate": true,
 			"cooldown_minutes": 240, "deeplink": "overlay/water", "state": "warning"},
@@ -223,6 +227,10 @@
 			"args": {"node": "node"}},
 		{"type": "water_repair_completed", "notify_id": "water_repair_done",
 			"coalesce_by": "notify_id", "args": {"kind": "kind"}},
+		{"_comment": "Wave 28 (report 98 §73 RR-224). The ARRIVAL of `cmd_repair_water_asset`'s crew — the banner promised by the `_comment` on data/ui.json's own `water_asset_repaired` event_log row, which without this pair was a claim about a reader that did not exist (doc 91 A91-D-150). `key` is the asset, `coalesce_by` the key, so two mains dug up in one session are two banners: a repair is a place. The DISPATCH is not bound; see `_comment_wave28` in `events`."},
+		{"type": "water_asset_repaired", "notify_id": "water_asset_repaired",
+			"key": "asset", "coalesce_by": "key",
+			"args": {"asset": "asset", "time": "@time"}},
 		{"_comment": "Doc 05's diagnostic half (see `_comment_water_gap` above). The three `*_failed` types share ONE notify_id: a pump, a treatment plant and a source that have failed are the same sentence to a player and the same job to a crew, and three sets of copy would be three ways to say `send someone`. `water_tank_low` is deliberately log-only and has no row here — it is the warning BEFORE the thing worth waking someone for, and `water_tank_empty` is the thing."},
 		{"type": "water_capacity_shortage", "notify_id": "water_capacity_short",
 			"key": "zone", "args": {"zone": "zone"}},

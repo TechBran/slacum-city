@@ -13399,14 +13399,34 @@ before and after the re-split. It is the only sim delta between the two runs.**
 | 10 | 97.1 | 97.4 | 0.3 | 0.0 | 6.9 | 7.2 |
 | 15 | 137.3 | **193.2** | 55.9 | 0.0 | 37.8 | **80.1** |
 | 20 | 129.2 | **214.0** | 84.8 | 0.0 | 2.6 | **90.5** |
-| 25 | 128.6 | **214.0** | 85.4 | 0.0 | **0.0** | **68.0** |
+| 25 | 128.6 | **214.0** | **105.5** | 0.0 | **0.0** | **68.4** |
+
+> **CORRECTION (Wave 28 fix pass, 2026-09-05).** The `stranded` column read
+> **85.4** at game-day 25 in the first cut of this section, and 85.4 is not the
+> stranded figure — it is the SUPPLY GAIN, `214.0 − 128.6`. The two are different
+> numbers because part of the stranded water was also capped by the running
+> pumps' own `rated · power · condition` term, so recovering the split recovers
+> less than the whole of it. Re-measured with BOTH re-split sites reverted (the
+> `_solve_zone` tick and `supply_chain_of`'s `pump_delivering` — reverting only
+> the first leaves the READ using the running-set split and prints `stranded
+> 0.0`, which is what makes this easy to get wrong): game-day 25 reads `SUPPLY
+> 128.6 … demand 135.3 … press 1.00 … headroom 0.0 … BINDS pump 128.6 … stranded
+> **105.5** … deficit zones 1`. The fixed tree at the same day reads `SUPPLY
+> 214.0 … demand 145.6 … headroom 68.4 … stranded 0.0`. Doc 91 A91-D-149 carries
+> the same correction. **The command that proves it**, on this branch:
+> `godot --headless --path . -s res://tools/measure_water_chain.gd --
+> --strategy=curriculum --seeds=1337 --days=25 --stride=5 --losses`, and the same
+> command with `var share := pump.share_m3h` at `sim/water/water_system.gd`'s
+> `_solve_zone` and `minf(effective, n.share_m3h)` in `supply_chain_of` for the
+> fork arm.
 
 **At game-day 25 the fork's zone is in DEFICIT** — supply 128.6 against demand
-136.2, `zones_in_deficit 1` — with `source 257.3`, `treatment 385.9`, pumps
+135.3, `zones_in_deficit 1` — with `source 257.3`, `treatment 385.9`, pumps
 plated at `480.0` and mains carrying `214.0`. Every term of its chain is wider
-than what it delivers, and **85.4 m³/h — a third of its own treated water — is
-held by a pump that is not turning.** After the re-split it supplies **214.0**,
-which is `feed_capacity` and therefore the honest binder, with 68.0 m³/h spare.
+than what it delivers, and **105.5 m³/h — 41 % of its own treated water — is
+held by a pump that is not turning; 85.4 of it is water the fix actually
+recovers.** After the re-split it supplies **214.0**, which is `feed_capacity`
+and therefore the honest binder, with 68.4 m³/h spare.
 
 **Why nothing had seen it.** The loss is exactly zero whenever every live pump is
 running, which is true of both shipped cities at every tick of both `profile_sim`
@@ -13424,9 +13444,16 @@ supplying 129.2. The term is now what the pumps actually DELIVER
 one arithmetic and the advice line names a purchase that moves the number.
 
 **The four baselines do not move**, by the argument above and by measurement
-(§69.8). The arc DOES move — seed 1337 ends at 4,564 residents and $28,146,258
-against the fork's 4,919 and $26,977,275 over 25 game-days — and that is a
-city with more water in it spending differently, not a re-fit.
+(§69.8). The arc DOES move — and it moved a second time in the fix pass. Seed
+1337 over 25 game-days ends at **4,872 residents / $26,994,454** on the fork arm
+(both re-split sites reverted) and **4,514 / $28,174,964** on this branch. The
+first cut of this section published **4,564 / $28,146,258** for the same
+after-arm; the difference between that figure and 4,514 is isolated to
+A91-D-152 and A91-D-153, which change what the curriculum agent's water sites do
+after they are paid for (a condemned site is now destroyed rather than stranded,
+and a pump the grid cannot carry is now a WARN the agent's siting avoids). An
+arc figure is a population, not a baseline: the four `profile_sim` digests are
+the invariant and they are bit-identical (§69.8, §69.12).
 
 ### 69.5 §67.9 item 2, corrected: `cmd_place_water_main` HAS a door
 
@@ -13526,3 +13553,121 @@ reason A91-D-145 survived twenty-eight waves:
 
 Hash-neutral by measurement in all four cases, and by construction in the last — and
 `tests/test_water_chain.gd` is where the behaviour is pinned instead.
+
+### 69.9 The fix pass: what a committed save is worth (`tests/fixtures/player_save_0903/`)
+
+Every number in §69.1–§69.3 was measured on a copy of the player's device slot
+that lived in a scratch directory nobody named. That is not a measurement anyone
+can re-run, and the wave's own verifier said so. The slot is now committed at
+`tests/fixtures/player_save_0903/` — **568 KB**: `slot_0.json` plus the six
+generations and the manifest of `slot_0/`, exactly as the device wrote them.
+
+```
+godot --headless --path . -s res://tools/measure_water_chain.gd -- \
+    --saves=$PWD/tests/fixtures/player_save_0903 --slot=0 --days=1 --losses
+```
+
+reproduces §69.1 digit for digit: `population 41  treasury $14,899,376
+buildings 89  water nodes 5  mains 14`; `P-072-PMP | 94.2 | 74.6 | 74.6 | 80.0 |
+73.5 | 214.0 | 73.5 | 42.1 | 0.64 | 31.3 | pump 73.5 | treatment 74.6 | 0.1`;
+three mains `broken … leak 13.4 … penalty 0.12 … owning incident —`.
+
+**Name the flag wherever a real-save number is cited.** `--saves=` takes the
+directory that CONTAINS the slots, not a slot file, and the tool copies it into a
+private `user://` (`slacum-waterchain-<pid>`) before the real `SaveService`
+touches it, so the source directory is byte-identical before and after. The live
+`user://` (`~/.local/share/godot/app_userdata/Slacum City/saves`) holds a
+**different, smaller** city — pop 144, treasury $24,133, 35 buildings, 13 mains,
+no breaks — and none of §69's figures reproduce against it.
+
+### 69.10 STEP ONE, driven end to end on that save — and the two walls under it
+
+The player's first two sentences were *"create a water source"* and *"put pumps
+on it to increase our volume"*. Before this pass, driven through the shipped
+models, both were walls: `BuildController.enter_water_component("source")`
+returned ok and then **no tile within forty tiles of his plant was legal** —
+`E_NOT_OWNED ×2140`, `E_FOOTPRINT ×1092`, `E_NO_WATER ×486` — and nothing on any
+screen said so, because a ghost answers one tile and the question is a set.
+
+```
+godot --headless --path . -s res://tools/measure_water_chain.gd -- \
+    --saves=$PWD/tests/fixtures/player_save_0903 --slot=0 --step-one
+```
+
+drives the whole of it through `BuildController` (cards + the window read),
+`PathTool` (the run of pipe) and the sim's own commands, printing every move:
+
+| step | window | what the bar says | what the player taps |
+|---|---|---|---|
+| source | r=10 at (40, 40): **0 legal** of 441 · `E_FOOTPRINT×237 E_NO_WATER×121 E_NOT_OWNED×80 E_AUSTERITY×3` | *"3 spots 9 tiles away would take this — spending is frozen under austerity and lifts at the next hourly settlement."* | unpause one game-hour |
+| source | r=10 at (40, 40): **3 legal, 3 with power to spare** | *"3 spots for this within 10 tiles — the nearest is 9 tiles away, $38.1K."* | place at (33, 49) — **$38,086** |
+| treatment | r=10 at (33, 49): **51 legal**, 3 clean | *"51 spots … the nearest is 2 tiles away, $120K."* | place at (35, 49) — **$120,436** |
+| pump | r=10 at (35, 49): **34 legal**, 2 clean | *"34 spots … the nearest is 7 tiles away, $45.9K."* | place at (36, 56) — **$45,858** |
+
+**Step one costs $204,677 — 1.4 % of his treasury — and takes one game-day.**
+All three shells commission on game-day 1 (`water_component_commissioned` ×3).
+
+The zone, before and after (same command, its last two tables):
+
+| | source | treatment | upstream | pump rated | **pump DELIVERING** | mains | **SUPPLY** | headroom |
+|---|---|---|---|---|---|---|---|---|
+| before | 94.2 | 74.6 | 74.6 | 80.0 | 73.5 | 214.0 | **73.5** | 31.3 |
+| a week after | 200.0 | 153.4 | 153.4 | 120.0 | 112.5 | 267.5 | **112.5** | **70.5** |
+
+**Supply +53 %, headroom ×2.2, and all three pumps at `power_fraction 1.00`.**
+That is the player's sentence, answered, with the numbers he can check.
+
+**The first wall was not water at all.** Three tiles by his river refused for
+`E_AUSTERITY` and nothing else: doc 03 §2.10 layer 2 freezes every `construction`
+spend while the balance is under water, his save restores the flag verbatim at a
+balance of **$14,899,376**, and the first hourly settlement lifts it. His step one
+was one game-hour away and the only screen that could have told him was quoting
+`treasury.balance < cost`, which is not that test (A91-D-151).
+
+### 69.11 …and the two things the drive found underneath it
+
+**A91-D-152 — a pump he had paid for that could never pump.** The first complete
+drive placed the pump at (36, 44). On game-day 1 it was condemned by fire
+(`building_condemned_by_fire`, incident 2235), landed in `damaged` at level 1
+condition 0.10, and `P-094-PMP` was still `offline_manual` **thirty game-days
+later** — because `cmd_place_water_component` wrote `b.level` instead of
+`b.pending_level`, so `Building.is_new_build()` was false and
+`condemn_unanswered` took the branch its own comment says strands a site. One
+line. After it, the same drive commissions all three on day 1.
+
+**A91-D-153 — and then it ran at zero.** With the pump finally commissioned, the
+zone read `pump rated 80.0 → 120.0` and `pump DELIVERING 73.5 → 73.5`:
+`P-094-PMP: state=ok  power_fraction=0.00  flow=0.0`, for a full game-week. The
+pole-top that reaches (36, 44) was already full, and `cmd_place_water_component`
+had never asked — doc 93 §AD3's P0, one document over. The quote now publishes
+`power_ok` and the window sorts clean sites first, which is why the table above
+sites the pump at (36, 56): `pump DELIVERING 73.5 → 113.5`.
+
+**$45,858 of pump, twice, delivering nothing, with no symptom but a chain term
+that never moved.** Both were reachable from the player's own second sentence.
+
+### 69.12 The fix pass: the four baselines, again
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
+| bench | `9695f7667048b55d2426fdd8741afc12be49a51d747c552a25fd96f25248a559` | `b85488059d8dcb7f4f88151fdf2985427e18bd03066d8a7cf67a52aecfbed406` |
+
+**Bit-identical to §69.8's and to the fork's, and the fix pass added three sim
+changes to the four this wave already carried.** The isolation, per change:
+
+* **RR-233** (austerity in the two water placement quotes) adds a blocker to a
+  `preview` and to the refusal path of two commands. Neither baseline calls a
+  command, and neither city is ever in austerity.
+* **RR-234a** (`b.pending_level`) is inside `cmd_place_water_component`, which is
+  a player verb. Neither shipped city places a water component — both are
+  authored with their water works already standing — so the line is not executed
+  once in either run.
+* **RR-234b** (`can_serve_tile` in the water quote) is in the same command, on
+  the same reachability argument, and it adds only fields to a quote: it changes
+  no blocker and refuses nothing.
+
+The arc DOES move, and §69.4's addendum isolates that: seed 1337 at 25 game-days
+ends 4,514 / $28,174,964 against the pre-fix-pass 4,564 / $28,146,258, because
+RR-234a and RR-234b change what the curriculum agent's water sites do after they
+are paid for. An arc is a population; the four digests are the invariant.

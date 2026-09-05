@@ -66,6 +66,12 @@ signal grid_demolished(component_id: String, result: Dictionary)
 ## building — the row still fires, so the shell answers "there is nothing to
 ## open" once, in one place, rather than every caller guessing.
 signal power_row_opened(component_id: String, sim_id: String)
+## Wave 28 (doc 12 D-125). The one-row WATER summary was tapped: open S19 on the
+## doc-05 node that BINDS this building's zone — §2.5's narrowest stage, which is
+## the only node on the chain where a purchase moves anything. `node_id` is `""`
+## when no main reaches the building at all, for `power_row_opened`'s reason: the
+## row still fires and the shell answers "there is nothing to open" in one place.
+signal water_row_opened(node_id: String, sim_id: String)
 
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
@@ -120,6 +126,12 @@ var _actions: VBoxContainer
 ## Doc 05 §6's node block, built in code below the actions row.
 var _water: VBoxContainer
 var _water_rows: Dictionary = {}   # node id -> Button
+## Doc 12 D-125's one-row WATER summary — the POWER row's twin, and NOT the block
+## above it: `_water` is the doc-05 node LADDER a shell that hosts a water works
+## draws, and this is the SERVICE reading every building in the city has. Built
+## in code directly above the POWER section so the two utilities read as a pair.
+var _water_row: VBoxContainer
+var _water_row_button: Button
 ## Doc 12 §2.9 D-70's POWER section — ONE ROW and the fix strip since Wave 25
 ## (D-115). Built in code below the water block.
 var _power: VBoxContainer
@@ -399,6 +411,8 @@ func _build_actions() -> void:
 		_water_rows.clear()
 		_bind_progress(body)
 
+		_water_row = body.get_node_or_null("WaterSection") as VBoxContainer
+		_water_row_button = null
 		_power = body.get_node_or_null("PowerSection") as VBoxContainer
 		return
 	_build_progress(body)
@@ -492,6 +506,20 @@ func _build_actions() -> void:
 	_water.add_theme_constant_override(&"separation", int(_spacing))
 	_water.visible = false
 	body.add_child(_water)
+
+	# --- Wave 28: doc 12 D-125's one-row WATER summary ----------------------
+	# ABOVE the POWER section and BELOW the node ladder, because that is the
+	# order of ownership on this panel: verbs on this building, then the doc-05
+	# nodes this building HOSTS (almost never any), then the two utilities that
+	# FEED it. Water first of the two for the same reason doc 05 is read before
+	# doc 04 in a checklist: a building with no water does not grow, and a
+	# building with no power does not run — the first is the slower, quieter
+	# failure and the one no screen in this project named until this row.
+	_water_row = VBoxContainer.new()
+	_water_row.name = "WaterSection"
+	_water_row.add_theme_constant_override(&"separation", int(_spacing))
+	_water_row.visible = false
+	body.add_child(_water_row)
 
 	# --- Wave 17: doc 12 §2.9 D-70's POWER section -------------------------
 	# Below the water block for the same reason the water block is below the
@@ -672,6 +700,7 @@ func _render(v: Dictionary) -> void:
 	_render_upgrade(v)
 	_render_actions(v)
 	_render_water(v.get("water", {}))
+	_render_water_row()
 	_render_power(v.get("power", {}))
 
 
@@ -1238,6 +1267,76 @@ func _build_water_row(entry: Variant) -> VBoxContainer:
 	for check: Variant in (upgrade["checklist"] as Array):
 		row.add_child(_build_check_row(check))
 	return row
+
+
+## --- Wave 28: the one-row WATER summary (doc 12 D-125, doc 93 §BD7) --------
+##
+## The POWER row's twin, and it is a twin on purpose: `WaterPanelModel.building_row`
+## computes the whole sentence for the same reason `TransformerPanelModel.building_row`
+## does — it is a reading OF A ZONE that S19 also draws, and two surfaces
+## computing it twice is how they come to disagree.
+##
+## Three shapes, and the middle one is why the row exists at all:
+##
+##   * **served** — `Water · zone P-072-PMP · 64 % ›`, tinted with the tile's own
+##     band, opening S19 on the stage that BINDS the zone.
+##   * **served but far** — the tile is under doc 02's `upgrade_min_pressure`
+##     while the ZONE is over it. Doc 92 §67.8 measured a zone at pressure 1.00
+##     refusing a high-rise whose own tile read 0.50, six tiles from a main, and
+##     no screen in the project said so. This row says the number of tiles.
+##   * **unserved** — no main reaches the building. The row fires with an empty
+##     id, exactly as an unserved POWER row does, and the sentence that stays on
+##     THIS panel says what to do about it (`ui_water_unserved`), because a
+##     building nothing feeds is a fact about the building.
+##
+## No fix strip: doc 05 has no `cmd_fix_water_capacity` twin of doc 04's — the
+## answer to a dry tile is a main, which is `PathTool`'s verb on the Utility tab
+## and not a purchase this panel can quote. Saying so in one sentence beats a
+## button that can only ever refuse (A91-D-19).
+func _render_water_row() -> void:
+	if _water_row == null:
+		return
+	BuildingPanel._clear_children(_water_row)
+	_water_row_button = null
+	var row := WaterPanelModel.building_row(
+			controller.water if controller != null else null, _sim_id)
+	var available := bool(row.get("available", false))
+	_water_row.visible = available
+	if not available:
+		return
+	var unserved := bool(row.get("unserved", false))
+	var text := _text_args(str(row["text_key"]), row.get("args", {}) as Dictionary,
+			_text("ui_water_row_unserved", "Water"))
+	var node_id := str(row.get("node", ""))
+	var button := UIWidgets.button("WaterRow", "%s  %s" % [text, POWER_ROW_CHEVRON],
+			text, Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	# The tooltip carries the node the tap will open even when the row is elided,
+	# so the thing behind the chevron is always nameable (A5).
+	if node_id != "":
+		button.tooltip_text = "%s  ·  %s" % [text, node_id]
+	button.pressed.connect(_on_water_row_pressed.bind(node_id))
+	_apply_state_color(button, StringName(String(row["band_state"])))
+	_water_row.add_child(button)
+	_water_row_button = button
+	if unserved:
+		var none := UIWidgets.label("WaterUnserved",
+				_text("ui_water_unserved", ""), &"LegendRow", true)
+		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_apply_state_color(none, HudModel.STATE_CRITICAL)
+		_water_row.add_child(none)
+
+
+## The row's tap: open S19 on the node that binds this building's zone. A
+## building no main reaches fires it with an EMPTY id, so the shell's router
+## answers "there is nothing to open" once rather than every caller guessing.
+func _on_water_row_pressed(node_id: String) -> void:
+	water_row_opened.emit(node_id, _sim_id)
+
+
+## The one-row WATER summary, for a test or a coach mark that has to press it.
+func water_row_button() -> Button:
+	return _water_row_button
 
 
 # --- Wave 25: the POWER section is ONE ROW and a door ----------------------

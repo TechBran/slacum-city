@@ -35,6 +35,11 @@ extends SceneTree
 ##                   the player have to buy, and for how much"
 ##   --buy           …and then buy them, and re-measure. The acceptance test for
 ##                   a fix is the city AFTER the player has spent the money.
+##   --step-one      with `--saves`: drive the player's first sentence end to
+##                   end — enter the SOURCE card, read the window, follow its
+##                   own advice (buy the block, run the pipe, move to the
+##                   shoreline), place source → treatment → pump, and print
+##                   every move and every dollar
 ##   --quiet         tables only
 ##
 ## It is a MEASURING instrument (constitution §3): it boots the real `CitySim`,
@@ -66,6 +71,7 @@ func _initialize() -> void:
 	var shop := false
 	var buy := false
 	var quiet := false
+	var step_one := false
 	for raw in OS.get_cmdline_user_args():
 		var arg := String(raw)
 		if arg.begins_with("--days="):
@@ -93,7 +99,13 @@ func _initialize() -> void:
 			buy = true
 		elif arg == "--quiet":
 			quiet = true
+		elif arg == "--step-one":
+			step_one = true
 
+	if saves != "" and step_one:
+		_run_step_one(saves, slot)
+		quit(0)
+		return
 	if saves != "":
 		_run_save(saves, slot, days, stride, spread, losses, shop, buy)
 		quit(0)
@@ -454,6 +466,321 @@ func _buy_the_list(sim: CitySim) -> void:
 	for _i in 4:
 		sim.advance_coarse_hours(HOURS_PER_DAY, false)
 		sim.bus.drain()
+
+
+# ======================================================================
+# STEP ONE — the player's first sentence, driven end to end
+# ======================================================================
+#
+# *"we need to be able to, one, create a water source; two, put pumps on it."*
+#
+# The verifier's finding, on this same save: the card enters, and there is no
+# legal tile within forty tiles of the plant. `E_NOT_OWNED ×2140`,
+# `E_FOOTPRINT ×1092`, `E_NO_WATER ×486` — every refusal correct, every one of
+# them invisible, because a ghost answers one tile and the question is a set.
+#
+# This arm drives the whole of step one and step two **through the shipped UI
+# models only** — `BuildController` for the cards and the window read,
+# `PathTool` for the run of pipe, `CitySim`'s own commands underneath both — and
+# prints every move, every refusal and every dollar. It is the acceptance test
+# for the fix: a player who can read this transcript can follow it with a thumb.
+func _run_step_one(saves: String, slot: int) -> void:
+	_isolate_user_dir()
+	if _copy_saves(saves) == 0:
+		printerr("measure_water_chain: nothing copied out of " + saves)
+		_sweep()
+		return
+	var sim := CitySim.boot_from_files(1337)
+	var service := SaveService.new()
+	root.add_child(service)
+	if not service.load_slot(sim, slot):
+		printerr("measure_water_chain: slot %d did not load" % slot)
+		root.remove_child(service)
+		service.free()
+		sim.dispose()
+		_sweep()
+		return
+	var misalign := sim.clock.tick_index % GameClock.TICKS_PER_HOUR
+	if misalign != 0:
+		sim.scheduler.advance_fine_n(GameClock.TICKS_PER_HOUR - misalign)
+	sim.bus.drain()
+
+	print("")
+	print("=== STEP ONE on the player's own save, slot %d ===" % slot)
+	print("population %d  treasury $%s  buildings %d  water nodes %d  mains %d"
+			% [int(sim.population.city_population), _money(sim.treasury.balance),
+			sim.buildings.size(), _facility_count(sim), sim.water.edges.size()])
+	print("austerity_active=%s  (doc 03 §2.10 layer 2 blocks every `construction` spend while true)"
+			% str(sim.treasury.austerity_active))
+	_print_chain(sim, 0, false)
+
+	var cfg := UIConfig.load_from_files()
+	var formatter := RequirementFormatter.new(cfg)
+	var controller := BuildController.new(sim, formatter)
+	var opened := sim.treasury.balance
+	var placed: Array[String] = []
+	# The window is centred where the player's finger is. Step one has no finger
+	# yet, so it starts at the city's own water works; steps two and three start
+	# at the thing step one just built, because *"put pumps on IT"* is the
+	# player's own sentence and a chain is built beside itself.
+	var centre := controller._site_home()
+	for kind: String in ["source", "treatment", "pump"]:
+		var at := _step_one_place(sim, controller, cfg, kind, centre, placed)
+		if not TileGrid.in_bounds(at.x, at.y):
+			print("    !! could not site a %s — stopping here" % kind)
+			break
+		centre = at
+	print("")
+	print("-- what step one cost --")
+	print("    treasury $%s -> $%s  (spent $%s)"
+			% [_money(opened), _money(sim.treasury.balance),
+			_money(opened - sim.treasury.balance)])
+	print("    placed: %s" % ("nothing" if placed.is_empty() else ", ".join(placed)))
+	# Let the shells finish building. A doc-05 node is born `offline_manual` and
+	# goes live when the doc-02 construction job completes, so the chain worth
+	# printing is the one after the last crew has left — which is measured, not
+	# guessed at, because that wait is itself part of the answer to "how long
+	# does step one take".
+	# The events that decide whether a site the player paid for ever becomes a
+	# node — a fire inside the build window is the whole of A91-D-152 — printed
+	# rather than summarised, because "the pump is dark" is not a diagnosis.
+	var day := 0
+	var news: Array[String] = []
+	while day < 30 and _offline_water_nodes(sim) > 0:
+		sim.advance_coarse_hours(HOURS_PER_DAY, false)
+		for ev: Variant in sim.bus.drain():
+			var row: Dictionary = ev
+			var kind := String(row.get("type", ""))
+			if kind.contains("fire") or kind.contains("damag") or kind.contains("ignit") \
+					or kind.contains("burn") or kind.contains("commission"):
+				news.append("day %d  %s" % [day + 1, str(row).substr(0, 160)])
+		day += 1
+	for line: String in news:
+		print("    %s" % line)
+	for raw: Variant in _sorted_keys(sim.water.nodes):
+		var n: WaterNode = sim.water.nodes[raw]
+		if n.variant == &"junction" or n.state != &"offline_manual":
+			continue
+		var shell: Building = sim.buildings.get(n.power_ref)
+		print("    !! %s IS STILL OFFLINE: its shell %s is %s at level %d, condition %.2f"
+				% [raw, n.power_ref, "gone" if shell == null else String(shell.state),
+				0 if shell == null else shell.level,
+				0.0 if shell == null else shell.condition])
+	print("=== the chain %d game-days later, with the new nodes running ===" % day)
+	_print_nodes(sim)
+	_print_chain(sim, day, false)
+	# A settled week: doc 05 §2.6's restart lockout has expired, doc 04's load
+	# has re-solved around the new kW, and the tank has found its level. This is
+	# the reading the player would take on the following Monday.
+	for _w in 7:
+		sim.advance_coarse_hours(HOURS_PER_DAY, false)
+		sim.bus.drain()
+	print("")
+	print("=== a week after that ===")
+	_print_chain(sim, day + 7, false)
+	# Doc 04's half of the answer (A91-D-153): a pump that is commissioned and
+	# `ok` and drawing nothing is a pump on a full pole-top, and `power_fraction`
+	# is the only place that shows.
+	for raw3: Variant in _sorted_keys(sim.water.nodes):
+		var n3: WaterNode = sim.water.nodes[raw3]
+		if n3.variant != &"pump":
+			continue
+		print("    %s: state=%s  power_fraction=%.2f  condition=%.2f  flow=%.1f"
+				% [raw3, String(n3.state), sim.water.power_fraction_of(n3),
+				n3.condition, n3.flow_m3h])
+	root.remove_child(service)
+	service.free()
+	sim.dispose()
+	_sweep()
+
+
+## One component, sited by following the window's own advice until it can be
+## placed. Every loop iteration prints exactly what a player would read on the
+## placement bar and exactly what they would tap next.
+func _step_one_place(sim: CitySim, controller: BuildController, cfg: UIConfig,
+		kind: String, start: Vector2i, placed: Array[String]) -> Vector2i:
+	print("")
+	print("-- STEP: place a %s --" % kind)
+	var entered := controller.enter_water_component(kind)
+	print("    BuildController.enter_water_component(%s) -> %s" % [kind,
+			"ok" if bool(entered["ok"]) else String(entered.get("reason_code", ""))])
+	if not bool(entered["ok"]):
+		return Vector2i(-1, -1)
+	var centre := start
+	for _attempt in 8:
+		var hint := controller.placement_sites(centre)
+		var advice: Dictionary = hint["advice"]
+		print("    window r=%d at (%d, %d): %d legal (%d with power to spare) of %d scanned  %s"
+				% [int(hint["radius"]), centre.x, centre.y, int(hint["count"]),
+				int(hint["clean"]), int(hint["scanned"]),
+				_reason_histogram(hint["reasons"])])
+		print("      bar says: %s" % _resolve_advice(cfg, advice))
+		if bool(hint["ok"]):
+			var tile: Vector2i = hint["nearest"]
+			controller.move_to_tile(tile)
+			var verdict := controller.verdict()
+			var confirm := controller.confirm()
+			print("      ghost at (%d, %d) -> %s, can_confirm=%s"
+					% [tile.x, tile.y, str(verdict.get("verdict", "")),
+					str(controller.can_confirm())])
+			if not bool(confirm["ok"]):
+				print("      !! confirm refused %s" % String(confirm.get("reason_code", "")))
+				return Vector2i(-1, -1)
+			var result := sim.cmd_place_water_component(kind, tile,
+					controller.component_level, false)
+			print("      cmd_place_water_component -> %s  $%s" % [
+					"ok" if bool(result["ok"]) else String(result.get("reason_code", "")),
+					_money(int((result.get("payload", {}) as Dictionary).get("cost", 0)))])
+			controller.cancel()
+			if not bool(result["ok"]):
+				return Vector2i(-1, -1)
+			var shell_now: Building = sim.buildings.get(str((result.get("payload", {}) as Dictionary).get("sim_id", "")))
+			print("      shell %s state=%s cond=%.2f job=%s" % [
+					str((result.get("payload", {}) as Dictionary).get("sim_id", "")),
+					"—" if shell_now == null else String(shell_now.state),
+					-1.0 if shell_now == null else shell_now.condition,
+					str((result.get("payload", {}) as Dictionary).get("job_id", -1))])
+			placed.append("%s at (%d, %d) for $%s" % [kind, tile.x, tile.y,
+					_money(int((result.get("payload", {}) as Dictionary).get("cost", 0)))])
+			return tile
+		if not _step_one_follow(sim, controller, hint, kind):
+			return Vector2i(-1, -1)
+		# A shoreline answer moves the WINDOW rather than buying anything — and
+		# a window that does not move is an answer that has run out, not a loop
+		# to keep running.
+		var moved: Dictionary = (advice.get("fix_target", {}) as Dictionary).get(
+				"params", {}) as Dictionary
+		if str(advice.get("key", "")) == "ui_site_no_shoreline":
+			if not moved.has("tile") or Vector2i(moved["tile"]) == centre:
+				print("      !! the window is already on the water and still has no site")
+				return Vector2i(-1, -1)
+			centre = moved["tile"]
+	return Vector2i(-1, -1)
+
+
+## Do what the bar's `FIX THIS →` would do. Returns false when the advice is not
+## something a player can act on from here.
+func _step_one_follow(sim: CitySim, controller: BuildController,
+		hint: Dictionary, kind: String) -> bool:
+	var advice: Dictionary = hint["advice"]
+	match str(advice.get("key", "")):
+		"ui_site_buy_block":
+			var block_id := str((advice["args"] as Dictionary).get("at", ""))
+			var bought := sim.cmd_buy_block(block_id, false)
+			print("      -> BUY %s: %s  $%s" % [block_id,
+					"ok" if bool(bought["ok"]) else String(bought.get("reason_code", "")),
+					_money(int((bought.get("payload", {}) as Dictionary).get("price", 0)))])
+			if not bool(bought["ok"]):
+				return false
+			return _step_one_wait_ready(sim, block_id)
+		"ui_site_develop_block":
+			var block_id := str((advice["args"] as Dictionary).get("at", ""))
+			var started := sim.cmd_start_development(block_id, false)
+			print("      -> DEVELOP %s: %s" % [block_id,
+					"ok" if bool(started["ok"]) else String(started.get("reason_code", ""))])
+			if not bool(started["ok"]):
+				return false
+			return _step_one_wait_ready(sim, block_id)
+		"ui_site_austerity":
+			# Doc 03 §2.10 layer 2. The site is READY; the freeze is not. One
+			# hour of ordinary play is the whole remedy, and it is the remedy the
+			# bar names — this is that hour.
+			print("      -> spending frozen (austerity): let one game-hour settle")
+			sim.advance_coarse_hours(1, false)
+			sim.bus.drain()
+			print("         austerity_active=%s" % str(sim.treasury.austerity_active))
+			return not sim.treasury.austerity_active
+		"ui_site_no_shoreline":
+			print("      -> move the window to the water and look again")
+			return true
+		"ui_site_no_main":
+			return _step_one_lay_main(sim, controller, hint, kind)
+	return false
+
+
+## Doc 09's six phases, run by letting city time pass — the same thing a player
+## does by putting the phone down. Capped, so a block that will never finish
+## reports rather than hangs.
+func _step_one_wait_ready(sim: CitySim, block_id: String) -> bool:
+	for day in 40:
+		var block: LandBlock = sim.world.block(block_id)
+		if block != null and block.is_ready():
+			print("      -> %s READY after %d game-days" % [block_id, day])
+			return true
+		sim.advance_coarse_hours(HOURS_PER_DAY, false)
+		sim.bus.drain()
+	print("      !! %s never reached READY" % block_id)
+	return false
+
+
+## The run of pipe, through `PathTool` — the Utility tab's own card, the same
+## door doc 92 §69.5 records as already existing.
+func _step_one_lay_main(sim: CitySim, controller: BuildController,
+		hint: Dictionary, _kind: String) -> bool:
+	var target: Vector2i = hint["centre"]
+	var near := sim.water.nearest_main_tile(target, TileGrid.SIZE)
+	if near.is_empty():
+		print("      !! no live main anywhere to run from")
+		return false
+	var path := PathTool.new(sim, controller.formatter)
+	var entered := path.enter("water_main_service")
+	if not bool(entered["ok"]):
+		print("      !! PathTool.enter(water_main_service) -> %s"
+				% String(entered.get("reason_code", "")))
+		return false
+	path.move_to_tile(near["tap_tile"])
+	path.begin_run(near["tap_tile"])
+	path.move_to_tile(target)
+	var verdict := path.verdict()
+	print("      -> MAIN from (%d, %d) to (%d, %d): %d tiles, %s, $%s"
+			% [int(near["tap_tile"].x), int(near["tap_tile"].y), target.x, target.y,
+			path.tiles().size(), str(verdict.get("verdict", "")),
+			_money(path.run_cost())])
+	if not path.can_confirm():
+		print("      !! run refused %s" % str(verdict.get("code", "")))
+		return false
+	var result := path.commit()
+	print("      cmd_place_water_main -> %s" % ("ok" if bool(result["ok"])
+			else String(result.get("reason_code", ""))))
+	return bool(result["ok"])
+
+
+## Doc 05 §6: a node is born `offline_manual` and is switched on by the doc-02
+## construction job that builds its shell. Counting them is how this arm knows
+## the crews have finished rather than assuming a number of days.
+static func _offline_water_nodes(sim: CitySim) -> int:
+	var count := 0
+	for raw: Variant in sim.water.nodes:
+		var node: WaterNode = sim.water.nodes[raw]
+		if node.variant != &"junction" and node.state == &"offline_manual":
+			count += 1
+	return count
+
+
+## The window's refusal histogram, biggest first — the read the player never had.
+static func _reason_histogram(reasons: Dictionary) -> String:
+	var rows: Array = []
+	for key: Variant in reasons:
+		rows.append([-int(reasons[key]), String(key)])
+	rows.sort()
+	var parts: Array[String] = []
+	for row: Variant in rows:
+		parts.append("%s×%d" % [(row as Array)[1], -int((row as Array)[0])])
+	return "" if parts.is_empty() else "(" + "  ".join(parts) + ")"
+
+
+## The advice sentence exactly as `ui/build_sheet.gd` renders it — string key
+## through the real table, nested `ui_` args resolved, nothing invented here.
+static func _resolve_advice(cfg: UIConfig, advice: Dictionary) -> String:
+	var key := str(advice.get("key", ""))
+	if key == "" or cfg == null or not cfg.has_string(key):
+		return "(no advice)"
+	var args: Dictionary = {}
+	for arg: Variant in (advice.get("args", {}) as Dictionary):
+		var value: Variant = (advice["args"] as Dictionary)[arg]
+		args[arg] = cfg.t(str(value)) if str(value).begins_with("ui_") \
+				and cfg.has_string(str(value)) else value
+	return cfg.t(key, args)
 
 
 # ---------------------------------------------------------------- utilities

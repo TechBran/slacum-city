@@ -4566,7 +4566,36 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 		cost += lateral.size() * econ_curves.water_main_cost_per_tile(tier, m_build)
 	if not grid.would_serve(tile):
 		blockers.append(&"E_UNSERVED")
-	if treasury.balance < cost:
+	# **Doc 93 §AD3's P0, one document over** (Wave 28 fix, doc 91 A91-D-153).
+	# `cmd_place_building` has asked doc 04 whether the transformer can CARRY the
+	# new load since Wave 12 — a WARNING and not a refusal, because doc 04 §2.1
+	# gates placement on coverage and authorises no capacity refusal — and this
+	# verb, which places the heaviest single draw in doc 05's roster, never asked
+	# at all. **Measured on the player's save**: a pump sited at (36, 44) passed
+	# every check, was built, was commissioned, and ran at `power_fraction 0.00`
+	# for a week because the pole-top that reaches that tile was already full.
+	# `power_ok` false is what the ghost turns amber on; the placement is still
+	# allowed, exactly as a house's is.
+	var served := grid.can_serve_tile(tile, water.data.kw_required(variant, level, subtype),
+			_ambient_c(), peak_component_loads())
+	# **The preview has to be able to say `E_AUSTERITY`** (Wave 28 fix, doc 91
+	# A91-D-151). `treasury.balance < cost` is not the whole of doc 03 §2.10:
+	# layer 2 refuses every `construction` spend outright while austerity is
+	# active, whatever the balance is. Quoting on the balance alone made the
+	# GHOST say `valid` and the COMMAND answer `E_AUSTERITY` — measured on the
+	# player's own save, which loads austerity-active at a balance of
+	# $14,899,376 — and doc 12 §2.7 is explicit that the preview and the commit
+	# are one code path.
+	#
+	# **The funds test itself is untouched.** `Treasury.can_spend` would have
+	# been the tidier call and it is NOT the same number: it admits a spend down
+	# to the credit floor, which is a doc 03 §2.10 layer-4 decision this verb has
+	# never made. The austerity arm is added beside the balance test, not in
+	# place of it.
+	if treasury.austerity_active \
+			and Treasury.AUSTERITY_BLOCKED_CATEGORIES.has(&"construction"):
+		blockers.append(&"E_AUSTERITY")
+	elif treasury.balance < cost:
 		blockers.append(&"E_FUNDS")
 
 	# **`E_NO_MAIN` has to say HOW FAR** (Wave 28, doc 12 D-126). The refusal
@@ -4586,7 +4615,12 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 			"main": String(tap.get("edge", "")), "tap_distance": reach,
 			"tap_radius_tiles": radius, "nearest_main_tiles": nearest,
 			"requires_water_adjacent": bool(rules.get("requires_water_adjacent", false)),
-			"kw_required": water.data.kw_required(variant, level, subtype)}
+			"kw_required": water.data.kw_required(variant, level, subtype),
+			"power_ok": bool(served["ok"]),
+			"component": String(served.get("at", "")),
+			"transformer": String(served.get("transformer", "")),
+			"deficit_kw": float(served.get("deficit_kw", 0.0)),
+			"ratio": float(served.get("r_after", 0.0))}
 	if not blockers.is_empty():
 		return CommandQueue.fail(blockers[0], quote)
 	if preview:
@@ -4604,7 +4638,23 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	b.stats = shell_stats
 	b.max_level = catalog.max_level_of(WATER_SHELL_ARCHETYPE)
 	_stamp_building_rules(b)
-	b.level = level
+	# **`pending_level`, not `level`** (Wave 28 fix, doc 91 A91-D-152). A shell
+	# under construction is doc 02 §2.12's NEW BUILD and `Building.is_new_build()`
+	# is `state == under_construction and level == 0`; `complete_construction`
+	# reads `pending_level` and is the line that promotes it. Writing `level`
+	# here instead made every water site look like an UPGRADE IN PROGRESS from
+	# the moment it was paid for, and `condemn_unanswered` — whose own comment
+	# says a new build must be destroyed rather than stranded, because *"it is no
+	# longer `under_construction`, so `complete_construction` can never run"* —
+	# therefore took the other branch and put it in `damaged` at level 1.
+	#
+	# **Measured on the player's own save**, driving his own second sentence: the
+	# pump placed at (36, 44) for $45,858 caught fire on game-day 1
+	# (`building_condemned_by_fire`, incident 2235), landed in `damaged` at level
+	# 1 condition 0.10, and its node `P-094-PMP` was still `offline_manual`
+	# thirty game-days later — a pump the player had bought that could never
+	# pump, with no verb anywhere in the game to finish it.
+	b.pending_level = level
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, tile, size)
 	buildings[sim_id] = b
@@ -4728,7 +4778,13 @@ func cmd_place_water_main(tiles: Array, tier: String = "service",
 		blockers.append(&"E_NOT_CONNECTED")
 	var cost := path.size() * econ_curves.water_main_cost_per_tile(tier,
 			float(treasury.difficulty().get("M_build", 1.0)))
-	if treasury.balance < cost:
+	# Doc 03 §2.10 layer 2, in the quote — see `cmd_place_water_component`'s note.
+	# This is the seam the verifier drove on the player's save: `PathTool` said
+	# `valid`, `can_confirm` said true, and the commit came back `E_AUSTERITY`.
+	if treasury.austerity_active \
+			and Treasury.AUSTERITY_BLOCKED_CATEGORIES.has(&"construction"):
+		blockers.append(&"E_AUSTERITY")
+	elif treasury.balance < cost:
 		blockers.append(&"E_FUNDS")
 	var quote := {"blockers": blockers, "cost": cost, "tiles": path.size(),
 			"tier": tier, "capacity_m3h": water.data.main_capacity(tier)}
@@ -4912,6 +4968,11 @@ func cmd_repair_water_asset(asset_id: String, preview: bool = false) -> Dictiona
 	var in_flight := water_repair_job(asset_id)
 	if in_flight >= 0:
 		blockers.append(&"E_ALREADY_REPAIRING")
+	# **No austerity arm here, and that is doc 03 §2.10's ruling and not an
+	# omission.** The category is `repair`, which layer 2 does not block —
+	# `AUSTERITY_BLOCKED_CATEGORIES` is `construction`/`land`/`vehicle` — because
+	# a city in austerity must still be allowed to stop a leak. So this quote's
+	# only money test is the balance, exactly as `cmd_repair_grid_component`'s is.
 	if treasury.balance < cost:
 		blockers.append(&"E_FUNDS")
 	# §2.12's work content, in the crew-minutes doc 05 owns, converted to the
@@ -4950,7 +5011,9 @@ func cmd_repair_water_asset(asset_id: String, preview: bool = false) -> Dictiona
 	# Consumers, named: `ui/water_panel_model.gd` re-reads the job for its ETA
 	# and `data/ui.json.event_log` files it under `water`. No toast — the panel
 	# the player is standing in shows the crew and its clock, exactly as doc 04's
-	# does; the ARRIVAL is what raises a banner.
+	# does; the ARRIVAL is what raises a banner, through the
+	# `water_asset_repaired` binding in `data/notifications.json` (there is
+	# deliberately no binding for THIS event, which is why it is named here).
 	bus.emit(&"water_asset_repair_started", {"asset": asset_id,
 			"target_kind": quote["target_kind"], "kind": kind, "cost": cost,
 			"damage_fraction": damage, "crew_hours": crew_hours, "job_id": job_id,

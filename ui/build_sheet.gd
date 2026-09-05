@@ -101,6 +101,14 @@ var _reduce_motion := false
 ## than at the 10 Hz revalidation rate (§2.7) — a buzz per frame is not feedback.
 var _last_ghost_origin := Vector2i(-1, -1)
 var _last_verdict: StringName = &""
+## **"Where CAN this go", memoised** (Wave 28 fix, doc 12 D-127).
+## `BuildController.placement_sites()` is a window of previews, not a point, so
+## it is far too expensive for §2.7's 10 Hz revalidation. It is recomputed only
+## when the CARD changes or when the ghost walks out of the window that was
+## scanned — which is right and not merely cheap: the answer to "where can this
+## go" does not change while the finger moves inside the window it is about.
+var _site_hint: Dictionary = {}
+var _site_hint_card := ""
 
 
 ## The one wiring entry point. `game/main.gd` hands over the parsed config and
@@ -959,10 +967,60 @@ func _refresh_bar() -> void:
 	# lines in the column D-17 gave it and elides after that.
 	var state: StringName = failure["state"]
 	var glyph := model.state_glyph(state)
-	_bar_issue.text = ("%s %s" % [glyph, str(failure["body"])]).strip_edges()
+	var body := str(failure["body"])
+	var fix_target: Dictionary = failure.get("fix_target", {}) as Dictionary
+	# **…and where it COULD go** (Wave 28 fix, doc 12 D-127). The formatter's
+	# sentence is about the tile under the finger and is complete as far as it
+	# goes; it cannot answer the question a blocked player is actually asking,
+	# because that question is about a set. The window's sentence goes second,
+	# and its `fix_target` WINS when it has one: the formatter routes at the tile
+	# the ghost is standing on, which for `NOT_OWNED` is a block that may not be
+	# buyable and may not be the one that works, while the window's target is a
+	# place it has actually verified.
+	var hint := site_hint()
+	var hint_text := _site_hint_text(hint)
+	if hint_text != "":
+		body = "%s  %s" % [body, hint_text]
+		var hint_fix: Dictionary = hint.get("fix_target", {}) as Dictionary
+		if not hint_fix.is_empty():
+			fix_target = hint_fix
+	_bar_issue.text = ("%s %s" % [glyph, body]).strip_edges()
 	_bar_issue.tooltip_text = _bar_issue.text
 	_apply_state_color(_bar_issue, state)
-	_show_bar_fix(failure.get("fix_target", {}) as Dictionary)
+	_show_bar_fix(fix_target)
+
+
+## The window read, memoised per card and per window (see `_site_hint`). Public
+## because the shell paints `hint.tiles` under the ghost and a test drives it.
+func site_hint() -> Dictionary:
+	if controller == null or not controller.is_placing() or is_placing_path():
+		_site_hint = {}
+		_site_hint_card = ""
+		return {}
+	var card := "%s|%s|%d" % [controller.archetype, controller.component_kind,
+			controller.component_level]
+	var centre: Vector2i = _site_hint.get("centre", Vector2i(-1, -1))
+	var reach := int(_site_hint.get("radius", 0))
+	var here := controller.origin if controller.has_origin else centre
+	var stale := _site_hint.is_empty() or card != _site_hint_card \
+			or maxi(absi(here.x - centre.x), absi(here.y - centre.y)) > reach
+	if stale:
+		_site_hint_card = card
+		_site_hint = controller.placement_sites()
+	return _site_hint
+
+
+## The window's sentence, or `""` when it has nothing to add. A window that found
+## sites while the ghost is standing on a bad tile is the most useful of the five
+## — it is the difference between "move it" and "there is nowhere to move it to".
+func _site_hint_text(hint: Dictionary) -> String:
+	if hint.is_empty():
+		return ""
+	var advice: Dictionary = hint.get("advice", {}) as Dictionary
+	var key := str(advice.get("key", ""))
+	if key == "":
+		return ""
+	return _text_args(key, advice.get("args", {}) as Dictionary, "")
 
 
 ## Arms or hides the bar's door. A target whose kind is `FIX_NONE` is not a

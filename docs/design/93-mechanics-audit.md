@@ -6923,3 +6923,78 @@ its own. **The purchase that moves 214.0 is a trunk main, and the player already
 has that door** (`ui/path_tool.gd`'s `water_main_trunk` card, doc 92 §69.5) —
 the AGENT does not, which is a harness gap. The two belong in one wave, measured
 together. Doc 92 §69.6.
+
+### BD7. Where does D-125's one-row WATER summary go on S5, and what does it open?
+
+**It goes directly ABOVE the POWER row, and it opens S19 on the stage that BINDS
+the zone.** Three decisions, and each one had a plausible alternative.
+
+**Placement.** S5's column reads: verbs on this building, then the doc-05 nodes
+this building HOSTS (`WaterNodes`, almost never any), then the utilities that
+FEED it. The two service rows belong together — a player comparing "why is this
+building not growing" reads pressure and load in one glance — and water goes
+first for the same reason doc 05 is read before doc 04 in a checklist: a building
+with no water does not grow and a building with no power does not run, and the
+first is the slower, quieter failure. It is also the failure no screen in this
+project named until this row: doc 92 §67.8 measured a zone at pressure **1.00**
+refusing a high-rise whose own tile read **0.50**, six tiles from a main, and the
+word *tiles* appeared on no surface a player could reach.
+
+**Target.** The row opens S19 on `supply_chain_of(zone).binding_ids[0]` — the
+narrowest stage — and not on the nearest node. §2.5's supply is a min of four
+terms, so the only node on the chain where a purchase moves anything is the one
+that binds; a row that opened the nearest pump would be the $5.5M of pumps doc 92
+§67.4 measured, sold one tap at a time. A building no main reaches fires the
+signal with an EMPTY id, exactly as an unserved POWER row does, so the root
+answers "there is nothing to open" in one place.
+
+**No fix strip.** S5's POWER block carries `cmd_fix_power_capacity`'s two-tap
+purchase and this block deliberately carries none: doc 05 has no twin of that
+verb, and the answer to a dry TILE is a run of main, which is `PathTool`'s verb
+on the Utility tab and not something this panel can quote. One sentence that says
+so (`ui_water_unserved`) beats a button that can only ever refuse — A91-D-19 in
+the direction people forget it runs.
+
+### BD8. "Where CAN this go?" — is that a question the build sheet is allowed to answer?
+
+**Yes, and it was the missing half of §2.7 all along.** The ghost is a
+point-wise answer: it tints one tile and names the first thing wrong with it.
+That is the right shape for *"can I put it HERE"* and it is no shape at all for
+*"where can I put it"*, which is the question a player asks the moment the first
+answer is no. Driven on the player's own save, his first sentence — *"create a
+water source"* — produced **no legal tile within forty tiles of his plant**, and
+every single refusal he could see was about the one tile under his finger.
+
+`BuildController.placement_sites()` answers the set. Three rules keep it honest:
+
+1. **It is the same call.** The window runs `evaluate()`, the ghost's own
+   preflight, so a tile the window returns is a tile the ghost will tint green
+   when the finger reaches it. Two implementations of "legal" is how they come to
+   disagree.
+2. **It reads and it charges nothing.** Every verdict is a `preview = true`
+   quote, and `evaluate(tile)` takes its origin as an argument, so a scan cannot
+   move the ghost the player is dragging.
+3. **It names a purchase, not a plan.** The advice is the CHEAPEST single thing
+   that turns some tile in the window legal — a settlement to wait for, a block
+   to buy, a transformer to place, a main to run — carried as a `fix_target` in
+   `RequirementFormatter`'s own shape, so the placement bar's existing
+   `FIX THIS →` routes it with no second router.
+
+**Cost, and why it is not on the 10 Hz path.** A radius-10 window is 441
+previews. `ui/build_sheet.gd` memoises the read per CARD and per WINDOW and
+recomputes only when the ghost walks out of the window that was scanned — which
+is correct and not merely cheap, because the answer to "where can this go" does
+not change while the finger moves inside the window it is about.
+
+### BD9. A site the bar recommends must be a site that will RUN
+
+Doc 04 §2.1 gates placement on coverage and authorises no capacity refusal, so
+`E_TRANSFORMER_FULL` is a WARNING on every path that raises it and the player may
+always place anyway. That is settled (doc 93 §AD3) and this ruling does not
+reopen it. What it adds: **a warned site is legal and it is not the site to
+recommend.** `placement_sites` sorts clean sites ahead of warned ones, so
+"nearest" never means "nearest tile whose pole-top is already full". Measured on
+the player's save: the nearest pump site was exactly that, and the pump built on
+it ran at `power_fraction 0.00` — 40 m³/h of rated capacity bought, zero
+delivered (A91-D-153). The warned tiles stay in the set, behind the clean ones,
+because a player who has understood the warning is entitled to take one.

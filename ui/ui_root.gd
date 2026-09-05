@@ -585,6 +585,7 @@ func _connect_screens() -> void:
 		_connect(onboarding.finished, _on_onboarding_finished)
 	if building_panel != null:
 		_connect(building_panel.power_row_opened, _on_power_row_opened)
+		_connect(building_panel.water_row_opened, _on_water_row_opened)
 	if transformer_panel != null:
 		_connect(transformer_panel.repaired, _on_transformer_repaired)
 		_connect(transformer_panel.upgraded, _on_transformer_upgraded)
@@ -2274,6 +2275,24 @@ func _on_water_customer(sim_id: String, world_pos: Vector3) -> void:
 ## its subject out of the city.
 func _on_water_closed() -> void:
 	water_node_selected.emit("")
+
+
+## S5's one-row WATER summary was tapped (doc 12 D-125). **Served here rather
+## than re-emitted**, for `_on_power_row_opened`'s reason one utility over: both
+## panels are on this root's own `PanelLayer` and the route is one line. The
+## shell is still TOLD, through `water_node_selected`, because it owns
+## `selected_entity_id`.
+##
+## A building no main reaches fires this with an empty id — the node that would
+## be opened does not exist — so the answer is to clear the selection, which is
+## what a tap on empty ground does. Note that this does NOT close S5: the
+## sentence explaining an unserved building is on S5, and closing the panel the
+## player is reading in order to say nothing would be worse than saying nothing.
+func _on_water_row_opened(node_id: String, _sim_id: String) -> void:
+	if node_id == "" or not show_water_node(node_id):
+		water_node_selected.emit("")
+		return
+	water_node_selected.emit(node_id)
 
 
 ## S5's one-row POWER summary was tapped, or a `POWER_CAPACITY` row's

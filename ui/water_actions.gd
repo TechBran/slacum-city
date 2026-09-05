@@ -370,6 +370,16 @@ func node_block(node_id: String) -> Dictionary:
 	out["zone"] = _zone_row(zone, chain, band)
 	out["chain"] = chain_rows(chain)
 	out["binding"] = String(chain.get("binding", "none"))
+	# **What binds AFTER the thing the player is about to buy** (doc 12 §2.26).
+	# §2.5's chain is a min of four terms, so raising the narrowest one moves the
+	# zone exactly as far as the SECOND narrowest — and a panel that says "raise
+	# the intake" without saying "…and then the mains stop you at 214" has sold a
+	# purchase whose whole value the player cannot see. `WaterSystem.supply_chain`
+	# has published both since Wave 28; this is the line that gives them a reader.
+	out["next_binding"] = String(chain.get("next_binding", "none"))
+	out["next_binding_m3h"] = float(chain.get("next_binding_m3h", 0.0))
+	out["next_binding_text"] = RequirementFormatter.water_m3h(
+			float(chain.get("next_binding_m3h", 0.0)))
 	out["breaks"] = break_rows(zone)
 	out["customers"] = customer_rows(zone)
 	out["repair"] = repair_quote(node_id)

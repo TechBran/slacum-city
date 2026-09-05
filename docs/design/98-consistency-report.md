@@ -10846,3 +10846,110 @@ true of the game. `ui/path_tool.gd` has carried `water_main_service` and
 `water_main_trunk` since Wave 10 and reaches the command on its line 654. The
 player can lay a main; the agent cannot. Recorded so a later wave does not build
 a second door beside the one that exists. Doc 92 §69.5.
+
+## §73b. Wave 28 fix pass — the doors reach the player, and step one is possible (2026-09-05)
+
+*Lane B's adversarial verifier returned `fix_first` on five blockers and one
+refuted number. RR-229..RR-232 are the blockers; RR-233 and RR-234 are what
+driving the player's own first two sentences on his own committed save turned up
+underneath them. Defects doc 91 A91-D-150..A91-D-153. Rulings doc 93 §BD7–§BD9.
+Measurements doc 92 §69.9–§69.12.*
+
+### RR-229 — D-125's one-row WATER summary is drawn (A91-D-150a)
+
+`WaterPanelModel.building_row()` shipped with no caller outside its own test, so
+doc 12 §2.26 D-125 described a row nobody could see and the three strings behind
+it rendered on no surface. `ui/building_panel.gd` now draws it in
+`_render_water_row()` — directly above the POWER row, `WaterSection` beside
+`PowerSection` — and raises `water_row_opened(node_id, sim_id)`, which
+`UIRoot._on_water_row_opened` serves in one line by opening S19 on the stage that
+BINDS the zone and telling the shell through `water_node_selected`. An unserved
+building fires it with an empty id and keeps its own sentence
+(`ui_water_unserved`) on S5, exactly as the POWER row does. Ruling doc 93 §BD7.
+
+### RR-230 — the arrival banner the comments promised (A91-D-150b)
+
+`data/ui.json`'s `water_asset_repaired` row asserted *"a second reader in
+data/notifications.json"* and `sim/city_sim.gd` repeated it. There was neither a
+binding nor an event row, so `NotificationRouter.rule_for()` never matched.
+`data/notifications.json` now carries both: `P3_routine`, severity 1,
+`aggregate: false`, `coalesce_by: key`, `deeplink: overlay/water`, cooldown 30 —
+`grid_repair_done`'s shape with `transformer_removed`'s coalescing, because a
+main the player paid to dig up is a PLACE and the next one is a different place.
+The DISPATCH stays unbound and the code comment now says so in those words.
+
+### RR-231 — `data/ui.json.water` exists (A91-D-150c)
+
+`WaterPanelModel.section()` returned `{}` on every call, so `max_customer_rows`
+and `max_break_rows` lived only as code constants — the exact asymmetry with S18.
+`data/ui.json` now carries `water: {max_customer_rows: 8, max_break_rows: 4}`
+with the derivation in its own `_comment`, and the constants are named as the
+fallback for a config that has lost the block.
+
+### RR-232 — "…and what would bind after it" (A91-D-150d)
+
+Doc 12 §2.26 promised the advice line names the stage that binds NEXT and
+`advice_of` never read `next_binding`, which `WaterSystem.supply_chain` had
+published since the wave opened. `WaterActions.node_block` now publishes
+`next_binding` / `next_binding_m3h` / `next_binding_text` and `advice_of` selects
+`ui_water_advice_binds_next`: *"Pumps is the narrowest part of this chain, at
+112.5 m³/h. Raise P-072-PMP and the zone gets more water — up to 153.4 m³/h,
+where Treatment takes over."* A zone with no second term keeps the old sentence.
+
+### RR-233 — the ghost said `valid` and the command said `E_AUSTERITY` (A91-D-151)
+
+Doc 12 §2.7 makes the preview and the commit one code path.
+`cmd_place_water_component` and `cmd_place_water_main` quoted money with
+`treasury.balance < cost`, which is not doc 03 §2.10 layer 2 — that refuses every
+`construction` spend outright while austerity is active, whatever the balance is.
+Both now carry the austerity arm BESIDE the balance test (`Treasury.can_spend`
+would have been tidier and is a different number: it admits a spend down to the
+credit floor, which is a layer-4 decision neither verb has ever made).
+`cmd_repair_water_asset` deliberately gets none — its category is `repair`, which
+layer 2 does not block, because a city in austerity must still be allowed to stop
+a leak. **Eighteen other command sites carry the same disagreement and are filed,
+not fixed**; so is the second half, that a save restores `austerity_active`
+verbatim and nothing re-evaluates it on load. Doc 92 §69.10.
+
+### RR-234 — step one, made possible and made visible (A91-D-152, A91-D-153, doc 12 D-127)
+
+The read that was missing: `BuildController.placement_sites()` runs the ghost's
+own `evaluate()` over a window instead of a point and answers the SET — which
+tiles can host this, the first-blocker histogram over the whole window, and the
+cheapest single purchase that turns some tile in it legal, carried as a
+`fix_target` the placement bar's existing `FIX THIS →` already routes.
+`ui/build_sheet.gd` prints it under the ghost's own sentence, memoised per card
+and per window so §2.7's 10 Hz revalidation never pays for it. Six answers, in
+the order a player can act on them: *there are N sites* · *spending is frozen* ·
+*buy block D3* · *develop it* · *the river is over there* · *nothing here has
+power* · *lay a main first*. Ruling doc 93 §BD8/§BD9; strings `ui_site_*`;
+knobs `data/ui.json.placement.site_scan_radius_tiles` / `site_rows`.
+
+Two defects fell out of driving it, and both are below.
+
+### RR-234a — a water shell condemned mid-build was stranded for ever (A91-D-152)
+
+`cmd_place_water_component` wrote `b.level = level` where every other placement
+verb writes nothing and lets `complete_construction` promote `pending_level`. So
+from the moment it was paid for, a water site failed `Building.is_new_build()` —
+and `condemn_unanswered`, whose own comment says a new build must be destroyed
+rather than stranded *"because it is no longer `under_construction`, so
+`complete_construction` can never run"*, took the other branch and put it in
+`damaged` at level 1. `_commission_water_nodes` then never ran and the doc-05
+node stayed `offline_manual` for the life of the city. Measured on the player's
+save: a $45,858 pump, condemned by fire on game-day 1, still dark on game-day 30.
+Fixed by `b.pending_level = level`. Doc 92 §69.11.
+
+### RR-234b — a water site was never asked whether the wire could carry it (A91-D-153)
+
+Doc 93 §AD3's P0, one document over. `cmd_place_building` has asked
+`PowerGrid.can_serve_tile` since Wave 12 and answers `E_TRANSFORMER_FULL` as a
+WARNING — doc 04 §2.1 gates placement on coverage and authorises no capacity
+refusal — while `cmd_place_water_component`, which places the heaviest single
+draw in doc 05's roster, asked only `would_serve`. The quote now publishes
+`power_ok` / `deficit_kw` / `transformer` / `ratio`,
+`BuildController._component_verdict` turns `power_ok false` into `VERDICT_WARN`
+with the building path's own code and `Fix this →`, and `placement_sites` sorts
+clean sites ahead of warned ones. The site stays placeable; it is just no longer
+the one the bar recommends. Measured: `pump DELIVERING 73.5 → 113.5 m³/h` on the
+player's save, because the pump is now sited where the grid can run it.
