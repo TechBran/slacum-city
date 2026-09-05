@@ -13385,9 +13385,11 @@ its own derivation.
 
 **Cost of the rung, and what it commits a city to.** $41,500 (doc 03 §2.13(b),
 the ladder's own $/kW curve continued: 10.00 / 7.33 / 7.00 / 6.90 / 6.52 → 6.15,
-× 6,750). It needs a class-3 feeder — 6,750 kW is 0.90 of one, and 0.80 of its
-nameplate — and a substation at **L2 or better**, since `0.90 × 6,000 = 5,400 <
-6,750`. A top-rung transformer is an infrastructure decision, not a pole-top,
+× 6,750). It needs a class-3 feeder — 6,750 kW **is** `0.90 × 7,500`, so the
+rung is exactly what one class-3 run carries at §5.3's ceiling, a class-2 at
+3,000 kW cannot carry it at all, and a building at the 6,075 kW envelope loads
+that feeder to **0.81** (675 kW left for its neighbours) — and a substation at
+**L2 or better**, since `0.90 × 6,000 = 5,400 < 6,750`. A top-rung transformer is an infrastructure decision, not a pole-top,
 and the panel walk in §68.3 is where the player is told so.
 
 ### 68.3 What the three surfaces say, measured on a data centre at every level

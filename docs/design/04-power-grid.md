@@ -97,8 +97,11 @@ kW throughput and the **inventory quantities doc 03 bills against** (report 98 C
 > ruling; `test_gate_34_every_building_fits_the_transformer_envelope` is the gate.
 >
 > **What a top-rung transformer commits a city to**, stated here so the panel
-> does not have to discover it: a **class-3 feeder** (6,750 is 0.90 of one, and
-> 0.80 of its nameplate — a class-2 at 3,000 kW cannot carry it) and a
+> does not have to discover it: a **class-3 feeder** (6,750 kW IS 0.90 × 7,500,
+> so the rung is exactly what one class-3 run can carry at §5.3's ceiling and a
+> class-2 at 3,000 kW cannot carry it at all; a building at the 6,075 kW envelope
+> loads that feeder to **0.81**, leaving 675 kW for whatever else hangs off it)
+> and a
 > **substation at L2 or better** (`0.90 × 6,000 = 5,400 < 6,750`). Doc 03
 > §2.13(b) prices the unit at **$41,500**; the feeder and the substation are
 > priced there too and are the larger half of the bill.
