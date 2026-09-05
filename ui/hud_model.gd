@@ -418,6 +418,15 @@ const CHIP_GOALS := "goals"
 ## P1, and the chip a deposit pulses (`flash_chip`). Named because two other
 ## files now reach for it and a spelling mistake in a Dictionary key is silent.
 const CHIP_TREASURY := "treasury"
+## P5, and since Wave 24 the second chip that pulses when it MOVES (D-100,
+## report 98 RR-203). Named for the same reason as the treasury.
+const CHIP_POPULATION := "population"
+## Every chip whose pulse can only ever have come from `flash_chip` — the set
+## `ui/hud.gd`'s expiry sweep is allowed to clear the `pulse` meta on. §2.4
+## gives the STANDING pulse to `grid` and `water`, and clearing one of those
+## would blink a state pulse off for a HUD frame, so they are not here and must
+## not be added.
+const FLASHABLE_CHIPS: Array[String] = [CHIP_TREASURY, CHIP_POPULATION]
 ## What `GoalsModel` puts between the level and the fraction. The compact form
 ## splits on it, so the two files have to agree about one character.
 const GOAL_CHIP_SEPARATOR := "·"

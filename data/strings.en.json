@@ -244,6 +244,7 @@
 	"ui_building_demolish_note_jobs_one": "Refunds {refund} and cancels {jobs} job in flight.",
 	"ui_building_demolish_note_jobs_plural": "jobs",
 	"ui_building_fix_this": "Fix this →",
+	"ui_building_occupants_of": "{settled} of {authored}",
 	"ui_building_priority_critical": "Critical",
 	"ui_building_priority_discretionary": "Last",
 	"ui_building_priority_essential": "Essential",

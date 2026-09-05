@@ -51,6 +51,12 @@ const SCREENS: Array[String] = [
 	"placement_unowned",
 	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
 	"building", "building_blocked", "building_repairable", "building_water",
+	# Wave 24 (doc 12 D-100): the panel of a house the player tapped SECONDS
+	# ago. Its occupants vital reads `0 of 4` while the shell is going up, which
+	# is the state the whole of report 98 §67 is about — nobody has moved in
+	# yet, and until this wave the panel said `4` anyway. Same commit as the
+	# vital, which is A91-D-28's lesson applied on the way in.
+	"building_moving_in",
 	# Wave 18's RUIN row (doc 12 §2.9 D-86), in the two states that decide
 	# whether the button is a decision or a wall: affordable, and the build-card
 	# disabled-with-the-price-still-showing. Same commit as the row, which is
@@ -721,6 +727,18 @@ func _apply(screen: String) -> void:
 				var stranded := _burn_two_down()
 				_sim.treasury.balance = -12_500
 				_building_panel.show_building(stranded)
+		"building_moving_in":
+			# Placed through the REAL `cmd_place_building`, so the shell is
+			# genuinely `under_construction` at level 0 and `settled_residents`
+			# genuinely answers zero — a hand-set `state` field would photograph
+			# the fixture rather than the defect.
+			if _building_panel != null:
+				_sim.treasury.balance = 500_000
+				var lot := _serviceable_lot("house")
+				var placed := _sim.cmd_place_building("house", lot)
+				if bool(placed["ok"]):
+					_building_panel.show_building(
+							String((placed["payload"] as Dictionary)["sim_id"]))
 		"building_water":
 			# Doc 05 §6's node block: a `water_facility` shell with its own
 			# ladder rows under the doc-02 one. `WTR-1` hosts three nodes, which
@@ -1403,6 +1421,20 @@ func _first_building() -> String:
 	var keys := _sim.buildings.keys()
 	keys.sort()
 	return str(keys[0]) if not keys.is_empty() else ""
+
+
+## A buildable, vacant, power-serviceable lot of this archetype's footprint
+## inside the core — the same scan `tests/test_city_commands.gd` uses, so the
+## preview places where a player could.
+func _serviceable_lot(archetype: String) -> Vector2i:
+	var foot: Array = _sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
+	var size := Vector2i(int(foot[0]), int(foot[1]))
+	for z in range(32, 80):
+		for x in range(32, 80):
+			var origin := Vector2i(x, z)
+			if _sim.world.grid.can_place(origin, size) and _sim.grid.would_serve(origin):
+				return origin
+	return Vector2i(-1, -1)
 
 
 ## Burn TWO buildings down through doc 02 §2.12's own transitions and answer the

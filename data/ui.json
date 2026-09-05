@@ -112,7 +112,9 @@
 		"_top_bar_max_rows": "§2.4's collapse solver hides P5-P7 once demotion runs out. On a near-square display (Fold inner, 2160x1856) the four never-hidden chips plus a measured value string still overflow one 48 dp row, and A1/A2 forbid clipping — so the bar wraps to a second row BEFORE anything is hidden. 1 restores the doc's single-row behaviour exactly.",
 		"top_bar_max_rows": 2,
 		"_goal_chip_index": "S14 (doc 09 §2.14, doc 12 §2.19). Where HudModel inserts the goal chip into `chip_priority` while the curriculum is unfinished. 1 puts it immediately after the treasury — the reading a goal most often costs money against — and inside §2.4's never-hidden prefix, which the solver widens by one to compensate. The chip is deliberately NOT a row of `chip_priority`, because it RETIRES when the curriculum is done: a teaching surface may not cost the reference layout a permanent demotion.",
-		"goal_chip_index": 1
+		"goal_chip_index": 1,
+		"_population_flash_s": "D-100 (report 98 RR-203). How long the population chip pulses when the number in it MOVES. Doc 01 settles population once per game-hour, so a house the player placed changes the chip in ONE jump up to 176 real seconds after the tap — long enough that the player is looking somewhere else, which is the whole of the 2026-09-04 report. Same mechanism and the same 1.2 Hz as Wave 14's deposit pulse, and A8 suppresses it with every other pulse. 0 turns it off.",
+		"population_flash_s": 1.2
 	},
 	"goals": {
 		"_comment": "S14 (doc 12 §2.19) — the goals SHEET's own tunables. The curriculum itself is data/goals.json (doc 09 §8.3) and nothing about it lives here.",

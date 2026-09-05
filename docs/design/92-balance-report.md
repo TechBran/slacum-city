@@ -11457,3 +11457,192 @@ $423,875 swing from a single slope flip. The bound therefore sits on the same
 knife-edge as the count it replaced, and the next wave that perturbs doc 06's
 incident stream can fail it without any balance regression. A91-D-123's
 water-headroom planner is the fix; another re-fit is not.
+## 64. Wave 24 — how long, in real seconds, between "I placed a house" and "the number on my screen changed" (2026-09-04)
+
+*Instrument: `tools/measure_population_lag.gd`, committed. Rulings doc 93 §AX.
+Verbs report 98 §67 RR-202/RR-203/RR-204. Delta row doc 12 D-100.*
+
+The player, on their own city, 2026-09-04: *"As I'm building up houses and have
+new residents that pop up, I don't get an increase in population like people. I
+don't see it actually counting up."*
+
+**That is a LATENCY report, and every previous probe of it asked the wrong
+question.** Asking the sim what the population *is* answers 144 and 148 and
+proves nothing; the question is when the player would have SEEN it move. So the
+instrument places a house through the real `cmd_place_building` on a real
+`CitySim`, steps the real fine path one SimTick at a time, and samples per
+game-minute the building's state, its age, its `state_occupancy`, the settled
+`occ_of`, `occupied_population`, `city_population` and the exact string
+`HudModel.chip_values` would paint in the chip.
+
+`data/time.json.clock.real_seconds_per_game_minute` is **1.0**, so at 1× speed
+one game-minute is one real second and every figure below is literal wall-clock
+seconds of play. At 2× halve them; at 3× divide by three.
+
+### 64.1 The finding
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_population_lag.gd \
+    -- --boot --minutes=240 --stride=60
+```
+
+| event | real seconds at 1× | game-hours |
+| --- | --- | --- |
+| placed (`house`, 4 authored residents, $1,200) | 0 | 0 |
+| shell finishes — `under_construction` → `active` | **120** | 2.00 |
+| **the population chip changes, 144 → 148** | **176** | 2.93 |
+| the chip shows all four residents | 176 (the same jump) | 2.93 |
+
+**Two hundred and ninety-six seconds is not the number; 176 is, and its shape
+matters more than its size.** It decomposes exactly:
+
+* **120 s of shell.** `house.build_time_hours` is 2.0 and a new build is
+  `level == 0`, so `Building.state_occupancy()` returns **0.00** for the whole
+  of it (the 0.50 arm is for an UPGRADE, where the old residents stay). The
+  building contributes literally nothing while it is going up. This is correct
+  and it is not the defect.
+* **56 s of waiting for the hour.** `PopulationSystem.advance` is called by
+  `HourlyPhaseSystem`, cadence `EVERY_HOUR`. The shell finished at game-minute
+  305; the next settle was at 360. Place one minute past the hour and this term
+  is 59 s; place fifty-eight minutes past and it is 2 s. **The window is
+  120–180 real seconds and nothing the player does changes it.**
+* **And then it moves in ONE JUMP.** 144 → 148. There is no intermediate
+  reading, because doc 09 §2.10 sums an aggregate over the roster once an hour
+  — it is not a queue of arrivals and it never counts up. *The player's sentence
+  is literally true and the game is behaving exactly as designed.*
+
+### 64.2 The three candidates that turned out to be false
+
+The lane brief listed five suspects. Three of them are not happening:
+
+| suspect | measurement | verdict |
+| --- | --- | --- |
+| "the 35 % ramp floor plus attractiveness under 1.0 means one house adds a fraction of a person and `roundi` swallows it" | `attractiveness` is **1.0000** at the settle; one house is worth **4.000** people; the ramp column reads **1.0** for every building at every sample | **false — and the reason is RR-204**, below |
+| "the chip only refreshes on a cadence" | `main.gd::HUD_REFRESH_S` is **1.0 real second**; the chip is never more than 1 s behind the sim | false |
+| "a fresh boot reads 0 until the first hourly settle" | 0 for **exactly one SimTick** (0.25 real s) — `HourlyPhaseSystem` fires at `t = 0` | true but not the player-visible half; see 64.3 |
+
+**RR-204 — doc 09's occupancy ramp does not run in the shipped game.**
+`CitySim._population_inputs` hands `PopulationSystem` a hard-coded
+`age_hours` for every building — the literal `48.0`, now
+`CitySim.POPULATION_INPUT_AGE_HOURS` — and `OCCUPANCY_RAMP_HOURS` is 36, so
+`ramp()` clamps to **1.0 for every building in the city, forever**. The
+instrument prints what the ramp WOULD say beside what the sim uses; at the
+moment the house completes they are **0.386 and 1.000**. The constant was
+authored for the starter city, whose stock is older than the ramp horizon, and
+it applies just as flatly to a house placed thirty seconds ago. **This wave does
+not wire the real age**: it is a balance change, and it would take the reported
+complaint and make it strictly worse — 36 game-hours of near-invisible fill on
+top of the 176 seconds above. Doc 93 §AX asks the lead which of code and doc is
+wrong.
+
+### 64.3 The one that was real: a loaded city says it is empty
+
+```
+=== BOOT / LOAD ARM — what the chip reads before the first settle ===
+  fresh boot, before tick 0          city_population=0      chip=0
+  fresh boot, after ONE SimTick      city_population=144    chip=144
+  save taken at tick 741 (21 ticks past the hour boundary)
+  mid-hour SAVE/LOAD, before tick    city_population=0      chip=0
+  → a 144-person city reads 0 for 220 ticks = 55 REAL SECONDS after the load
+```
+
+`PopulationSystem`'s aggregates are DERIVED and doc 08 does not persist them
+(`serialize` writes `attractiveness` and a sparse `occupancy` and nothing else),
+so a restore left `city_population` at the `0` a fresh `PopulationSystem`
+starts on. The clock is restored to wherever the player left it, which is
+almost never hour-aligned, so the next settle is up to 59 game-minutes away:
+**55 real seconds, measured, on a save taken 21 ticks past the hour.**
+
+Everything that reads the figure in that window reads the lie with it — the HUD
+chip the player is looking at, `CitySim.build_director_inputs`,
+`goal_state_view()` at the end of the restore itself, and doc 07's
+`storm_ready_earned`, whose budget is `outage_cm_per_1k_pop × pop / 1000` and is
+therefore **exactly zero** for a zero population, so a storm report published in
+that window can never earn its relief.
+
+**A/B, isolated to one cause.** The delta is the two sim files and nothing else
+(`git diff <fork> HEAD -- sim/city_sim.gd sim/population/population_system.gd`
+reverted with `git apply -R`, the same instrument run, then re-applied):
+
+| arm | `--boot`, mid-hour save at tick 741 | fresh boot, before tick 0 |
+| --- | --- | --- |
+| A — the fork | **0 for 220 ticks = 55 REAL SECONDS** | 0 |
+| B — this wave | **0 for 0 ticks = 0 REAL SECONDS** | 144 |
+
+### 64.4 What did NOT move
+
+| check | command | result |
+| --- | --- | --- |
+| determinism, founding city | `tools/profile_sim.gd -- --hash-only` | `34ba7d972f3a78e2…` / `dde437bc234fc2c2…` — **byte-identical to the fork** |
+| determinism, benchmark city | `… --hash-only --city=res://tests/fixtures/bench_city.json` | `db934239d6d84c04…` / `bf57bbac708c35b7…` — **byte-identical to the fork** |
+| save → load → advance | `tests/test_city_sim.gd::test_a_booted_and_a_loaded_city_report_their_population_before_the_first_tick` | the restored city's `state_hash` after 6 game-hours **equals** the uninterrupted run's |
+| boot → save → load, 1,500 buildings | `tests/test_save_migration.gd::test_37_bench_city_is_a_boot_file_that_round_trips_the_save_path` | **bit-identical** — and the one test in 2,795 that caught the first ordering of the fix (doc 93 §AX1) |
+
+**Not one balance constant moves in this wave.** No price, no grant, no
+threshold; `data/economy.json` is untouched. The one authored number added is
+`data/ui.json.layout.population_flash_s` (1.2 s), which is a presentation
+duration and buys nothing.
+
+**The suite**: `tools/run_suite.sh` — **153 files, 2,796 tests, 582,354
+asserts, failed 0, silent 0.** The preview deck, `--screen=all --size=412x915
+--audit --strict`, exits **0** over **84** states.
+`python3 tools/check_doc_refs.py` prints *all resolving; no id assigned twice*
+over 5,332 references.
+
+### 64.5 The plural in the report: "as I'm building up houses"
+
+One house an hour, on the settled starter city, census printed on every settle:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_population_lag.gd \
+    -- --houses=8 --minutes=1
+```
+
+| game-hour | real s | houses placed | occupied | `A_city` | chip |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 60 | 1 | 144.000 | 1.0000 | **144 — did not move** |
+| 2 | 120 | 2 | 144.000 | 1.0000 | **144 — did not move** |
+| 3 | 180 | 3 | 148.000 | 1.0000 | 148 |
+| 4 | 240 | 4 | 152.000 | 1.0000 | 152 |
+| … | | | | | +4 per hour |
+| 10 | 600 | 8 | 176.000 | 1.0000 | 176 |
+
+**A player who places two houses and watches for two minutes sees nothing at
+all.** That is the report, reproduced from the committed instrument. After that
+it climbs at exactly +4 an hour, one settle behind the taps, and never faster.
+`A_city` is **1.0000 at every row** on a healthy city, so `roundi` swallows
+nothing and the "fraction of a person" hypothesis in the lane brief is false
+(doc 92 §64.2).
+
+### 64.6 The one arithmetic way a placement CAN be swallowed, and it is not a bug
+
+`occupied_population` is recomputed from scratch each hour and multiplied by the
+CURRENT `attractiveness`, so a city whose ceiling is falling loses more from the
+stock than one house adds. Held at happiness 20 — doc 09 §2.10.2's happiness
+ceiling, which is the ONLY lever this probe touches:
+
+```
+~/.local/bin/godot --headless --path . -s res://tools/measure_population_lag.gd \
+    -- --houses=6 --happiness=20 --minutes=1
+```
+
+| game-hour | houses placed | occupied | `A_city` | chip |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | 138.013 | 0.9584 | 138 |
+| 2 | 2 | 132.505 | 0.9202 | 133 |
+| 3 | 3 | 130.977 | 0.8850 | 131 |
+| 6 | 6 | 127.263 | 0.7954 | 127 |
+| 10 | 6 | 118.606 | 0.7060 | 119 |
+
+**Six houses bought, and the number falls 144 → 127 the whole time.** Each of
+them is worth ≈3.5 people at that attractiveness and the relaxation is taking
+more than that out of the stock every hour: at hour 3 the drop is −2 against a
+−5 trend, which is the house arriving, and no player will read it that way.
+
+**This is not a defect and it is not fixed.** The city IS emptying; a counter
+that hid that to flatter a purchase would be the lie. But it is the strongest
+argument for doc 12 D-100's panel half: `0 of 4` → `4 of 4` tells the player
+their house filled **even in the hour the city total fell**, which the chip
+alone cannot and should not do. Filed as an open question for a doc 09/12 lane:
+the chip has no channel for *"you gained 4 and lost 9"*, and the dashboard's
+history line is the only surface in the game that could carry one.

@@ -917,6 +917,11 @@ func _refresh_hud() -> void:
 		})
 		_feed_dashboard_tabs()
 		ui_root.refresh_land_panel()
+		# D-100 / A91-D-136 (Wave 24): S5 follows the city it is describing.
+		# `refresh()` returns immediately unless a panel is open on a selected
+		# building, so this is one dictionary a second while a panel is up and
+		# nothing at all when it is down — `refresh_land_panel`'s exact shape.
+		ui_root.refresh_building_panel()
 		# The goal chip and, while it is up, the sheet. Cheap — a five-row
 		# objective list and a six-rung strip — so it rides the same 1 Hz
 		# cadence every other reading does. This is also what re-seeds the chip

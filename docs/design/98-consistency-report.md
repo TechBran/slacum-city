@@ -9571,3 +9571,132 @@ a grant's floor, a `continue` on a pump whose host is rubble. The fourth is one
 multiplication in doc 06's ignition rate and four numbers in `data/incidents.json`
 derived from four that were already there. The rest is measurement, argument and
 the tests that make both falsifiable.
+## 67. WAVE 24 — why the population does not visibly count up (binding)
+
+*(Measured in doc 92 §64. Rulings in doc 93 §AX. Defect rows doc 91 A91-D-127,
+A91-D-128. Delta row doc 12 §2.25 D-100.)*
+
+The player, on their own city, 2026-09-04: *"As I'm building up houses and have
+new residents that pop up, I don't get an increase in population like people. I
+don't see it actually counting up."*
+
+**It is a latency report and it was measured, not argued.** From the tap to the
+number changing is **176 real seconds at 1× speed** — 120 s while the shell goes
+up contributing nothing, then up to 60 s waiting for doc 01's hourly settle —
+and when it moves it moves in one jump, 144 → 148. The counter is right. Three
+resolutions follow: the one place it was genuinely wrong, the surfaces that were
+contradicting it, and one published curve that turns out not to run.
+
+### RR-202 — a city may not report a population it does not have (docs 08 §2.8, 09 §2.10, 92 §64.3, 93 §AX1, 91 A91-D-127)
+
+`PopulationSystem.settle_aggregates(buildings)` — pass 1 of `advance` and
+nothing else — called at the end of `CitySim.boot()` and at the **end** of
+`_restore_finish`, plus a `deserialize` that no longer lets the previous city's
+totals survive into the new one.
+
+The aggregates are derived and doc 08 does not persist them, and `advance` runs
+once per game-HOUR, so both doors into a city opened on `city_population == 0`.
+A fresh boot held it for one SimTick; **a restore held it for 220 ticks = 55
+REAL SECONDS** on a save taken 21 ticks past the hour (doc 92 §64.3, measured by
+the instrument this wave commits). `main.gd` paints the HUD before the first
+tick and again the instant a save lands, so a 144-person city greeted its owner
+with a `0` in the chip — *"my city is empty"* — and `build_director_inputs`,
+`goal_state_view()` inside the restore itself and doc 07's `storm_ready_earned`
+all read the same zero. The last of those prices Storm Ready against `pop /
+1000` and therefore **cannot award it at all** while the population reads zero.
+
+**Two things the call deliberately does not do**, and they are the ruling
+(§AX1): it takes no `dt_h`, so `attractiveness` is not relaxed and no time
+moves; and it does **not** write the `occupancy` map, which is the one part of
+the class doc 08 persists and which doc 03 bills the first hour after a load
+against through `occ_of`. A derived number may be recomputed; state may not.
+`tests/test_city_sim.gd` asserts both halves — the loaded city reports its
+population before its first tick, **and** its `state_hash` after six further
+game-hours still equals the uninterrupted run's.
+
+**And a third, which only the whole suite could find.** Placed at the TOP of
+`_restore_finish`, the settle handed `_restore_goals`' reconcile a population
+the save does not record; `GoalSystem.serialize` writes `done`, `progress` and
+`earned_level`, all three of them in `state_hash`, and on the 1,500-building
+benchmark city that completed objectives the booted-and-saved city had not —
+`tests/test_save_migration.gd::test_37_…` failed on it, and on nothing smaller.
+The settle is therefore the LAST line of `_restore_finish`, and §AX1 states the
+rule it broke: **a restore may not teach the curriculum something the boot it is
+restoring into does not know.**
+
+### RR-203 — two surfaces were telling the player different things (docs 12 §2.25 D-100, 92 §64.1, 93 §AX3)
+
+`CitySim.settled_residents(sim_id)` — one accessor, on the same product the
+hourly settle sums — behind both of the surfaces that talk about residents.
+
+**The panel of the house the player had just placed read `Occupants 4`.** That
+is the AUTHORED capacity, and it sat beside a population chip that had not moved
+and would not move for another three minutes. The chip was right. The vital now
+reads `0 of 4` while the shell is up and `4` once it is full, so a building
+stops claiming residents the city has not counted; and `CityHUD._note_population`
+pulses the population chip on the frame the number changes, on Wave 14's
+existing `flash_chip` mechanism, so A8's reduce-motion suppression already
+covers it and 176 seconds later the payoff announces itself. `HudModel.
+FLASHABLE_CHIPS` generalises `_process`'s expiry sweep from the treasury alone
+to the set of chips whose pulse can only have come from a flash — `grid` and
+`water` may never join it, because they carry §2.4's standing pulse.
+
+**And S5 was a still photograph, which is the third finding of this wave**
+(doc 91 A91-D-136). `BuildingPanel.refresh()` has documented itself since Wave 5
+as the re-read *"after an upgrade, a tick, or a construction completion"* and
+**nothing outside `tests/` has ever called it** — `ui/ui_root.gd` calls
+`land_panel.refresh()`, which is a different panel and is what made the absence
+read as present in a grep. An open panel showed the city as it was at the moment
+of the tap and never moved again, so a vital that now says `0 of 4` could never
+go on to say `4 of 4` while the player watched. `UIRoot.refresh_building_panel()`
+is the door, on `refresh_land_panel`'s exact shape and cost, called from
+`_refresh_hud`'s 1 Hz cadence (snippet handed to the lead).
+
+Preview state **`building_moving_in` in the same commit**: a house placed
+through the real `cmd_place_building`, panel open, `0 of 4` on its face.
+`--screen=all --size=412x915 --audit --strict` exits **0** over **84** states.
+
+**Merge note (2026-09-05, the verifier's 56-second window).** As shipped by the
+lane, `settled_residents` was the LIVE product `state_occupancy × ramp ×
+attractiveness`, which runs ahead of the chip by up to 59 game-minutes: the
+shell completed at minute 120 and the vital read a full house while the chip
+stayed at 144 until the hour-3 settle at minute 176 — the contradiction moved
+from 0–120 s to 120–176 s. Closed at the merge: `PopulationSystem.settled_occ`
+(unpersisted, unhashed, written by both `advance` and `settle_aggregates`) is
+what the last settle counted per building, and `settled_residents` reads it —
+`0 of 4` until the chip has counted them, then `4 of 4` (the bare `4` the lane
+emitted for a full house is gone; the docs above said `4 of 4` and now the code
+does). `tools/measure_population_lag.gd` shows the vital and the chip moving on
+the same settle.
+
+### RR-204 — doc 09's occupancy ramp does not run in the shipped game (docs 09 §2.10, 92 §64.2, 93 §AX2, 91 A91-D-128) — PUBLISHED, NOT FIXED
+
+`CitySim._population_inputs` has never called `PopulationSystem.ramp` with a
+real age: every building is handed the literal `48.0`, above the 36-hour ramp
+horizon, so `ramp()` returns **1.0 for every building in the city, forever**.
+The instrument prints both; at the moment a house completes they are **0.386
+(doc) and 1.000 (code)**. The literal is now `CitySim.
+POPULATION_INPUT_AGE_HOURS` and carries the argument in its own docstring.
+
+**This wave does not wire the real age**, and the reason is the report it is
+answering: doing so would add 36 game-hours of near-invisible fill on top of the
+176 seconds already measured, which is the complaint made worse. Doc 93 §AX2
+asks the lead to rule, and recommends deleting the ramp — doc 09 §2.10's
+aggregate has no per-arrival channel to show a fill through, and a `static func`
+whose every call site passes a literal is not a rule the game has.
+
+**The suite**: `tools/run_suite.sh` — **153 files, 2,796 tests, 582,354
+asserts, failed 0, silent 0.** `python3 tools/check_doc_refs.py` prints *all
+resolving; no id assigned twice* over 5,332 references. All four
+`profile_sim --hash-only` baselines are **byte-identical to the fork**, on both
+cities, and not one balance constant moves.
+
+**The instrument is the deliverable as much as the fixes are.**
+`tools/measure_population_lag.gd` boots a real `CitySim`, places a real
+building, steps the real fine path one SimTick at a time and prints the journey
+per game-minute — state, age, `state_occupancy`, what the ramp WOULD say, the
+settled `occ_of`, `occupied_population`, `city_population` and the exact string
+`HudModel` would paint. `data/time.json` sets one real second per game-minute,
+so its `real_s` column is literal wall-clock seconds of play. Three previous
+probes of this question timed out before reaching the answer; this one runs in
+under a minute and prints it as a table.

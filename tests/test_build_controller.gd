@@ -25,6 +25,48 @@ static func _serviceable_vacant_tile(sim: CitySim, size: Vector2i = Vector2i.ONE
 	return Vector2i(-1, -1)
 
 
+static func _vital_value(view: Dictionary, id: String) -> String:
+	for raw: Variant in (view.get("vitals", []) as Array):
+		var vital: Dictionary = raw
+		if str(vital["id"]) == id:
+			return str(vital["value"])
+	return ""
+
+
+## **Doc 12 D-100 / report 98 RR-203 — the vital that answers "where are my
+## people?"** The occupants row was the AUTHORED capacity and nothing else, so
+## the panel of a house tapped thirty seconds ago read `Occupants 4` while the
+## population chip had not moved and would not move for another 176 real
+## seconds (`tools/measure_population_lag.gd`). It now reads `settled of
+## authored` whenever the two disagree — which for a shell still going up is
+## `0 of 4`, the literal truth about what `city_population` currently counts.
+func test_the_occupants_vital_says_how_many_have_actually_moved_in() -> void:
+	var sim := _sim()
+	var origin := _serviceable_vacant_tile(sim)
+	assert_true(origin.x >= 0, "the core has a serviceable vacant lot")
+	var placed := sim.cmd_place_building("house", origin)
+	assert_true(bool(placed["ok"]), str(placed))
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	assert_eq(_vital_value(_controller(sim).building_view(sim_id), "occupants"),
+			"0 of 4", "the shell is up, nobody lives in it, and the chip agrees")
+	assert_eq(sim.settled_residents(sim_id), 0)
+	# Two game-hours of shell, then the hourly settle that counts them. The
+	# settle fires just past the hour mark, so 3.0 h lands BEFORE it — and that
+	# window is the point: the panel may not say `4` until the chip has counted
+	# them (the merge verifier's 56-second window, RR-203).
+	sim.advance_hours(3.0)
+	assert_eq(_vital_value(_controller(sim).building_view(sim_id), "occupants"),
+			"0 of 4", "the shell is done but the settle has not counted anyone yet")
+	sim.advance_hours(1.0)
+	assert_eq((sim.buildings[sim_id] as Building).state, &"active")
+	assert_eq(_vital_value(_controller(sim).building_view(sim_id), "occupants"), "4 of 4",
+			"a full house says so in the same words the shell used")
+	assert_eq(sim.settled_residents(sim_id), 4)
+	# A shop houses nobody and must keep reading `0`, not `0 of 0`.
+	assert_eq(sim.settled_residents("STR-001"), -1)
+	assert_eq(_vital_value(_controller(sim).building_view("STR-001"), "occupants"), "0")
+
+
 # ===========================================================================
 # Build sheet cards (doc 12 §2.7)
 # ===========================================================================
@@ -359,6 +401,8 @@ func test_building_view_reports_live_stats() -> void:
 		assert_eq(int(station["max_level"]), 5,
 				"the fire station's ladder still stops at five")
 	assert_eq((view["vitals"] as Array).size(), 6, "§2.9's 2×3 vitals grid")
+	assert_eq(_vital_value(view, "occupants"), "4 of 4",
+			"a full house says so in the same words the shell used (RR-203)")
 	assert_eq((view["coverage"] as Array).size(), 4, "Power/Water/Police/Fire tiles")
 	var power_tile: Dictionary = (view["coverage"] as Array)[0]
 	assert_eq(str(power_tile["id"]), "power")
@@ -819,6 +863,51 @@ func test_locked_card_explains_itself_instead_of_placing() -> void:
 			"SafeArea/SheetLayer/BuildSheet/Sheet/Body/Notice") as Label
 	assert_true(notice.visible and notice.text.length() > 0, "the sheet shows the reason")
 	_unmount(mounted)
+
+
+## **The panel was a still photograph, and that is half of D-100.** Nothing in
+## the shipped shell has ever called `BuildingPanel.refresh()` — only tests and
+## `land_panel.refresh()`, which is a different panel — so an open S5 showed the
+## city as it was at the moment of the tap and never moved again. A vital that
+## says `0 of 4` is worth nothing if it cannot go on to say `4 of 4` while the
+## player is looking at it. `UIRoot.refresh_building_panel()` is the door, on
+## `refresh_land_panel`'s exact shape; `game/main.gd::_refresh_hud` calls it on
+## the shell's 1 Hz cadence.
+func test_an_open_building_panel_follows_the_city_it_is_describing() -> void:
+	var sim := _sim()
+	var origin := _serviceable_vacant_tile(sim)
+	var placed := sim.cmd_place_building("house", origin)
+	assert_true(bool(placed["ok"]), str(placed))
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	var mounted := _mount(sim)
+	var root: UIRoot = mounted["root"]
+	assert_ne(root.building_panel, null, "UIRoot finds S5 on the panel layer")
+	var panel: BuildingPanel = mounted["panel"]
+	panel.show_building(sim_id)
+	assert_eq(_panel_vital(panel, "occupants"), "0 of 4")
+	# Two game-hours of shell, then the settle that counts them — which fires
+	# just past the third hour mark, so the panel holds `0 of 4` at 3.0 h.
+	sim.advance_hours(3.0)
+	root.refresh_building_panel()
+	assert_eq(_panel_vital(panel, "occupants"), "0 of 4",
+			"the shell is done; the chip has not counted anyone yet, so neither may S5")
+	sim.advance_hours(1.0)
+	root.refresh_building_panel()
+	assert_eq(_panel_vital(panel, "occupants"), "4 of 4",
+			"the panel the player is watching says they moved in")
+	# And a closed panel is not re-read at all.
+	panel.close()
+	root.refresh_building_panel()
+	assert_eq(panel.selected_id(), "")
+	_unmount(mounted)
+
+
+## The text of one vital tile as it is actually PAINTED — the `Value_<id>` label
+## `BuildingPanel._render_vitals` builds — and not the view model behind it,
+## because the test above is about what is on the screen the player is watching.
+static func _panel_vital(panel: BuildingPanel, id: String) -> String:
+	var label := panel.find_child("Value_" + id, true, false) as Label
+	return label.text if label != null else ""
 
 
 func test_building_panel_renders_the_checklist_and_gates_upgrade() -> void:

@@ -174,6 +174,36 @@ func test_availability_settles_hourly() -> void:
 	assert_true(sim.districts.city_stability > 0.90)
 
 
+## **Report 98 RR-202 — a city that has not ticked yet still knows how many
+## people live in it.** `PopulationSystem.advance` runs once per game-HOUR, and
+## the aggregates it writes are derived and unpersisted, so both doors into a
+## city used to open on `city_population == 0`. The shell paints the HUD before
+## the first tick (`main.gd::_wire_hud` → `_refresh_hud`) and again the instant a
+## save loads, so a 144-person city greeted the player with a `0` in the
+## population chip — and on a save taken mid-hour it held that `0` until the next
+## hour boundary, measured at 55 real seconds by
+## `tools/measure_population_lag.gd --boot`.
+func test_a_booted_and_a_loaded_city_report_their_population_before_the_first_tick() -> void:
+	var sim := CitySim.boot_from_files()
+	assert_eq(sim.population.city_population, 144,
+			"boot, before a single SimTick has run")
+	# Save MID-HOUR, which is when a player actually leaves.
+	sim.advance_hours(3.0)
+	sim.advance_hours(5.0 / 60.0)
+	assert_true(sim.clock.tick_index % GameClock.TICKS_PER_HOUR != 0,
+			"the save this test is about is not hour-aligned")
+	var loaded := CitySim.boot_from_files()
+	loaded.restore_state(sim.capture_state())
+	assert_eq(loaded.population.city_population, sim.population.city_population,
+			"a loaded city is not empty for its first game-hour")
+	# And the fix moved nothing: the restored city still runs the saved city's
+	# trajectory exactly (constitution §5).
+	sim.advance_hours(6.0)
+	loaded.advance_hours(6.0)
+	assert_eq(loaded.state_hash(), sim.state_hash(),
+			"save→load→advance stays bit-identical to the uninterrupted run")
+
+
 func test_tutorial_tags_resolve() -> void:
 	var sim := CitySim.boot_from_files()
 	assert_false(sim.loader.resolve_tag("tutorial_transformer").is_empty())

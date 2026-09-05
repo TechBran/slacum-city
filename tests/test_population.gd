@@ -36,6 +36,66 @@ func test_t0_aggregates_worked_values() -> void:
 	assert_almost_eq(pop.employment_balance(), 0.8333, 0.0005)
 
 
+## Report 98 RR-202. `settle_aggregates` is pass 1 of `advance` and nothing
+## else: the same reported numbers, no step, and — the part that keeps a
+## save→load→advance round trip bit-identical — not one byte written into the
+## persisted occupancy map.
+func test_settle_aggregates_reports_without_stepping() -> void:
+	var fresh := PopulationSystem.new()
+	fresh.attractiveness = 0.80
+	fresh.settle_aggregates(starter_buildings())
+	assert_almost_eq(fresh.occupied_population, 115.2, 0.01,
+			"144 authored residents at A_city 0.80")
+	assert_eq(fresh.city_population, 115)
+	assert_almost_eq(fresh.workforce, 63.36, 0.01)
+	assert_eq(fresh.jobs_market, 66, "5×6 + 30 + 3×2; civic excluded")
+	assert_eq(fresh.jobs_capacity, 106)
+	assert_almost_eq(fresh.attractiveness, 0.80, 1e-9,
+			"no dt_h, no relaxation — this moves no time")
+	assert_true(fresh.occupancy.is_empty(),
+			"the PERSISTED map is untouched; doc 03 bills the first hour after "
+			+ "a load off the restored one")
+
+
+## The same call on a system that already holds a settled map must leave every
+## entry of that map exactly where it was, however stale it has become.
+func test_settle_aggregates_does_not_rewrite_a_restored_map() -> void:
+	var pop := PopulationSystem.new()
+	pop.advance(starter_buildings(), 1.0, 0.9475)
+	var was: Dictionary = pop.occupancy.duplicate()
+	# A house that emptied since the last settle: the aggregate must follow it,
+	# the map must not.
+	var moved := starter_buildings()
+	(moved[0] as Dictionary)["state_occupancy"] = 0.0
+	pop.settle_aggregates(moved)
+	assert_eq(pop.city_population, 140, "four residents gone from the aggregate")
+	assert_eq(pop.occupancy, was, "and not one entry of the saved map moved")
+
+
+## RR-202's other half, and the one a whole-suite run found: the aggregates are
+## not in the save body, so they may not survive a `deserialize` either. A
+## system handed another city's two saved values while still holding this
+## process's totals would let a restore reconcile doc 09 §2.14's curriculum
+## against a population the save never recorded — which on the 1,500-building
+## benchmark city completes objectives, writes `done`/`earned_level`, and breaks
+## doc 08's boot → save → load identity (`tests/test_save_migration.gd`
+## `::test_37_…`).
+func test_deserialize_does_not_carry_the_previous_city_s_totals() -> void:
+	var pop := PopulationSystem.new()
+	pop.advance(starter_buildings(), 1.0, 0.9475)
+	assert_eq(pop.city_population, 144, "this process's city")
+	pop.deserialize({"attractiveness": 0.75, "occupancy": {"H-000": 0.5}})
+	assert_eq(pop.city_population, 0, "not computed yet is the honest answer")
+	assert_almost_eq(pop.occupied_population, 0.0, 1e-9)
+	assert_almost_eq(pop.workforce, 0.0, 1e-9)
+	assert_eq(pop.jobs_market, 0)
+	assert_eq(pop.jobs_capacity, 0)
+	assert_almost_eq(pop.job_fill_city, 1.0, 1e-9, "back to the class's own default")
+	# The two values that ARE persisted come back untouched.
+	assert_almost_eq(pop.attractiveness, 0.75, 1e-9)
+	assert_almost_eq(pop.occ_of("H-000"), 0.5, 1e-9)
+
+
 func test_ramp() -> void:
 	assert_almost_eq(PopulationSystem.ramp(0.0), 0.35, 1e-9)
 	assert_almost_eq(PopulationSystem.ramp(18.0), 0.675, 1e-9)

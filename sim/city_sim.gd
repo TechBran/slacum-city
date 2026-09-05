@@ -21,6 +21,25 @@ const DEMAND_CLASS_CHANNEL := {
 	&"data_center": "power_demand_datacenter",
 }
 
+## **The age every building in this city is, as far as doc 09's occupancy ramp
+## is concerned** — the literal `_population_inputs` has carried since Wave 1,
+## named here because `settled_residents` has to quote the same number to give
+## doc 12 an answer the hourly settle will agree with.
+##
+## It is above `PopulationSystem.OCCUPANCY_RAMP_HOURS` (36), so `ramp()` clamps
+## to 1.0 for EVERY building and **the ramp does not run in the shipped game**
+## (report 98 RR-204). That was authored for the starter city, whose stock is
+## older than the ramp horizon — but it applies just as flatly to a house the
+## player placed thirty seconds ago, which therefore counts its full four
+## residents the moment its shell is finished rather than filling from 35 %.
+## Doc 09 §2.10 still describes a ramp. **Wiring the real age is a BALANCE
+## change and this wave does not make it**: it would take the 2026-09-04
+## report's complaint — the counter does not visibly move — and make it
+## strictly worse, adding 36 game-hours of near-invisible fill on top of the
+## 176 real seconds already measured. Doc 93 §AX asks the lead to rule which of
+## the two, code or doc, is wrong.
+const POPULATION_INPUT_AGE_HOURS: float = 48.0
+
 var clock: GameClock
 var curves: DayCurveSet
 var modifiers: ModifierStack
@@ -298,6 +317,14 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	_boot_weather()
 	_check_grid_rules()
 	_register_systems()
+	# **A city knows its own population before its first tick** (report 98
+	# RR-202). `PopulationSystem.advance` runs once per game-HOUR, so until this
+	# line every freshly booted `CitySim` reported `city_population == 0` — the
+	# shell's `_refresh_hud()` fires in `_wire_hud` BEFORE the sim has stepped,
+	# so the very first frame of a 144-person city painted `0` in the chip.
+	# `settle_aggregates` relaxes nothing and writes no persisted value; see its
+	# own header for why it may not touch the occupancy map.
+	population.settle_aggregates(_population_inputs())
 	return boot_errors.is_empty()
 
 
@@ -2033,6 +2060,25 @@ func _restore_finish(body: Dictionary) -> void:
 	_restore_difficulty(body)
 	_refresh_road_density()
 	_restore_goals(body)
+	# **A loaded city knows its own population before its first tick** (report 98
+	# RR-202, and the half of it a player can actually be hurt by). The
+	# aggregates are DERIVED and doc 08 does not persist them, so a restore left
+	# `city_population` at the 0 `PopulationSystem.new()` starts on until the
+	# next hour boundary — measured at 55 real seconds on a save taken 21 ticks
+	# past the hour (`tools/measure_population_lag.gd --boot`).
+	#
+	# **AFTER `_restore_goals`, and that ordering is a ruling** (doc 93 §AX1).
+	# `goal_state_view()` reads `city_population`, so settling first would hand
+	# the curriculum's restore-time reconcile a population the SAVE does not
+	# record — and `GoalSystem.serialize` writes `done`, `progress` and
+	# `earned_level`, all three of which are in `state_hash`. On the 1,500-
+	# building benchmark city that is enough to complete objectives the booted-
+	# and-saved city had not completed, and doc 08's identity contract —
+	# boot → save → load is bit-identical — is what
+	# `tests/test_save_migration.gd::test_37_…` measures. A restore may not
+	# teach the curriculum something the boot it is restoring into does not
+	# know; the next hourly reconcile tells both of them, together.
+	population.settle_aggregates(_population_inputs())
 
 
 ## Doc 03 §2.9 + doc 08 §2.8 city section v6: the preset is part of the city, so
@@ -2472,6 +2518,37 @@ func _serialize_buildings() -> Array:
 	return out
 
 
+## **How many of this building's authored residents actually live there**, on
+## the same product the hourly settle sums into `city_population` (doc 12 D-100,
+## report 98 RR-203). `-1` for a building that houses nobody, so the caller can
+## tell "no residents yet" from "not a home".
+##
+## Doc 12's panel needs this because the vital beside it is the AUTHORED figure:
+## a house placed thirty seconds ago says `Occupants 4` while its shell is still
+## going up and it is contributing exactly zero to the chip at the top of the
+## screen. That gap — a building that claims four residents next to a counter
+## that has not moved — is what the 2026-09-04 report is describing.
+##
+## Read off `PopulationSystem.settled_occ` — what the LAST SETTLE counted — and
+## not the live product, because the live product runs ahead of the chip by up
+## to 59 game-minutes (RR-203's 56-second window, closed at the Wave 24 merge):
+## a shell that completes at minute 120 is a full house to
+## `state_occupancy × ramp × attractiveness` and nobody to `city_population`
+## until the hour-3 settle at minute 176. A building the settle has never seen
+## (placed since the last hour boundary) is `0 of N`; after a boot or a restore
+## `settle_aggregates` has seen every building, so the panel and the chip agree
+## from the first frame. `occupancy`/`occ_of` cannot serve: persisted sparsely,
+## `1.0` for an id it has never seen, and not rewritten by `settle_aggregates`.
+func settled_residents(sim_id: String) -> int:
+	var b: Building = buildings.get(sim_id)
+	if b == null:
+		return -1
+	var authored := int(b.stats.get("population", 0))
+	if authored <= 0 or catalog.category(String(b.archetype)) != "residential":
+		return -1
+	return roundi(float(authored) * float(population.settled_occ.get(sim_id, 0.0)))
+
+
 func _population_inputs() -> Array:
 	var out: Array = []
 	# Category is a function of archetype, and there are a handful of archetypes
@@ -2493,7 +2570,7 @@ func _population_inputs() -> Array:
 			"residential": category == "residential",
 			"civic": category == "service" or category == "utility",
 			"state_occupancy": b.state_occupancy(),
-			"age_hours": 48.0,  # authored starter age ≥ ramp horizon
+			"age_hours": POPULATION_INPUT_AGE_HOURS,
 		})
 	return out
 

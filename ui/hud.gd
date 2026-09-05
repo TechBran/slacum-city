@@ -30,6 +30,13 @@ const PALETTE_TYPE := "Palette"
 const REFERENCE_WIDTH_DP := 880.0
 const REFERENCE_HEIGHT_DP := 400.0
 const ALERT_REFRESH_S := 0.2
+## `data/ui.json.layout.population_flash_s`'s fallback, on the same contract as
+## every other literal in this file: the authored file is the source and this
+## exists so a malformed one degrades to a readable HUD (D-100).
+const DEFAULT_POPULATION_FLASH_S := 1.2
+## "No population has been painted yet" — distinct from every value a city can
+## report, so the FIRST refresh seeds the reading instead of pulsing for it.
+const NO_POPULATION := -0x7FFF_FFFF
 const MENU_GLYPH := "☰"
 ## §2.3's left rail is three slots — BUILD FAB (0), overlays (1), speed (2) — and
 ## the top one is what the top bar has to clear. The three live in three files
@@ -55,6 +62,10 @@ var _alert_rows: Array[Dictionary] = []
 
 var _speed := 1
 var _paused := false
+## The population the chip is currently showing (D-100). `refresh()` is called
+## on every re-layout with the SAME snapshot, so the comparison is against what
+## was last painted and not against "was there a refresh".
+var _shown_population := NO_POPULATION
 var _rail_expanded := false
 var _reduce_motion := false
 var _touch_min := 48.0
@@ -378,6 +389,9 @@ func refresh(snapshot: Dictionary) -> void:
 		return
 	_speed = int(snapshot.get("speed", _speed))
 	_paused = bool(snapshot.get("paused", _paused))
+	# BEFORE the solve, so the flash this may raise is already in `_chip_flash`
+	# when `chip_values` OR's it into the chip it belongs to.
+	_note_population(snapshot)
 	# The vertical solve first, because both of its answers change the width the
 	# horizontal one gets (A91-D-23). Neither depends on the chip set, so there is
 	# no loop here: the row height is what one chip measures and the rail reserve
@@ -398,6 +412,36 @@ func refresh(snapshot: Dictionary) -> void:
 		UIWidgets.place_in_rail(_speed_button.get_parent() as Control, 2,
 				config.layout(), _touch_min)
 	_render_alerts(_now_s())
+
+
+## **The chip acknowledges itself when it moves** (doc 12 D-100, report 98
+## RR-203, the 2026-09-04 player report: *"I don't see it actually counting
+## up"*).
+##
+## It does not count up, and it is not going to: doc 01 settles population once
+## per game-HOUR, so a house the player placed changes this number in ONE jump
+## between 120 and 180 real seconds after the tap — measured at 176 s by
+## `tools/measure_population_lag.gd`, which is long enough that the player has
+## stopped watching. The counter is honest; what was missing is any sign that
+## the thing they built is what moved it. So the chip pulses on the frame the
+## number changes, on exactly Wave 14's deposit mechanism — which means A8's
+## reduce-motion suppression already covers it and the expiry sweep in
+## `_process` already knows how to take it down.
+##
+## Compared against what was last PAINTED rather than against the previous call,
+## because `refresh()` re-runs with the same snapshot on every re-layout.
+func _note_population(snapshot: Dictionary) -> void:
+	if not snapshot.has("population"):
+		return
+	var now := int(snapshot["population"])
+	var was := _shown_population
+	_shown_population = now
+	if was == NO_POPULATION or now == was:
+		return
+	var seconds := UIConfig.get_num(config.layout() if config != null else {},
+			"population_flash_s", DEFAULT_POPULATION_FLASH_S)
+	if seconds > 0.0:
+		flash_chip(StringName(HudModel.CHIP_POPULATION), seconds)
 
 
 ## The ⚡ and 💧 chips' readings, `{power01, water01}` on `[0, 1]` (doc 12 §2.4
@@ -801,11 +845,17 @@ func _process(delta: float) -> void:
 	# expire, or a reduce-motion device would carry the flag until it reloaded.
 	if model != null:
 		model.advance_flashes(delta)
-		if not model.chip_flashing(HudModel.CHIP_TREASURY):
-			var treasury: Button = _chips.get(HudModel.CHIP_TREASURY, null)
-			if treasury != null and bool(treasury.get_meta("pulse", false)):
-				treasury.set_meta("pulse", false)
-				treasury.modulate.a = 1.0
+		# Wave 24 (D-100): the same sweep, over the SET of chips whose pulse can
+		# only have come from `flash_chip`. It was the treasury alone and is now
+		# the treasury and the population; `HudModel.FLASHABLE_CHIPS` says why
+		# `grid` and `water` may never join it.
+		for chip_id: String in HudModel.FLASHABLE_CHIPS:
+			if model.chip_flashing(chip_id):
+				continue
+			var button: Button = _chips.get(chip_id, null)
+			if button != null and bool(button.get_meta("pulse", false)):
+				button.set_meta("pulse", false)
+				button.modulate.a = 1.0
 	if _reduce_motion:  # A8: pulses are motion
 		return
 	_pulse_phase = fmod(_pulse_phase + delta * _pulse_hz, 1.0)
