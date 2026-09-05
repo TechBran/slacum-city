@@ -13655,12 +13655,22 @@ they are the only two such steps in fifty-six cells. Gate 34 asserts that set by
 name. Doc 93 §BC-4's rider carries the argument for paying that price rather than
 shrinking the seeds.
 
-**One number improved for free.** At 6,070 kW an L6 data centre sat at
-`r = 0.8993` on a 6,750 kW pad — five kW under the operating ceiling, which about
-fifteen streetlights (`STREETLIGHT_KW` 0.35) consume, so the top-rung data centre
-was over the ceiling on any pad with normal street load. At 5,830 it sits at
-`r = 0.864`, with **245 kW** of room under the 6,075 kW ceiling and 920 kW under
-the nameplate.
+**One number improved for free, and the tightness moved one step up rather than
+vanishing — said here so it is not found later.** At 6,070 kW an L6 data centre
+sat at `r = 0.8993` on a 6,750 kW pad: five kW under the OPERATING ceiling, which
+about fifteen streetlights (`STREETLIGHT_KW` 0.35) consume, so the top-rung data
+centre was over the ceiling on any pad with normal street load. At 5,830 it sits
+at `r = 0.864`, with **245 kW** of room under the 6,075 kW ceiling and 920 kW
+under the nameplate. What is now exactly tight is the STEP into it: the clamp
+floors on the gate, so `4,230 + 1.15 × 1,600 = 6,070` leaves **5 kW** for
+anything else on the pad. That is not the same defect wearing a new hat, and the
+difference is the whole of blocker (2): a data centre sharing its pad at L5 → L6
+is refused, `cmd_fix_power_capacity` sells it a **parallel transformer**, and the
+panel now says so in words (`needs_second`) instead of telling it to give up. The
+top of this ladder is a building that needs a transformer to itself — which is
+what doc 93 §BC-2 already says a 6,750 kW unit is: an infrastructure decision,
+not a pole-top. Buying slack instead would mean authoring a margin on a margin
+that no document owns.
 
 **Hashes: none moved.** See §68.4's fix-pass row and its isolation.
 

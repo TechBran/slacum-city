@@ -3690,7 +3690,7 @@ func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
 			("%d cells sit at their level's ceiling; doc 93 §BC-4 clamps exactly two — "
 					+ "`high_rise` L6 (servable) and `data_center` L6 (buyable)")
 					% clamped_cells)
-	_assert_only_the_clamped_steps_are_efficiency_positive(sim, envelope)
+	_assert_only_the_clamped_steps_are_efficiency_positive(sim)
 
 	# (5) Doc 05's per-variant ladders are the reading the SIM uses for a water
 	# facility (`CitySim._water_kw_by_building` overrides doc 02's shell cell),
@@ -3754,8 +3754,7 @@ func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
 ## have a demand ratio at or below `TAX_LEVEL_GROWTH`, they are listed here by
 ## name, and a third one — or either of these two moving — fails the gate. That
 ## is the difference between a bounded, published exception and a silent one.
-func _assert_only_the_clamped_steps_are_efficiency_positive(sim: CitySim,
-		envelope: Dictionary) -> void:
+func _assert_only_the_clamped_steps_are_efficiency_positive(sim: CitySim) -> void:
 	var tax_growth := float((StarterCityLoader.read_json(ECONOMY_DATA).get("tax", {})
 			as Dictionary).get("TAX_LEVEL_GROWTH", 0.0))
 	assert_true(tax_growth > 0.0, "doc 03's tax.TAX_LEVEL_GROWTH must be readable")
