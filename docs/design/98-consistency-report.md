@@ -9012,6 +9012,53 @@ emits, `level_up_grant_arrears_paid`, has a consumer in the same commit
 (`ui_root._check_grant_arrears`), so the register neither gains a row nor needs
 one — which the matrix suite asserts on its own.
 
+### 66.S — the suite, the audit and the four baselines, on the FINAL tree
+
+`nohup setsid tools/run_suite.sh > suite.log 2>&1` →
+**tests: 2798  asserts: 582961  failed: 0  silent: 0 — ALL TESTS PASSED.**
+`tools/run_suite.sh --one=test_balance_gates.gd` → tests: 33, asserts: 445,
+failed: 0. `python3 tools/check_doc_refs.py` → *5363 references, all resolving;
+no id assigned twice.* `godot --headless --path . tools/ui_preview.tscn --
+--screen=all --size=412x915 --audit --strict` → **clean, exit 0** on every
+state; the only surface this wave adds is one toast, and a toast has no target.
+
+**The four `profile_sim --hash-only` digests are re-taken on the final tree and
+are the ones §63.8 publishes**, unchanged by anything after the save key:
+
+| fixture | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `d09597510c211062…` | `4c5aea2928d1991e…` |
+| `tests/fixtures/bench_city.json` | `db208d59c6fe7bdc…` | `28ec8a1c33f3bf88…` |
+
+That is the point of the ablation §63.8 records: the gate re-fits, the new
+instrument and the `min_condition_floored` sample column are all in `tests/` and
+`tools/`, which `profile_sim` does not load, so **not one of them can move a
+digest** — and the digests did not move between the checkpoint that introduced
+the save key and the final tree.
+
+**The two real-save arms, re-run on the final tree** —
+`tools/measure_backpay.gd --file=…/slot_0/gen_000291.sav` → first load
+`$14,922,000` in five rungs, treasury `−$22,624 → $14,899,376`, **second load
+`$0`**; `tools/measure_player_city.gd --saves=… --slot=0 --days=1` →
+`treasury $14899376` at load through the real `SaveService`, outstanding restore
+bill `$282,078`, `relief used 0/3 in era (level 5)`, austerity `true → false`
+inside one game-day.
+
+**`game/main.gd` needs no edit for the receipt, and the reason is worth writing
+down rather than assuming.** `_settle_grant_arrears` emits onto the sim bus
+inside `restore_state`, and `main._on_sim_batch` — the single door — already
+forwards **every** drained batch to `ui_root.feed_events(batch)` before it
+switches on any type, so a new event type reaches `_check_grant_arrears` with no
+translation. Both drains that can carry a restore's leftovers do the same thing:
+`SimHost._process` (`game/sim_host.gd:35`) drains on the first frame that
+produces a tick, and `main._finish_catchup` (`game/main.gd:2245`) drains the
+offline batch and feeds it through the same door. **What the lead may optionally
+want** is one line in `_finish_restore`, immediately after
+`_on_ui_save_loaded(_restore_slot)` (`game/main.gd:1805`): `flush_sim_events()` — the door's own
+idempotent drain (`game/main.gd:736`) — which lands the receipt on the frame of
+the load rather than on the first tick after it. It is a latency choice, not a
+correctness one, and this lane does not make it because it does not own the file.
+
 ## 64. WAVE 22 — the reward: a rung is worth something now, and there is one more of them (binding)
 
 *Forked off the Wave-19 merge (`ef08351`), 2026-09-04. The lane exists for one
