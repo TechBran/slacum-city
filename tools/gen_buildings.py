@@ -123,18 +123,39 @@ BUILDING_RULES: Dict[str, Any] = {
                                " asks its transformer for 5,563 kW at 20:00, and doc"
                                " 04 s5.3's gate is judged at that hour"
                                " (CitySim.peak_component_loads, RR-120).",
+        "upgrade_headroom_margin": D("1.15"),
+        "_upgrade_headroom_margin_owner": "doc 02 s2.11 -- sim/city_sim.gd"
+                       " UPGRADE_HEADROOM_MARGIN, MIRRORED here for the same reason"
+                       " ceiling_peak_kw is. cmd_upgrade_building does NOT refuse on"
+                       " the steady-state reading: it asks power_headroom for"
+                       " (cell(L) - cell(L-1)) x this margin ADDED to the pad's peak"
+                       " load. So the inequality a player actually meets when they tap"
+                       " Upgrade is cell(L-1) x channel_peak + margin x (cell(L) -"
+                       " cell(L-1)) <= ceiling_peak_kw, which is STRICTER than the"
+                       " steady-state form whenever channel_peak < margin -- exactly"
+                       " the datacenter (1.00) and industrial (1.13) classes. Wave 28"
+                       " shipped the steady form alone and left data_center L5->L6"
+                       " asking 6,346 kW against a 6,075 kW envelope: green gate, red"
+                       " game. Both forms are now clamped and both are gated.",
         "_clamp_rule": "NEW, Wave 28 (doc 02 s2.3, doc 93 sec BC-1). Every generated"
-                       " power_demand_kw cell is min(round_rule(seed x k_dem^(L-1)),"
-                       " ceiling_peak_kw / channel_peak[class]) with the quotient"
-                       " floored onto this column's own s8 `kw` rounding grid, so the"
-                       " clamp can never round UP past the thing it clamps to. It is"
-                       " the SAME shape coverage_ladder.max_requirement has had since"
-                       " doc 02 s2.9 -- a generated ladder stopped at the ceiling of"
-                       " what another system can actually supply -- and it is applied"
-                       " here for the reason doc 93 sec G5 rider 1 already gave for"
-                       " the coverage columns and did not give for this one:"
-                       " demanding a service the player has no verb to buy is a wall"
-                       " with no door.",
+                       " power_demand_kw cell is the MINIMUM of three numbers: the"
+                       " curve round_rule(seed x k_dem^(L-1)); the SERVABLE ceiling"
+                       " ceiling_peak_kw / channel_peak[class]; and, for every level"
+                       " above the first, the BUYABLE ceiling (ceiling_peak_kw -"
+                       " cell(L-1) x (channel_peak - margin)) / margin, which is the"
+                       " upgrade gate cmd_upgrade_building refuses on solved for"
+                       " cell(L). Both quotients are floored onto this column's own s8"
+                       " `kw` rounding grid, so a clamp can never round UP past the"
+                       " thing it clamps to. It is the SAME shape"
+                       " coverage_ladder.max_requirement has had since doc 02 s2.9 --"
+                       " a generated ladder stopped at the ceiling of what another"
+                       " system can actually supply -- and it is applied here for the"
+                       " reason doc 93 sec G5 rider 1 already gave for the coverage"
+                       " columns and did not give for this one: demanding a service"
+                       " the player has no verb to buy is a wall with no door. The"
+                       " first level has no buyable form because nothing is upgraded"
+                       " INTO it; its gate is placement (serving_headroom_for_new),"
+                       " which is the steady form.",
         "_clamp_binds_at_most_the_top_rung": "doc 93 sec BC-4. If the clamp bit twice"
                                              " the archetype would have two rungs at"
                                              " the same kW and an upgrade that costs"
@@ -465,18 +486,66 @@ def ladder_floor(x: D, ladder: List[List[Any]]) -> D:
     raise AssertionError("rounding ladder has no tail entry")
 
 
-def demand_ceiling_kw(archetype: str) -> D:
+def demand_ceiling_kw(archetype: str, prev_kw: Optional[D] = None) -> D:
     """doc 93 sec BC-1's ceiling on ONE authored `power_demand_kw` cell.
 
-    `ceiling_peak_kw` is a PEAK budget (what the transformer carries at the
-    hour doc 04 sec 5.3's gate is judged at); an authored cell is a BASE, so the
-    budget is divided by the archetype's own doc 01 channel peak and floored
-    onto the sec 8 `kw` grid.
+    TWO ceilings, and the tighter one wins.
+
+    * **SERVABLE** — `ceiling_peak_kw` is a PEAK budget (what the transformer
+      carries at the hour doc 04 sec 5.3's gate is judged at) and an authored
+      cell is a BASE, so the budget is divided by the archetype's own doc 01
+      channel peak.  This is the reading a building at rest is judged on, and
+      the only reading the first level has.
+    * **BUYABLE** — `cmd_upgrade_building` does not ask that question.  It asks
+      `power_headroom(sim_id, (cell(L) - cell(L-1)) x UPGRADE_HEADROOM_MARGIN)`,
+      i.e. the pad's PEAK load plus the marked-up DELTA, so the inequality the
+      player meets is
+
+          cell(L-1) x peak + margin x (cell(L) - cell(L-1)) <= ceiling_peak_kw
+
+      Solved for `cell(L)` that is `(ceiling - cell(L-1) x (peak - margin)) /
+      margin`.  It is stricter than the servable form whenever `peak < margin`
+      -- the datacenter (1.00) and industrial (1.13) classes -- and looser
+      whenever `peak > margin`, which is why BOTH are applied rather than one.
+
+    Both are floored onto the sec 8 `kw` grid: a clamp rounded half-UP would put
+    the clamped cell one grid step past the capacity it clamps to, which is the
+    wall this function exists to forbid.
+
+    `prev_kw` is the FINAL (already clamped) cell of the level below; `None` at
+    L1, where nothing is upgraded into the row and only the servable form
+    applies.
     """
     env = BUILDING_RULES["service_envelope"]
     cls = env["demand_class"][archetype]
-    peak = env["channel_peak"][cls]
-    return ladder_floor(D(env["ceiling_peak_kw"]) / peak, BUILDING_RULES["rounding"]["kw"])
+    peak = D(env["channel_peak"][cls])
+    ceiling = D(env["ceiling_peak_kw"])
+    kw_ladder = BUILDING_RULES["rounding"]["kw"]
+    servable = ladder_floor(ceiling / peak, kw_ladder)
+    if prev_kw is None:
+        return servable
+    margin = D(env["upgrade_headroom_margin"])
+    buyable = ladder_floor((ceiling - D(prev_kw) * (peak - margin)) / margin, kw_ladder)
+    return min(servable, buyable)
+
+
+def demand_column(archetype: str) -> List[D]:
+    """The whole `power_demand_kw` ladder for one archetype, clamped rung by
+    rung.  Sequential and not a comprehension, because the BUYABLE ceiling of
+    level L reads the CLAMPED cell of level L-1: a ladder whose top rung was
+    pulled down changes what the rung above it may ask for."""
+    seed = BUILDING_RULES["seed_rows"][archetype]
+    growth = BUILDING_RULES["growth_classes"][seed["class"]]
+    kw_ladder = BUILDING_RULES["rounding"]["kw"]
+    k_dem = growth["k_dem"]
+    out: List[D] = []
+    prev: Optional[D] = None
+    for e in range(levels_of(archetype)):
+        curve = ladder_round(D(seed["power_kw"]) * k_dem ** e, kw_ladder)
+        cell = min(curve, demand_ceiling_kw(archetype, prev))
+        out.append(cell)
+        prev = cell
+    return out
 
 
 def is_tie(x: D, step: D) -> bool:
@@ -580,7 +649,7 @@ PUBLISHED: Dict[str, List[Tuple[Any, ...]]] = {
         (0, 53, _P("650"), _P("21.0"), _P("58"), _P("64"), _P("0.001080"), _P("0.00098"), 320, _P("5.12"), _P("0.50"), _P("0.44"), 4),
         (0, 111, _P("1660"), _P("53.0"), _P("98"), _P("109"), _P("0.001296"), _P("0.00126"), 640, _P("8.19"), _P("0.75"), _P("0.69"), 4),
         (0, 233, _P("4230"), _P("135"), _P("167"), _P("185"), _P("0.001555"), _P("0.00161"), 1280, _P("13.11"), _P("0.95"), _P("0.94"), 4),
-        (0, 490, _P("6070"), _P("345"), _P("284"), None, _P("0.001866"), _P("0.00206"), 2560, _P("20.97"), _P("0.95"), _P("0.94"), 5),
+        (0, 490, _P("5830"), _P("345"), _P("284"), None, _P("0.001866"), _P("0.00206"), 2560, _P("20.97"), _P("0.95"), _P("0.94"), 5),
     ],
     "police_station": [
         (0, 12, _P("25"), _P("0.19"), _P("10"), _P("10"), _P("0.000400"), _P("0.00010"), 30, _P("0.20"), _P("0.00"), _P("0.00"), 0),
@@ -687,6 +756,9 @@ def generate_levels(archetype: str) -> List[Dict[str, Any]]:
     # build_time first: upgrade_time(L->L+1) reads the ROUNDED build_time cell.
     build_time = [ladder_round(D(seed["time_h"]) * k_time ** e, ladders["time_h"])
                   for e in range(top)]
+    # doc 93 sec BC-1's clamp. Computed for the whole ladder first, because the
+    # BUYABLE half of the ceiling reads the clamped cell one rung down.
+    power_kw = demand_column(archetype)
 
     rows: List[Dict[str, Any]] = []
     for level in range(1, top + 1):
@@ -698,10 +770,10 @@ def generate_levels(archetype: str) -> List[Dict[str, Any]]:
             "population": int(step_round(D(seed["pop"]) * k_out ** e, derived["population"])),
             "jobs": int(step_round(D(seed["jobs"]) * k_out ** e, derived["jobs"])),
             # doc 93 sec BC-1's clamp, the same `min(curve, ceiling)` shape the two
-            # coverage columns below have had since doc 02 sec 2.9's max_requirement.
-            "power_demand_kw": min(ladder_round(D(seed["power_kw"]) * k_dem ** e,
-                                                ladders["kw"]),
-                                   demand_ceiling_kw(archetype)),
+            # coverage columns below have had since doc 02 sec 2.9's max_requirement
+            # -- with the SECOND ceiling Wave 28's fix pass added, the one the
+            # upgrade gate actually refuses on (see `demand_ceiling_kw`).
+            "power_demand_kw": power_kw[e],
             "water_demand": ladder_round(seed["water"] * k_dem ** e, ladders["wu"]),
             "build_time_hours": build_time[e],
             "decay_per_hour": ladder_round(seed["decay"] * shared["k_decay"] ** e, ladders["decay"]),
@@ -945,17 +1017,35 @@ def verify_invariants() -> None:
                  % (aid, cls))
             continue
         rows = generate_levels(aid)
-        ceiling = demand_ceiling_kw(aid)
-        peak = env["channel_peak"][cls]
-        clamped = [r["level"] for r in rows if r["power_demand_kw"] >= ceiling]
+        peak = D(env["channel_peak"][cls])
+        margin = D(env["upgrade_headroom_margin"])
+        ceiling_peak = D(env["ceiling_peak_kw"])
+        clamped = []
+        prev_kw: Optional[D] = None
         for row in rows:
-            # BC-1: no cell may ask for more, at its own peak hour, than one
-            # transformer can carry at doc 04 sec 5.3's ceiling.
-            if row["power_demand_kw"] * peak > env["ceiling_peak_kw"]:
+            kw = D(row["power_demand_kw"])
+            if kw >= demand_ceiling_kw(aid, prev_kw):
+                clamped.append(row["level"])
+            # BC-1 SERVABLE: no cell may ask for more, at its own peak hour,
+            # than one transformer can carry at doc 04 sec 5.3's ceiling.
+            if kw * peak > ceiling_peak:
                 fail("BC-1: %s L%d draws %s kW = %s kW at its peak, over the"
                      " %s kW transformer envelope"
-                     % (aid, row["level"], row["power_demand_kw"],
-                        row["power_demand_kw"] * peak, env["ceiling_peak_kw"]))
+                     % (aid, row["level"], kw, kw * peak, ceiling_peak))
+            # BC-1 BUYABLE: and the STEP into it has to clear the gate
+            # cmd_upgrade_building actually refuses on -- the pad's peak load
+            # plus the delta marked up by UPGRADE_HEADROOM_MARGIN. A cell that
+            # is servable but not buyable is a level the player can be shown and
+            # can never reach, which is the wall with no door in its purest form.
+            if prev_kw is not None:
+                at_gate = prev_kw * peak + margin * (kw - prev_kw)
+                if at_gate > ceiling_peak:
+                    fail("BC-1: %s L%d->L%d meets the upgrade gate at %s kW"
+                         " (%s x %s + %s x %s), over the %s kW transformer"
+                         " envelope -- servable but not buyable"
+                         % (aid, row["level"] - 1, row["level"], at_gate,
+                            prev_kw, peak, margin, kw - prev_kw, ceiling_peak))
+            prev_kw = kw
         if D(BUILDING_RULES["seed_rows"][aid]["power_kw"]) == 0:
             # The two grid SHELLS (power_facility, substation) draw nothing at
             # any level -- station service is inside capacity_kw (doc 04 s2.3),

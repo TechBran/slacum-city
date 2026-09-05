@@ -196,16 +196,52 @@ func _floor_step(num: int, digits: int, step: Array) -> float:
 ## floored on the 10 kW step, is `4,160`.
 const ENVELOPE_PEAK_DIGITS := 2
 
-func _demand_ceiling(rules: Dictionary, archetype: String) -> float:
+func _demand_ceiling(rules: Dictionary, archetype: String,
+		previous_kw: float = -1.0) -> float:
 	var envelope: Dictionary = rules["service_envelope"]
 	var class_id := String((envelope["demand_class"] as Dictionary)[archetype])
+	var scale := _ipow(10, ENVELOPE_PEAK_DIGITS)
 	var peak: int = _scaled(float((envelope["channel_peak"] as Dictionary)[class_id]),
 			ENVELOPE_PEAK_DIGITS)
 	var ceiling: int = _scaled(float(envelope["ceiling_peak_kw"]), ENVELOPE_PEAK_DIGITS)
 	# ceiling / (peak / 10^d) expressed at `ENVELOPE_PEAK_DIGITS` decimal places.
-	var num := ceiling * _ipow(10, ENVELOPE_PEAK_DIGITS) / peak
+	var num := ceiling * scale / peak
+	# **The BUYABLE ceiling** (Wave 28 fix pass): the gate `cmd_upgrade_building`
+	# refuses on is `cell(L−1) × peak + margin × (cell(L) − cell(L−1)) ≤ ceiling`,
+	# so solved for `cell(L)` it is `(ceiling − cell(L−1) × (peak − margin)) /
+	# margin`. Written as ONE integer quotient rather than two, so a `.5` cell
+	# cannot lose a hundredth to an intermediate truncation:
+	#     buyable × 10^d = (ceiling × 10^d − prev × (peak − margin)) / margin
+	# `previous_kw < 0` is level 1, which nothing is upgraded into.
+	if previous_kw >= 0.0:
+		var margin: int = _scaled(float(envelope["upgrade_headroom_margin"]),
+				ENVELOPE_PEAK_DIGITS)
+		var prev: int = _scaled(previous_kw, ENVELOPE_PEAK_DIGITS)
+		num = mini(num, maxi(0, (ceiling * scale - prev * (peak - margin)) / margin))
 	return _floor_step(num, ENVELOPE_PEAK_DIGITS,
 			_ladder_step(num, ENVELOPE_PEAK_DIGITS, rules["rounding"]["kw"]))
+
+
+## The whole clamped `power_demand_kw` ladder for one archetype. Sequential, and
+## not a per-level formula, because the BUYABLE half of `_demand_ceiling` reads
+## the CLAMPED cell one rung down — the same shape `tools/gen_buildings.py`'s
+## `demand_column()` has, re-derived here rather than imported.
+func _demand_column(rules: Dictionary, archetype: String) -> Array[float]:
+	var seed: Dictionary = rules["seed_rows"][archetype]
+	var k_dem := float((rules["growth_classes"] as Dictionary)[String(seed["class"])]["k_dem"])
+	var ladders: Dictionary = rules["rounding"]
+	# The ladder's own length: one footprint per rung, which is doc 02 §8's own
+	# way of saying whether an archetype has five levels or six.
+	var levels: int = (seed["footprints"] as Array).size()
+	var out: Array[float] = []
+	var previous := -1.0
+	for level in range(1, levels + 1):
+		var curve := _curve_ladder(float(seed["power_kw"]), "power_kw", k_dem, level,
+				ladders["kw"])
+		var cell := minf(curve, _demand_ceiling(rules, archetype, previous))
+		out.append(cell)
+		previous = cell
+	return out
 
 
 ## round_rule(seed x k^(L-1)) on a single fixed step.
@@ -250,9 +286,7 @@ func _expected_row(rules: Dictionary, archetype: String, level: int) -> Dictiona
 		"jobs": _curve_step(float(seed["jobs"]), "jobs", k_out, level, integer_step),
 		# The doc 93 §BC-1 clamp, the same `min(curve, ceiling)` shape the two
 		# coverage rows below already had for `max_requirement` (Wave 28).
-		"power_demand_kw": minf(
-				_curve_ladder(float(seed["power_kw"]), "power_kw", k_dem, level, ladders["kw"]),
-				_demand_ceiling(rules, archetype)),
+		"power_demand_kw": _demand_column(rules, archetype)[level - 1],
 		"water_demand": _curve_ladder(float(seed["water"]), "water", k_dem, level, ladders["wu"]),
 		"build_time_hours": _curve_ladder(float(seed["time_h"]), "time_h", k_time, level, ladders["time_h"]),
 		"decay_per_hour": _curve_ladder(float(seed["decay"]), "decay", float(shared["k_decay"]), level, ladders["decay"]),
@@ -355,10 +389,16 @@ func test_rounding_regimes_sampled() -> void:
 		["apartment", 3, "power_demand_kw", 130.0, "kW <1000 -> 5: 22 x 2.45^2 = 132.055"],
 		["high_rise", 4, "power_demand_kw", 1490.0, "kW <10000 -> 10: 90 x 2.55^3 = 1492.324"],
 		["data_center", 5, "power_demand_kw", 4230.0, "kW <10000 -> 10: 100 x 2.55^4 = 4228.25063"],
-		# The clamp, sampled: the curve says 100 x 2.55^5 = 10,782.03 -> 10,800 on
-		# the tail rung, and doc 93 §BC-1's ceiling says 6,070 (Wave 28).
-		["data_center", 6, "power_demand_kw", 6070.0, "clamped: 6,075 / 1.00, floored on the 10 kW step"],
-		["high_rise", 6, "power_demand_kw", 4160.0, "clamped: 6,075 / 1.46 = 4,160.96, floored on the 10 kW step"],
+		# The clamp, sampled, and the two halves of §BC-1's ceiling side by side.
+		# `data_center` L6: the curve says 100 x 2.55^5 = 10,782.03 -> 10,800 on
+		# the tail rung; the SERVABLE ceiling says 6,075 / 1.00 = 6,070; and the
+		# BUYABLE one — the gate cmd_upgrade_building refuses on — says
+		# (6,075 - 4,230 x (1.00 - 1.15)) / 1.15 = 5,834.35 -> 5,830, which is
+		# tighter and therefore the cell. `high_rise` L6 is the other way round:
+		# its channel peaks at 1.46, above the 1.15 margin, so the servable half
+		# binds first (Wave 28 and its fix pass).
+		["data_center", 6, "power_demand_kw", 5830.0, "clamped BUYABLE: (6,075 + 4,230 x 0.15) / 1.15, floored on the 10 kW step"],
+		["high_rise", 6, "power_demand_kw", 4160.0, "clamped SERVABLE: 6,075 / 1.46 = 4,160.96, floored on the 10 kW step"],
 		["house", 2, "water_demand", 0.19, "WU <1 -> 0.01: 0.08 x 2.35 = 0.188"],
 		["high_rise", 2, "water_demand", 3.3, "WU <10 -> 0.1: 1.28 x 2.55 = 3.264 (seed 1.28, not cell 1.3)"],
 		["high_rise", 5, "water_demand", 54.0, "WU <100 -> 0.5: 1.28 x 2.55^4 = 54.121608"],
@@ -437,15 +477,28 @@ func test_signature_published_cells() -> void:
 	# grew a sixth rung, so the fact is now the one a player can act on — the
 	# TOP data center is the biggest single load in the game and it is exactly
 	# one top-rung transformer's worth (doc 93 §BC, doc 92 §68.1).
-	assert_almost_eq(float(catalog.stats("data_center", 6)["power_demand_kw"]), 6070.0, EPS,
-			"doc 02 §2.4 signature balance fact: an L6 data center draws 6,070 kW")
+	assert_almost_eq(float(catalog.stats("data_center", 6)["power_demand_kw"]), 5830.0, EPS,
+			"doc 02 §2.4 signature balance fact: an L6 data center draws 5,830 kW")
 	assert_almost_eq(float(catalog.stats("data_center", 6)["power_demand_kw"]),
-			_demand_ceiling(_rules_data(), "data_center"), EPS,
+			_demand_ceiling(_rules_data(), "data_center",
+					float(catalog.stats("data_center", 5)["power_demand_kw"])), EPS,
 			"…which is doc 93 §BC-1's ceiling exactly: it is the clamped cell")
 	assert_true(float(catalog.stats("data_center", 6)["power_demand_kw"])
 			<= PowerGrid.UPGRADE_MAX_R * float(PowerGrid.CAPACITY[&"transformer"][
 					(PowerGrid.CAPACITY[&"transformer"] as Array).size() - 1]),
 			"…and one transformer carries it, which is the whole ruling")
+	# **…and the STEP into it can be BOUGHT, which is the half the wave shipped
+	# without.** `cmd_upgrade_building` refuses on `pad peak + 1.15 × delta`, so a
+	# cell one transformer carries at rest can still be a level no purchase
+	# reaches. At 6,070 this line read 6,346 kW against a 6,075 kW envelope and
+	# the L5→L6 upgrade was unbuyable at any price; at 5,830 it reads 6,070.
+	var l5 := float(catalog.stats("data_center", 5)["power_demand_kw"])
+	var l6 := float(catalog.stats("data_center", 6)["power_demand_kw"])
+	assert_almost_eq(l5 + CitySim.UPGRADE_HEADROOM_MARGIN * (l6 - l5), 6070.0, EPS,
+			"the L5→L6 upgrade gate reads 4,230 + 1.15 × 1,600 = 6,070 kW")
+	assert_true(PowerGrid.transformer_rung_for(
+			l5 + CitySim.UPGRADE_HEADROOM_MARGIN * (l6 - l5)) > 0,
+			"…and a transformer rung carries THAT, which is what buyable means")
 	assert_almost_eq(float(catalog.stats("data_center", 5)["water_demand"]), 135.0, EPS,
 			"the water ladder is untouched: L5 still 135 m3/h off the 3.2 seed")
 	assert_eq(catalog.stats("high_rise", 5)["fire_load"], 1120,

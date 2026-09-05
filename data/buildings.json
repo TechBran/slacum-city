@@ -108,7 +108,7 @@
         {"level": 3, "footprint": [2, 2], "population": 0, "jobs": 53, "power_demand_kw": 650, "water_demand": 21.0, "build_time_hours": 58, "decay_per_hour": 0.001080, "fire_ignition_per_hour": 0.00098, "fire_load": 320, "crime_weight": 5.12, "req_fire_coverage": 0.50, "req_police_coverage": 0.44, "min_city_level": 4, "upgrade_time_hours": 64},
         {"level": 4, "footprint": [2, 2], "population": 0, "jobs": 111, "power_demand_kw": 1660, "water_demand": 53.0, "build_time_hours": 98, "decay_per_hour": 0.001296, "fire_ignition_per_hour": 0.00126, "fire_load": 640, "crime_weight": 8.19, "req_fire_coverage": 0.75, "req_police_coverage": 0.69, "min_city_level": 4, "upgrade_time_hours": 109},
         {"level": 5, "footprint": [2, 2], "population": 0, "jobs": 233, "power_demand_kw": 4230, "water_demand": 135, "build_time_hours": 167, "decay_per_hour": 0.001555, "fire_ignition_per_hour": 0.00161, "fire_load": 1280, "crime_weight": 13.11, "req_fire_coverage": 0.95, "req_police_coverage": 0.94, "min_city_level": 4, "upgrade_time_hours": 185},
-        {"level": 6, "footprint": [2, 2], "population": 0, "jobs": 490, "power_demand_kw": 6070, "water_demand": 345, "build_time_hours": 284, "decay_per_hour": 0.001866, "fire_ignition_per_hour": 0.00206, "fire_load": 2560, "crime_weight": 20.97, "req_fire_coverage": 0.95, "req_police_coverage": 0.94, "min_city_level": 5}
+        {"level": 6, "footprint": [2, 2], "population": 0, "jobs": 490, "power_demand_kw": 5830, "water_demand": 345, "build_time_hours": 284, "decay_per_hour": 0.001866, "fire_ignition_per_hour": 0.00206, "fire_load": 2560, "crime_weight": 20.97, "req_fire_coverage": 0.95, "req_police_coverage": 0.94, "min_city_level": 5}
       ]
     },
     "police_station": {

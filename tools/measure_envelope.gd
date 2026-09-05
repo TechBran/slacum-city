@@ -9,9 +9,13 @@ extends SceneTree
 ##
 ## **`--table`** prints, for every archetype at every level, the base kW doc 02
 ## publishes, the load that becomes at that archetype's own doc 01 channel peak,
-## and the transformer rung doc 04 §5.3 needs for it — `X` when no rung on the
-## ladder carries it, which is doc 93 §BC-1's wall. Run it on a fork to see the
-## nine cells that had no transformer; run it here to see none.
+## the transformer rung doc 04 §5.3 needs for it, and — from L2 up — the reading
+## the UPGRADE GATE is judged on and the rung THAT needs: `g<kW>-><rung>`, where
+## the kW is `cell(L−1) × peak + 1.15 × (cell(L) − cell(L−1))`, which is what
+## `CitySim.cmd_upgrade_building` hands `power_headroom`. `X` in either column is
+## doc 93 §BC-1's wall. Run it on a fork to see the nine cells that had no
+## transformer at rest; run it on the first Wave 28 cut to see `data_center` L6's
+## `gX`, the cell that was servable and unbuyable; run it here to see none.
 ##
 ## **`--panel`** walks a `data_center` through every rung of its own ladder on a
 ## real transformer and prints what the three surfaces SAY: the building panel's
@@ -61,13 +65,17 @@ func _table() -> void:
 	print("envelope (peak)  : %.0f kW" % PowerGrid.service_ceiling_kw())
 	print("rung ceilings    : ", _rung_ceilings(ladder))
 	print("")
-	print("archetype          class       peak   L: base kW / at peak -> rung")
+	print("margin (upgrade) : x%.2f" % CitySim.UPGRADE_HEADROOM_MARGIN)
+	print("")
+	print("archetype          class       peak   L: base kW / at peak -> rung  g<gate kW>-><rung>")
 	var stranded := 0
+	var unbuyable := 0
 	for archetype in ROSTER:
 		var class_id := String(classes.get(archetype, "none"))
 		var channel := String(CitySim.DEMAND_CLASS_CHANNEL.get(StringName(archetype), ""))
 		var peak := 1.0 if channel == "" else float(sim.curves.channel_peak(channel)["value"])
 		var cells: Array[String] = []
+		var previous := -1.0
 		for level in range(1, sim.catalog.max_level_of(archetype) + 1):
 			var base := float(sim.catalog.stats(archetype, level).get("power_demand_kw", 0.0))
 			if base <= 0.0:
@@ -76,8 +84,22 @@ func _table() -> void:
 			var rung := PowerGrid.transformer_rung_for(base * peak)
 			if rung == 0:
 				stranded += 1
-			cells.append("L%d %s/%s->%s" % [level, _kw(base), _kw(base * peak),
-					str(rung) if rung > 0 else "X"])
+			var cell := "L%d %s/%s->%s" % [level, _kw(base), _kw(base * peak),
+					str(rung) if rung > 0 else "X"]
+			# **The reading the VERB is judged on.** `cmd_upgrade_building` asks
+			# `power_headroom(sim_id, delta × UPGRADE_HEADROOM_MARGIN)`, which
+			# lands on the pad's PEAK load — so for a building alone on its own
+			# pad at full occupancy the inequality is this, and it is STRICTER
+			# than the column to its left wherever the channel peaks below 1.15.
+			if previous >= 0.0:
+				var at_gate := previous * peak \
+						+ CitySim.UPGRADE_HEADROOM_MARGIN * (base - previous)
+				var gate_rung := PowerGrid.transformer_rung_for(at_gate)
+				if gate_rung == 0:
+					unbuyable += 1
+				cell += " g%s->%s" % [_kw(at_gate), str(gate_rung) if gate_rung > 0 else "X"]
+			cells.append(cell)
+			previous = base
 		print("%-18s %-11s x%.2f  %s" % [archetype, class_id, peak, "  ".join(cells)])
 	# Doc 05's per-variant ladders — the reading the tick actually bills for a
 	# water facility (`CitySim._water_kw_by_building`).
@@ -97,7 +119,9 @@ func _table() -> void:
 				+ ("_" + String(pair[1]) if String(pair[1]) != "" else ""),
 				"civic", civic, "  ".join(cells)])
 	print("")
-	print("cells with NO transformer rung: %d" % stranded)
+	print("cells with no SERVABLE rung (doc 93 §BC-1, at rest) : %d" % stranded)
+	print("steps with no BUYABLE  rung (doc 93 §BC-1, at the gate): %d" % unbuyable)
+	print("cells with NO transformer rung: %d" % (stranded + unbuyable))
 	sim.dispose()
 
 
@@ -112,7 +136,7 @@ func _panel_walk() -> void:
 			% [SUBJECT, host, int(sim.grid.component(host)["level"]),
 			float(sim.grid.component(host)["capacity_kw"])])
 	print("")
-	print("DC level  base kW  next kW   pad kW  host  needs  panel row")
+	print("DC level  base kW  next kW   pad kW  host  needs  alone  panel row")
 	var b: Building = sim.buildings[SUBJECT]
 	var top: int = sim.catalog.max_level_of("data_center")
 	for level in range(1, top + 1):
@@ -129,12 +153,16 @@ func _panel_walk() -> void:
 		# `pad kW` is `rung_needed`'s own input — the pad's peak plus the delta —
 		# so the rung beside it can be checked rather than believed.
 		var at_top: bool = not bool(next.get("available", false))
-		print("L%-8d %-8s %-9s %-7s %-5s %-6s %s" % [level,
+		print("L%-8d %-8s %-9s %-7s %-5s %-6s %-6s %s" % [level,
 				_kw(float(b.stats.get("power_demand_kw", 0.0))),
 				"—" if at_top else _kw(next_kw),
 				"—" if at_top else _kw(float(next.get("after_kw", 0.0))),
 				"—" if at_top else "L%d" % int(next.get("host_level", 0)),
 				"—" if at_top else "L%d" % int(next.get("needs_rung", 0)),
+				# Doc 04 §2.9's parallel unit: the rung a transformer of its OWN
+				# would have to be. `X` is the only genuine wall (Wave 28 fix pass).
+				"—" if at_top else ("L%d" % int(next.get("alone_rung", 0))
+						if int(next.get("alone_rung", 0)) > 0 else "X"),
 				("%s to=%d rung=%d host=%d kw=%s" % [String(needs.get("text_key", "")),
 						int(needs.get("to_level", 0)), int(needs.get("needs_rung", 0)),
 						int(needs.get("host_level", 0)),
@@ -149,19 +177,33 @@ func _panel_walk() -> void:
 	b.stats = sim.catalog.stats("data_center", 2).duplicate()
 	sim.advance_hours(1.0)
 	var block := actions.transformer_block(host)
-	print("S18 on %s: customers=%d need_rung=%d need_bigger=%s for=%s cap=%s stranded='%s'"
+	print("S18 on %s: customers=%d need_rung=%d need_bigger=%s for=%s cap=%s second='%s' stranded='%s'"
 			% [host, int(block["customer_count"]), int(block["customers_need_rung"]),
 			str(block["customers_need_bigger"]), String(block["customers_need_rung_for"]),
-			String(block["customers_need_capacity_text"]), String(block["customer_stranded"])])
+			String(block["customers_need_capacity_text"]),
+			String(block["customer_needs_second"]), String(block["customer_stranded"])])
 	var routed := FixRouter.route(sim, {"kind": RequirementFormatter.FIX_POWER,
 			"id": host, "sim_id": SUBJECT}, true)
 	var quote: Dictionary = (routed.get("quote", {}) as Dictionary).get("payload", {})
 	var need: Dictionary = routed.get("needs", {})
-	print("router POWER: action=%s to_level=%s cost=%s clears=%s | needs rung %d (%s), host L%d"
+	print("router POWER: action=%s to_level=%s cost=%s clears=%s | needs rung %d (%s), host L%d, for %s"
 			% [String(quote.get("action", String(routed.get("action", "")))),
 			str(quote.get("to_level", "—")), str(quote.get("cost", "—")),
 			str(quote.get("clears", "—")), int(need.get("needs_rung", 0)),
-			_kw(float(need.get("needs_capacity_kw", 0.0))), int(need.get("host_level", 0))])
+			_kw(float(need.get("needs_capacity_kw", 0.0))), int(need.get("host_level", 0)),
+			String(need.get("sim_id", ""))])
+	# **The same route WITHOUT the quote** — the shape both production callers
+	# use (`ui/ui_root.gd`, `game/main.gd`). `needs` used to be inside
+	# `if with_quote:` and this line printed nothing; it is the regression test
+	# for doc 12 D-123(c) reaching a surface at all (Wave 28 fix pass).
+	var bare := FixRouter.route(sim, {"kind": RequirementFormatter.FIX_POWER,
+			"id": host, "sim_id": SUBJECT}, false)
+	var bare_need: Dictionary = bare.get("needs", {})
+	print("router POWER (with_quote=false): needs rung %d (%s), host L%d, for %s, quote=%s"
+			% [int(bare_need.get("needs_rung", 0)),
+			_kw(float(bare_need.get("needs_capacity_kw", 0.0))),
+			int(bare_need.get("host_level", 0)), String(bare_need.get("sim_id", "")),
+			str(bare.has("quote"))])
 	sim.dispose()
 
 

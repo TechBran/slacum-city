@@ -150,8 +150,12 @@ water_demand(L)    = round_wu( water_wu_seed  × k_dem^(L−1) )    water_wu_see
 k_dem = 2.35 steady | 2.45 standard | 2.55 vertical
 rounding: §2.2 ladders, half-up at every tie, applied ONCE per cell to the raw product
 
-service_ceiling_kw(a) = floor_kw( service_envelope.ceiling_peak_kw
-                                  / channel_peak[demand_class[a]] )
+service_ceiling_kw(a)       = floor_kw( ceiling_peak_kw / channel_peak[class(a)] )
+buyable_ceiling_kw(a, prev) = floor_kw( (ceiling_peak_kw
+                                         - prev x (channel_peak[class(a)] - margin))
+                                        / margin )                      -- L >= 2 only
+    margin = service_envelope.upgrade_headroom_margin (= CitySim.UPGRADE_HEADROOM_MARGIN)
+    prev   = the CLAMPED cell of the level below
 ```
 
 > **The power clamp — `min(curve, ceiling)`** *(Wave 28; doc 93 §BC-1, doc 92
@@ -168,21 +172,49 @@ service_ceiling_kw(a) = floor_kw( service_envelope.ceiling_peak_kw
 > **The ceiling is a PEAK budget and a cell is a BASE**, so the quotient is by
 > the archetype's own doc 01 channel peak — residential **1.46** at 20:00,
 > commercial **1.51** from 10:00, industrial 1.13, civic 1.15, datacenter 1.00 —
-> giving per-class ceilings of **4,160 / 4,020 / 5,370 / 5,280 / 6,070** kW.
-> `floor_kw`, never half-up: a clamp rounded *up* would put the clamped cell one
-> grid step past the capacity it clamps to, which is the wall it exists to
+> giving per-class SERVABLE ceilings of **4,160 / 4,020 / 5,370 / 5,280 / 6,070**
+> kW. `floor_kw`, never half-up: a clamp rounded *up* would put the clamped cell
+> one grid step past the capacity it clamps to, which is the wall it exists to
 > forbid.
 >
-> **It binds exactly one cell in the shipped table** — `high_rise` L6, 9,700 →
-> **4,160** — plus `data_center` L6 at its own ceiling by construction. Two rungs
-> at the same kW would be an upgrade that costs nothing to power, so the rule
-> is that the clamp may bind **at most the top rung**; an archetype whose
+> **And SERVABLE is not BUYABLE — the correction that closed this ruling.** The
+> first Wave 28 cut clamped on the quotient above and shipped a `data_center` L6
+> of 6,070 kW that one transformer carries at rest and that **no purchase could
+> ever reach**. `CitySim.cmd_upgrade_building` does not compare a steady-state
+> reading to anything: it asks `power_headroom` for `(cell(L) − cell(L−1)) ×
+> UPGRADE_HEADROOM_MARGIN` **added to the pad's peak load** (§2.11's ×1.15), so
+> the inequality the player meets at the Upgrade button is
+>
+> ```
+> cell(L-1) x channel_peak + 1.15 x (cell(L) - cell(L-1))  <=  6,075 kW
+> ```
+>
+> At 6,070 that read `4,230 + 1.15 × 1,840 = 6,346 kW` against 6,075, and
+> `PowerGrid.transformer_rung_for(6,346)` answered **0**: the L5→L6 upgrade of a
+> data centre staffed above 93.6 % was refused on every transformer at every
+> price — the exact wall §BC-1 exists to forbid, on the exact archetype and the
+> exact level the player reported. The two forms differ by `(cell(L) − cell(L−1))
+> × (1.15 − channel_peak)`, so the buyable one binds wherever a channel peaks
+> **below** 1.15 (`datacenter` 1.00, `industrial` 1.13) and the servable one
+> binds everywhere else. Both are applied; the tighter wins.
+>
+> **It binds exactly two cells in the shipped table**, one by each half:
+> `high_rise` L6, 9,700 → **4,160** (servable: `6,075 / 1.46`), and `data_center`
+> L6, 10,800 → **5,830** (buyable: `(6,075 + 4,230 × 0.15) / 1.15 = 5,834.35`,
+> floored on the 10 kW step). At 5,830 the L5→L6 gate reads `4,230 + 1.15 × 1,600
+> = 6,070 kW`, five kW under the envelope, and the step is buyable. Two rungs at
+> the same kW would be an upgrade that costs nothing to power, so the rule is
+> that the clamp may bind **at most the top rung**; an archetype whose
 > second-from-top cell needs clamping has the wrong seed and the seed is
 > re-derived instead (which is what happened to `data_center`).
-> `tools/gen_buildings.py` refuses to write a table that breaks it,
-> `BuildingCatalog` refuses to load one, and
+> `tools/gen_buildings.py` refuses to write a table that breaks either half;
+> `BuildingCatalog._check_service_envelope` records a boot error for one, which
+> `CitySim.boot_from_files` carries as `boot_errors` and `game/sim_host.gd`
+> raises with `push_error` — **the boot then continues on the bad table**, so
+> this is a loud check and not a refusal, and the gate below is what actually
+> stops a bad table shipping;
 > `tests/test_balance_gates.gd::test_gate_34_every_building_fits_the_transformer_envelope`
-> proves the mirror still equals doc 04's own numbers.
+> proves both halves and that the mirror still equals doc 04's own numbers.
 
 **Generation runs from the unrounded seeds, never from a printed table cell** *(report 98 RR-8, verifier finding F-07)*. The C-34 rescale divided the old water column by 6.25, which produced three seeds that are not representable in the display ladder of §2.2 (`<1` → 0.01, `<10` → 0.1). Re-growing a level from the **rounded** L1 cell instead of the seed breaks 8 of the 60 water cells (`store` L2/L3/L5, `high_rise` L3/L4/L5, `police_station` L3/L5). Both numbers are therefore published: the seed is normative, the table cell is display.
 
@@ -383,7 +415,7 @@ Everything else that used to live in this table has an owner elsewhere and is **
 
 **Signature balance fact, restated after C-13 and again after Wave 28.** An L5 data center draws **4,230 kW and 135 m³/h**. That is `2.55⁴ = 42.3×` its own L1 draw against `2.15⁴ = 21.4×` its L1 tax — the tower is **97.8 % less utility-efficient per tax dollar** than the L1 it grew from, and it is 1,408× an L1 house's draw. Spec §10's "data center upgrade → taxes increase → electric and water demand increase sharply" is literal here, and Core Rule 3 now holds for **every** archetype in the roster rather than for three of twelve.
 
-> **The RATIO is the fact, and the ratio did not move** (Wave 28, doc 93 §BC-4). The kW figure did: this line used to read *"an L5 data center draws 16,900 kW"*, which was true of the table and false of the game — a building attaches to one transformer, the biggest transformer was 2,500 kW, and 16,900 kW was a load nothing in doc 04 could carry at any price. The seed moved 400 → 100 and every relative claim above survives it unchanged, because `k_dem` did not move. The fact a player can now act on is the top of the ladder: **an L6 data centre draws 6,070 kW, the largest single load in the game, and exactly one top-rung transformer's worth.** The water half of the sentence is untouched — that column is generated from its own seed.
+> **The RATIO is the fact, and the ratio did not move** (Wave 28, doc 93 §BC-4). The kW figure did: this line used to read *"an L5 data center draws 16,900 kW"*, which was true of the table and false of the game — a building attaches to one transformer, the biggest transformer was 2,500 kW, and 16,900 kW was a load nothing in doc 04 could carry at any price. The seed moved 400 → 100 and every relative claim above survives it unchanged, because `k_dem` did not move. The fact a player can now act on is the top of the ladder: **an L6 data centre draws 5,830 kW, the largest single load in the game — and the step into it, `4,230 + 1.15 × 1,600 = 6,070 kW`, is exactly one top-rung transformer's worth at §5.3's ceiling.** (The figure was 6,070 in the first Wave 28 cut, which was the load one transformer carries *at rest*; the fix pass re-derived it on the gate the Upgrade button actually applies — see §2.3's clamp.) The water half of the sentence is untouched — that column is generated from its own seed.
 
 ### 2.5 Runtime outputs published by this system
 
@@ -993,13 +1025,16 @@ Two consequences of the extension are worth naming out loud:
 | `apartment` L6 | 520 | 43 | 1,940 | 42.5 | 54 | — | 0.001244 | 0.00076 | 1,440 | 20.97 | 0.80 | 0.75 | **5** |
 | `office` L6 | 0 | 650 | 3,090 | 28.0 | 72 | — | 0.001120 | 0.00069 | 1,280 | 15.73 | 0.80 | 0.75 | **5** |
 | `high_rise` L6 | 2,450 | 613 | **4,160** † | 138 | 227 | — | 0.001493 | 0.00089 | 2,240 | 26.21 | 0.95 | 0.94 | **5** |
-| `data_center` L6 | 0 | 490 | **6,070** † | 345 | 284 | — | 0.001866 | 0.00206 | 2,560 | 20.97 | 0.95 | 0.94 | **5** |
+| `data_center` L6 | 0 | 490 | **5,830** † | 345 | 284 | — | 0.001866 | 0.00206 | 2,560 | 20.97 | 0.95 | 0.94 | **5** |
 
-† **The two clamped cells** (Wave 28; §2.3's `min(curve, ceiling)`, doc 93 §BC-4,
-doc 92 §68). The curve says `90 × 2.55⁵ = 9,710 → 9,700` and
+† **The two clamped cells** (Wave 28; §2.3's `min(curve, servable, buyable)`, doc
+93 §BC-4, doc 92 §68). The curve says `90 × 2.55⁵ = 9,710 → 9,700` and
 `100 × 2.55⁵ = 10,782 → 10,800`; doc 04's ladder says one transformer carries
 6,075 kW at §5.3's ceiling, which is 4,160 of base for a residential archetype
-(peak ×1.46) and 6,070 for a data centre (flat ×1.00). **This is §2.14's own
+(peak ×1.46) and 6,070 for a data centre (flat ×1.00) — and the *step* into a
+cell has to clear that same 6,075 with §2.11's ×1.15 on the delta, which pulls
+the data centre to **5,830** and leaves the high rise where the servable
+quotient put it. **This is §2.14's own
 rider 2 applied to a second column**: that rider already ruled that the sixth
 rung of the *coverage* ladder repeats its fifth *"because §2.9's requirements are
 a demand on the service stock, and the service stock did not gain a rung; a
@@ -1011,11 +1046,26 @@ gains a rung (doc 04 §2.2's sixth, 6,750 kW) *and* the clamp, because neither
 alone reaches: 43,150 kW would want a 47,944 kW transformer, six times the
 biggest feeder in the game.
 
-**The step is still a real one.** `high_rise` L5 → L6 is 3,810 → 4,160 (+9.2 %)
-and `data_center` L5 → L6 is 4,230 → 6,070 (**+43.5 %**), so no upgrade in the
-roster is free to power — which is the rule the clamp is bounded by (the clamp
-may bind at most the TOP rung, and an archetype whose second-from-top cell needs
-clamping has the wrong seed).
+**The step is a real one, and it is the roster's ONLY efficiency-positive one —
+which is a cost the clamp charges, not a cost it avoids.** `high_rise` L5 → L6 is
+3,810 → 4,160 (**×1.092**) and `data_center` L5 → L6 is 4,230 → 5,830
+(**×1.378**). Both are non-zero, so neither upgrade is free to power. But the bar
+doc 03 §9 item 4 sets is not "non-zero": it is `k_dem > TAX_LEVEL_GROWTH`
+(**2.15**) — report 98 C-13 / spec §55 rule 3, *every upgrade must be less
+utility-efficient than the last*, which doc 03 calls the single most important
+cross-doc constant in the game's balance. A clamped cell is off the `k_dem`
+curve by construction, so these two steps grow demand by ×1.09 and ×1.38 while
+tax grows ×2.15: **the top rung of the tower tier and the top rung of the data
+centre are the two upgrades in the game that pay for themselves in utility
+terms.** Nothing caught that when the clamp shipped, because
+`test_demand_growth_invariant` and `verify_invariants()` both check the
+*coefficient* and never the *cells*, and `test_k_dem_ordering_holds_in_the_shipped_table`
+compares L5 against L1. It is checked now: gate 34 asserts that **exactly these
+two steps** have a demand ratio at or below `TAX_LEVEL_GROWTH`, by name, so a
+third one — or either of these two moving — fails the build. The exception is
+bounded by the clamp's own rule (at most the TOP rung, and an archetype whose
+second-from-top cell needs clamping has the wrong seed), which is what keeps it
+to two cells out of fifty-six rather than a slope.
 
 **The `upgrade_time_hours` the L5 rows gained:** house 7.0, store 10.5,
 apartment 35, office 47, high_rise 148, data_center 185.
@@ -1486,7 +1536,7 @@ Every conflict raised by v1 of this doc has been ruled on by report 98 and appli
 **Still open — for the overseer:**
 
 1. **Should losing coverage or headroom ever *downgrade* a building?** I still say no (§2.9) — output penalty and upgrade block only. A "brownout downgrade" would be more dramatic but risks spec §20.2 readability and irreversible offline losses.
-2. **Data-center gating at city level 4 (12,000 pop) may be too late for the vertical slice**, which is supposed to demonstrate "one building eats the whole grid." After C-13 an L1 data center draws 400 kW and an L2 draws 1,020 kW, so the demonstration is now sharper and later. Consider a slice-only override to city level 2, or a scripted starter data center. **Superseded in part, Wave 28:** those two figures are now **100 kW and 255 kW** (doc 93 §BC-4) — the demonstration is *softer* at the bottom and the whole ladder is buyable, which is the trade the ruling took deliberately. "One building eats the whole grid" still lands at the top: an L6 data centre at **6,070 kW** is the largest single load in the game and needs a top-rung transformer, a class-3 feeder and a substation at L2 to itself. The gating question is untouched.
+2. **Data-center gating at city level 4 (12,000 pop) may be too late for the vertical slice**, which is supposed to demonstrate "one building eats the whole grid." After C-13 an L1 data center draws 400 kW and an L2 draws 1,020 kW, so the demonstration is now sharper and later. Consider a slice-only override to city level 2, or a scripted starter data center. **Superseded in part, Wave 28:** those two figures are now **100 kW and 255 kW** (doc 93 §BC-4) — the demonstration is *softer* at the bottom and the whole ladder is buyable, which is the trade the ruling took deliberately. "One building eats the whole grid" still lands at the top: an L6 data centre at **5,830 kW** is the largest single load in the game and needs a top-rung transformer, a class-3 feeder and a substation at L2 to itself. The gating question is untouched.
 3. **Fire station L1 houses 1 engine** (doc 06's `[1,2,3,4,5]`), while an L5 high-rise needs `S_req_base` **3.06** of suppression rate (now a settled figure, RR-9). That is intentional early pressure, but a one-station city can be genuinely overwhelmed. Doc 06 should confirm it as the Standard-difficulty floor.
 4. **`store` at L4–L5 is functionally a strip mall.** Kept as one archetype id to hold MVP at 12; the art doc needs to know the silhouette changes character at L3 when the footprint goes 2×2.
 
