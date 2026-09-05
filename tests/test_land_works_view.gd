@@ -202,6 +202,28 @@ func test_a_ready_block_leaves_nothing_behind() -> void:
 	sim.dispose()
 
 
+func test_a_pipeline_that_let_go_without_an_event_is_dropped_by_the_poll() -> void:
+	# `DevelopmentController.cancel_development` erases its record and emits
+	# nothing — it has no door in the shell today, and a `restore_state` between
+	# ticks does the same. A block that is back to UNDEVELOPED has nothing left
+	# to draw and the poll is the only thing that can notice.
+	var sim := _sim()
+	var block_id := _some_block(sim)
+	assert_true(bool(sim.cmd_buy_block(block_id, false, true)["ok"]))
+	sim.advance_hours(0.25)
+	var view := _view(sim)
+	view.feed_events(sim.bus.drain())
+	assert_eq(view.site_count(), 1)
+	assert_true(bool(sim.development.cancel_development(block_id)["ok"]))
+	assert_eq(sim.world.block(block_id).development_state, &"UNDEVELOPED",
+			"a first-phase cancel puts the block back where it started")
+	view.refresh(LandWorksView.POLL_INTERVAL_S)
+	assert_eq(view.site_count(), 0, "…and the dressing goes with it")
+	assert_eq(view.active_buffers(), 0)
+	_drop(view)
+	sim.dispose()
+
+
 func test_the_view_adopts_a_pipeline_that_was_already_running() -> void:
 	# The boot / load case: this view comes up over a city that is mid-phase and
 	# has no events left to hear about it.

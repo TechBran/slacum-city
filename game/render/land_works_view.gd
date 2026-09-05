@@ -99,7 +99,6 @@ const DEF_STAKES := 8
 const DEF_PAVE_SEGMENTS := 6
 const DEF_TRENCH_SEGMENTS := 8
 const DEF_PIPE_STACKS := 5
-const DEF_KERB_SEGMENTS := 4
 const DEF_VISIBLE_RADIUS_M := 640.0
 const DEF_MAX_BLOCKS := 8
 ## Seconds between progress reads. Four a second is far finer than a stump
@@ -132,7 +131,6 @@ var preset := "balanced"
 ## These defaults are pre-decoded so a view nobody configured draws the same
 ## colours as one that read `data/render.json`.
 var stake_color := Color("#D8C24A").srgb_to_linear()
-var tape_color := Color("#E8752A").srgb_to_linear()
 var brush_color := Color("#3B5323").srgb_to_linear()
 var stump_color := Color("#5A4A31").srgb_to_linear()
 var graded_color := Color("#6B5C48").srgb_to_linear()
@@ -187,7 +185,6 @@ func setup(render_data: Dictionary = {}) -> void:
 	brush_budget = int(cfg.get("brush_per_block", DEF_BRUSH_PER_BLOCK))
 	spoil_budget = int(cfg.get("spoil_per_block", DEF_SPOIL_PER_BLOCK))
 	stake_color = _col(cfg, "stake_color", "#D8C24A")
-	tape_color = _col(cfg, "tape_color", "#E8752A")
 	brush_color = _col(cfg, "brush_color", "#3B5323")
 	stump_color = _col(cfg, "stump_color", "#5A4A31")
 	graded_color = _col(cfg, "graded_color", "#6B5C48")
@@ -197,6 +194,11 @@ func setup(render_data: Dictionary = {}) -> void:
 	pipe_color = _col(cfg, "pipe_color", "#6E8A72")
 	kerb_color = _col(cfg, "kerb_color", "#9AA0A6")
 	_build_layers()
+	# Re-apply whatever preset is standing. `setup()` reads `data/render.json`'s
+	# authored counts, so a `setup()` AFTER a `set_preset()` — which is what a
+	# settings change followed by a re-configure looks like — would silently put
+	# a phone back on the balanced budgets without this line.
+	set_preset(preset, render_data)
 	_configured = true
 	_dirty = true
 
@@ -417,6 +419,19 @@ func _poll() -> void:
 		var site: Site = _sites[block_id]
 		var live := _development.active_view(block_id)
 		if live.is_empty():
+			# **The pipeline let go of this block and no event said so.**
+			# `DevelopmentController.cancel_development` erases its record and
+			# emits nothing (it has no door in the shell today — the verb is
+			# there, `cmd_cancel_development` is not), and a `restore_state`
+			# between ticks can do the same. A block that is READY or back to
+			# UNDEVELOPED has nothing left to draw, so it goes; a block sitting
+			# on a completed phase with no job running KEEPS its dressing,
+			# because that is the honest picture — the work stopped, the site
+			# did not disappear.
+			var block := _world.block(block_id) if _world != null else null
+			if block == null or block.is_ready() \
+					or block.development_state == &"UNDEVELOPED":
+				_remove(block_id)
 			continue
 		var index := int(live.get("phase_index", -1))
 		if index >= 0 and index < PHASES.size() and PHASES[index] != site.phase:
@@ -821,6 +836,10 @@ static func _stake_mesh(tile_uv: float) -> ConstructionRigMesh:
 	# The tape, hanging off the head toward the next peg. One ribbon rather than
 	# a span between two instances: a span needs both ends in the same buffer
 	# entry, and a ribbon reads the same at the distance a block is seen from.
+	# Its colour is BAKED and is `ConstructionRigMesh.BARRIER_ORANGE` — the same
+	# hazard orange this project's barricades and cones already wear. A
+	# `tape_color` knob was authored on the first draft and applied nowhere,
+	# which is a number with no reader; the honest single source is the constant.
 	m.add_box(Vector3(2.6, 2.10, 0.0), Vector3(5.2, 0.14, 0.04),
 			ConstructionRigMesh.BARRIER_ORANGE, ConstructionRigMesh.JOINT_BASE,
 			ConstructionRigMesh.SURF_STEEL)

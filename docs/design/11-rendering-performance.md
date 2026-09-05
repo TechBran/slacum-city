@@ -3761,6 +3761,15 @@ are developing, never `world.block_ids_sorted()`. `adopt()` is the one place it
 walks the world, once per bring-up, for the boot-and-load case where there are no
 events left to hear.
 
+**The poll also has to catch a pipeline that let go without saying so**, and that
+is not hypothetical: `DevelopmentController.cancel_development` erases its record
+and emits nothing — the verb exists, `cmd_cancel_development` does not, so it has
+no door in the shell today — and a `restore_state` between ticks does the same.
+A block the pipeline has dropped that is READY or back to UNDEVELOPED is removed;
+a block sitting on a completed phase with no job running KEEPS its dressing,
+because that is the honest picture: the work stopped, the site did not
+disappear.
+
 It writes nothing. Every scatter is a hash of the block id and an index, so a
 block looks the same on every device and after every load, and
 `tests/test_land_works_view.gd::test_the_view_cannot_move_the_state_hash` pins
