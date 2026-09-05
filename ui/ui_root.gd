@@ -2102,7 +2102,46 @@ func _on_land_developed(result: Dictionary) -> void:
 
 
 func _on_land_fix_requested(fix_target: Dictionary) -> void:
+	if _serve_transformer_fix(fix_target):
+		return
 	land_fix_requested.emit(fix_target)
+
+
+## **Wave 25 (RR-207): the one `Fix this →` answer this root serves itself.**
+##
+## `FixRouter` learned to answer `SHEET_TRANSFORMER_PANEL` for a `POWER_CAPACITY`
+## row and for a grid component's own row — and every surface that raises one of
+## those (the placement bar, S4, the alerts centre) re-emits to the shell, whose
+## handler knows one action: `ACTION_FOCUS`, a camera move. So the router's new
+## answer would have been correct and consumed by nothing, which is the shape
+## this whole wave is named after.
+##
+## Both panels are on this root's own `PanelLayer` and the route is one line, so
+## the root serves it and says nothing to the shell — except `transformer_selected`,
+## which the shell needs for the world highlight. Returns whether it took the
+## target, so every caller falls through to its own behaviour when it did not.
+func _serve_transformer_fix(fix_target: Dictionary) -> bool:
+	var sim := _resolved_sim()
+	if sim == null:
+		return false
+	var action := FixRouter.route(sim, fix_target, false)
+	if String(action["action"]) != String(FixRouter.ACTION_SHEET) \
+			or StringName(str(action.get("sheet", &""))) != FixRouter.SHEET_TRANSFORMER_PANEL:
+		return false
+	if not show_transformer(str(action.get("binds_at", action.get("id", "")))):
+		return false
+	transformer_selected.emit(transformer_panel.selected_id())
+	return true
+
+
+## The sim a sibling screen is already holding, or `null` — see
+## `_transformer_model()`, which makes the same argument at more length.
+func _resolved_sim() -> CitySim:
+	if building_panel != null and building_panel.controller != null:
+		return building_panel.controller.sim
+	if build_sheet != null and build_sheet.controller != null:
+		return build_sheet.controller.sim
+	return null
 
 
 ## The placement bar's door (PA-23). Re-emitted rather than served here, for the
@@ -2111,6 +2150,8 @@ func _on_land_fix_requested(fix_target: Dictionary) -> void:
 ## filed one layer down**, so `tests/test_build_controller.gd` asserts this wire
 ## and not merely the button.
 func _on_build_fix_requested(fix_target: Dictionary) -> void:
+	if _serve_transformer_fix(fix_target):
+		return
 	build_fix_requested.emit(fix_target)
 
 

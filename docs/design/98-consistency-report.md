@@ -9466,7 +9466,7 @@ and move nothing. The gate therefore refuses when the quoted price rounds to
 $0 as well as when the damage is zero — the threshold is doc 03's own rounding,
 not a number this wave authored.
 
-### RR-207 — `PICK_COMPONENT` and S18: the panel the pad opens (docs 12 §2.25, 04 §2.15.1, 92 §65.3, 93 §AY2)
+### RR-207 — `PICK_COMPONENT`, S18, and the router that finally has somewhere to send a `POWER_CAPACITY` row (docs 12 §2.25, 04 §2.15.1, 92 §65.3, 93 §AY2)
 
 `pick_at_ground` gains a fourth answer between OPPORTUNITY and BUILDING, on the
 same 48 dp radius `set_tap_radius_from` already computes, measured against the
@@ -9494,6 +9494,27 @@ shipped game and the failure would look exactly like *a tap that does nothing*,
 which is the defect this wave was opened on.
 `test_s18_opens_in_a_shell_that_never_hands_it_a_model` drives the shipped boot
 order and nothing else.
+
+**And the same trap one layer up.** `FixRouter` now answers
+`SHEET_TRANSFORMER_PANEL` for a `POWER_CAPACITY` row and for a grid component's
+own row — but every surface that raises one re-emits to the shell, whose handler
+knows exactly one action (`ACTION_FOCUS`, a camera move). A correct new answer
+consumed by nothing is the shape this wave is named after, so
+`UIRoot._serve_transformer_fix` serves it: both panels are on the root's own
+`PanelLayer`, the route is one line, and everything the root cannot serve passes
+through to the shell untouched. `test_a_fix_row_raised_by_a_surface_with_no_in_place_path_opens_s18_here`
+drives it through S4's own signal and asserts the pass-through as well as the
+catch.
+
+`SHEET_BUILDING_PANEL` is **deleted, not deprecated**. It had one producer, the
+`FIX_POWER` arm this wave moved, and no consumer anywhere in `ui/`, `game/` or
+`tests/` — the shell has only ever branched on `action`, never on `sheet`. A
+sheet name a router can no longer answer is a door in a wall nobody can enter,
+which is the exact defect class the paragraph above is about, so it goes with
+the branch that produced it. The in-place path its docstring described is
+untouched and still correct: `building_panel.gd::_on_fix_pressed` catches
+`FIX_POWER` before the router is consulted (A91-D-54) and now raises
+`power_row_opened` instead of arming the strip.
 
 ### RR-208 — the building panel diet (docs 12 §2.9 D-115/D-116, 92 §65.4, 93 §AY3)
 

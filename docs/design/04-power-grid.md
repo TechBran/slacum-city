@@ -675,7 +675,7 @@ A CREW is looking at the panel that already shows the crew and its ETA, and doc
 08's own test for a notification is whether it is worth raising to somebody who is
 somewhere else.
 
-#### 2.15.3 The pick and the panel
+#### 2.15.3 The pick, the panel, and the router
 
 `ui/build_controller.gd`'s `pick_at_ground` answers `PICK_COMPONENT` between
 OPPORTUNITY and BUILDING, on the same 48 dp radius the street collectable uses,
@@ -687,8 +687,19 @@ reached `PICK_NONE` before this wave — **the shell DESELECTED**, 100 % of the
 time (doc 92 §65.3).
 
 S18 (`ui/transformer_panel.gd`, doc 12 §2.25) is what it opens. Everything §2.14
-put on the building panel is on it, plus the customer list §2.15.1 made possible and
-§2.15.2's crew.
+put on the building panel is on it, plus the customer list §2.15.1 made possible
+and §2.15.2's crew.
+
+**And `Fix this →` goes there too.** `ui/fix_router.gd` answers
+`SHEET_TRANSFORMER_PANEL` for a `POWER_CAPACITY` row — whose id has always been
+the COMPONENT the headroom binds at, never a building — and for a grid
+component's own row when the sim says that component is a transformer. A feeder
+and a doc-05 pump are `FIX_COMPONENT` ids too and keep the camera move, because
+neither has a surface of its own; the branch asks the GRID what the id is rather
+than reading its spelling. `UIRoot._serve_transformer_fix` is the consumer, so
+the answer works from every surface that raises the row — the placement bar, S4,
+the alerts centre — and not only from the building panel, whose in-place path
+(A91-D-54) it keeps.
 
 ---
 

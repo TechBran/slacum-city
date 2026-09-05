@@ -571,3 +571,40 @@ func test_a_root_with_no_controller_anywhere_stays_inert_rather_than_half_openin
 			"a fixture mount with no sim opens nothing and reports so")
 	assert_false(root.transformer_panel.is_open())
 	_unmount(root)
+
+
+func test_a_fix_row_raised_by_a_surface_with_no_in_place_path_opens_s18_here() -> void:
+	# Wave 25 (RR-207). `FixRouter` learned to answer `SHEET_TRANSFORMER_PANEL`,
+	# and every surface that raises one of those rows re-emits to the shell —
+	# whose handler knows one action, `ACTION_FOCUS`. So the router's new answer
+	# would have been correct and consumed by NOTHING, which is the shape this
+	# whole wave is named after. `UIRoot._serve_transformer_fix` is its consumer,
+	# and this drives it through S4's own signal.
+	var sim := _sim()
+	var root := _mount()
+	var controller := BuildController.new(sim)
+	root.building_panel.setup(root.config, controller)
+	var passed_through: Array[Dictionary] = []
+	root.land_fix_requested.connect(func(target: Dictionary) -> void:
+		passed_through.append(target))
+	var component := String(sim.grid.attachment_of(_first_attached(sim)))
+	root._on_land_fix_requested({"kind": RequirementFormatter.FIX_POWER,
+			"id": component, "params": {}})
+	assert_true(root.transformer_panel.is_open(), "the root serves it")
+	assert_eq(root.transformer_panel.selected_id(), component)
+	assert_eq(passed_through.size(), 0,
+			"…and does not also hand the shell a target it cannot act on")
+
+	# A target the root cannot serve still reaches the shell untouched.
+	root._on_land_fix_requested({"kind": RequirementFormatter.FIX_BLOCK,
+			"id": "B0", "params": {"tile": Vector2i(4, 4)}})
+	assert_eq(passed_through.size(), 1, "everything else passes through")
+	_unmount(root)
+
+
+## The first building the grid has attached to anything — the id whose
+## `POWER_CAPACITY` row would carry a transformer.
+func _first_attached(sim: CitySim) -> String:
+	for key: Variant in sim.grid.attachment_map():
+		return String(key)
+	return ""

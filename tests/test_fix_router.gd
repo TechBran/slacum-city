@@ -115,12 +115,18 @@ func test_a_power_target_opens_the_panel_pre_armed_on_the_component_that_binds()
 	# `sim.grid.attachment_of(sim_id)`. The router names the surface and the arm
 	# rather than a camera move, carries the component as `binds_at`, and does
 	# NOT pretend the component id is a building id — which is the bug PA-05 is.
+	#
+	# **Wave 25 moved the surface** (report 98 §68 RR-207): the sheet is S18, not
+	# S5. The id was always the component, and until this wave the only thing a
+	# surface could do with it was arm a strip on a panel that was describing
+	# something else. `arm` is unchanged, because the building panel still
+	# performs `cmd_fix_power_capacity` in place.
 	var sim := _sim()
 	var binds_at := String(sim.grid.attachment_of("APT-001"))
 	assert_eq(binds_at, "T-02", "the real payload for this row")
 	var action := FixRouter.route(sim, _target(RequirementFormatter.FIX_POWER, binds_at))
 	assert_eq(action["action"], FixRouter.ACTION_SHEET)
-	assert_eq(action["sheet"], FixRouter.SHEET_BUILDING_PANEL)
+	assert_eq(action["sheet"], FixRouter.SHEET_TRANSFORMER_PANEL)
 	assert_eq(action["arm"], FixRouter.ARM_POWER_FIX)
 	assert_eq(action["binds_at"], binds_at)
 	assert_eq(action["world_pos"],
@@ -268,3 +274,31 @@ func test_routing_never_moves_the_sim() -> void:
 			_target(RequirementFormatter.FIX_DISTRICT, "D_DOWNTOWN")]:
 		FixRouter.route(sim, target)
 	assert_eq(sim.state_hash(), before, "routing is a READ")
+
+
+func test_a_grid_component_row_opens_s18_and_a_component_with_no_panel_still_flies_the_camera() -> void:
+	# Wave 25 (RR-207). `FIX_COMPONENT` used to be one branch with five other
+	# kinds — "go and look at it" — and for a transformer that answer stopped
+	# being right the moment the thing grew a panel. The branch is decided by
+	# what the SIM says the id is, never by how the id is spelled, which is what
+	# keeps a doc-05 pump on the camera path.
+	var sim := _sim()
+	var transformer := String(sim.grid.attachment_of("APT-001"))
+	var opened := FixRouter.route(sim, _target(RequirementFormatter.FIX_COMPONENT, transformer))
+	assert_eq(opened["action"], FixRouter.ACTION_SHEET, "a transformer opens S18")
+	assert_eq(opened["sheet"], FixRouter.SHEET_TRANSFORMER_PANEL)
+	assert_eq(opened["arm"], FixRouter.ARM_TRANSFORMER,
+			"nothing is pre-armed: the panel's own focus_of() knows whether it is dead")
+	assert_eq(opened["binds_at"], transformer)
+	assert_eq(opened["world_pos"],
+			WorldLocator.locate(sim, WorldLocator.KIND_COMPONENT, transformer),
+			"…and the place travels with it, for a surface that wants to show it")
+	# A FEEDER is a `FIX_COMPONENT` id with no panel, and it keeps the camera.
+	var feeder := String(sim.grid.component(transformer)["parent"])
+	assert_true(sim.grid.has_component(feeder))
+	var flown := FixRouter.route(sim, _target(RequirementFormatter.FIX_COMPONENT, feeder))
+	assert_eq(flown["action"], FixRouter.ACTION_FOCUS,
+			"a component with no surface of its own is still a place to go")
+	# And an id the grid never heard of is a refusal with a reason, not a crash.
+	assert_eq(FixRouter.route(sim, _target(RequirementFormatter.FIX_COMPONENT, ""))["reason"],
+			FixRouter.REASON_EMPTY_ID)
