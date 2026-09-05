@@ -10866,6 +10866,11 @@ between the first and last frame of each phase, threshold 8 of 765:
     utility       -> utility_t45            3,223 px
     final         -> final_t45              1,919 px
 
+And a seventh subject, which is the other half of the player's sentence: the
+preview lays a run through the real `cmd_place_road` and shoots it at progress
+0.15 / 0.50 / 0.85 (`road_run_p15/50/85.png`) — paver, roller, barricade bays and
+the gang, 18,040 and 11,542 px between consecutive frames.
+
 ### §71's open questions, ranked by what breaks if nobody takes them
 
 1. **`game/main.gd` has not been wired** (the lead owns it). Until the four-line

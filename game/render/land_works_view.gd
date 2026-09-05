@@ -542,23 +542,29 @@ func _remove(block_id: String) -> void:
 ## save as the text `"(3, 4)"` (report 98 A91-D-47). The payload is the fallback
 ## for a caller with no road network wired.
 func _enter_run(job_id: int) -> void:
-	if job_id <= 0 or motion == null or _construction == null:
-		return
-	if _construction.job(job_id).is_empty():
+	if job_id <= 0 or motion == null:
 		return
 	var tiles: Array = []
 	if _roads != null:
 		var record := _roads.job_record(job_id)
 		if String(record.get("kind", "")) == RUN_JOB_KIND:
 			tiles = record.get("tiles", [])
-	if tiles.is_empty():
-		var payload: Dictionary = _construction.job(job_id).get("payload", {})
+	if tiles.is_empty() and _construction != null:
+		# The fallback, for a caller with no road network wired.
+		var job := _construction.job(job_id)
+		if job.is_empty():
+			return
+		var payload: Dictionary = job.get("payload", {})
 		if String(payload.get("roads_kind", "")) == RUN_JOB_KIND:
 			tiles = payload.get("tiles", [])
 	if tiles.is_empty():
 		return
 	_runs[job_id] = true
-	motion.motion.set_run(job_id, tiles, _construction.progress(job_id))
+	# With no queue bound the run enters at zero and its progress is whoever's
+	# calling — which is what `tools/land_works_preview.gd` wants, because in
+	# that harness the harness is the writer and the poll is deliberately off.
+	motion.motion.set_run(job_id, tiles,
+			_construction.progress(job_id) if _construction != null else 0.0)
 
 
 ## Phase, progress and the frontage frame, pushed into the motion model. Called

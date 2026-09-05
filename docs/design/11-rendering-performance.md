@@ -3987,6 +3987,13 @@ distance any body travelled between two frames — and separates the two clocks,
 A layer that animated nothing reads 0.000 in every column, and that is exactly
 what Wave 25's did.
 
+**And a seventh subject, which is the other half of the player's sentence.** The
+preview lays a run through the real `CitySim.cmd_place_road` and photographs it
+at three points along its own progress — `road_run_p15/50/85.png`: the paver, the
+roller a machine-length behind, the barricade bays across the working end and the
+gang around them. Measured pixel deltas between consecutive frames, 18,040 and
+11,542.
+
 **And the harness itself had a defect this wave found**: the preview bound
 `DevelopmentController`, so `LandWorksView._poll` — the only writer of a block's
 phase and progress in a running city — fired every fifteenth frame and put the
