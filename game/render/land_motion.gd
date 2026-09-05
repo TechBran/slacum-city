@@ -592,11 +592,28 @@ func _emit_clearing(site: Site, gm: float, q: float, arriving: bool) -> void:
 
 
 func _emit_grading(site: Site, gm: float, q: float, arriving: bool) -> void:
-	# The machine works the heaps in the order the dressing raises them, so it is
-	# always standing at the heap that is currently growing.
+	# **Beside the heap that is currently GROWING, and it WALKS to the next one.**
+	#
+	# `LandWorksView._heap_spoil` raises `round(budget × progress)` heaps in index
+	# order off the RAW progress, so the newest is that count minus one — the raw
+	# progress here for the same reason: a machine measured on the PASS would
+	# stand at a heap the dressing has not raised yet, alone in the middle of a
+	# graded plane.
+	#
+	# The walk is the second half of the rule and it is not cosmetic. Snapping to
+	# the newest heap put the machine 119 m away in one step (measured), which at
+	# 1× is an excavator vanishing and reappearing across the block every fifty
+	# seconds. `round` flips at `built + 1.5`, so the machine spends the first
+	# HALF of each heap's span parked beside it and the second half tracking
+	# across, ARRIVING exactly as it flips — continuous in progress, with no
+	# latch and nothing remembered.
 	var heaps := maxi(1, spoil_slots)
-	var slot := clampi(int(q * float(heaps)), 0, heaps - 1)
-	var heap_xz := spoil_local(site.salt, slot, site.half)
+	var t := clampf(site.progress, 0.0, 1.0) * float(heaps)
+	var built := clampi(int(round(t)) - 1, 0, heaps - 1)
+	var next_heap := clampi(built + 1, 0, heaps - 1)
+	var travel := clampf((t - (float(built) + 1.0)) / 0.5, 0.0, 1.0)
+	var heap_xz := spoil_local(site.salt, built, site.half).lerp(
+			spoil_local(site.salt, next_heap, site.half), travel)
 	var heap := site.centre + Vector3(heap_xz.x, 0.0, heap_xz.y)
 	# Stood off the heap toward the block centre, facing it: the boom reaches the
 	# spoil rather than the neighbour's fence.

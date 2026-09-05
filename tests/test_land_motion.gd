@@ -361,6 +361,62 @@ func test_the_clump_that_goes_is_the_clump_the_dozer_drove_over() -> void:
 	sim.dispose()
 
 
+func test_the_grading_excavator_stands_at_the_heap_it_is_building() -> void:
+	# The read of GRADING is "the heaps grow with the cut", and it only reads if
+	# the machine is AT the heap that is growing. `_heap_spoil` raises
+	# `round(budget × progress)` heaps in index order, so the newest is that
+	# count minus one — measured on the RAW progress, because a machine measured
+	# on the pass stands at a heap the dressing has not raised yet, alone in the
+	# middle of a graded plane.
+	var sim := _sim()
+	var stack := _stack(sim)
+	var view: LandWorksView = stack["view"]
+	var block_id := _some_block(sim)
+	var salt := absi(hash(block_id))
+	var half := 64.0
+	var heaps := view.spoil_budget
+	# Sample in the middle of each heap's span, where the machine is parked
+	# beside the one it has just finished raising rather than tracking to the
+	# next.
+	for k in heaps:
+		var progress := (float(k) + 0.7) / float(heaps)
+		_pose(stack, block_id, &"GRADING", progress)
+		view.motion.refresh(0.0, 0.0, 0.0)
+		var drawn := int(view.census()["spoil"])
+		assert_eq(drawn, k + 1, "the dressing has raised %d heaps" % (k + 1))
+		var newest := LandMotion.spoil_local(salt, drawn - 1, half)
+		var centre: Vector3 = view.site_view(block_id)["centre"]
+		var heap := centre + Vector3(newest.x, 0.0, newest.y)
+		var machine: Vector3 = (view.motion.motion.exc_poses[0]
+				as ConstructionActivity.Pose).origin
+		# One machine length off the heap, no further.
+		assert_true(machine.distance_to(heap) < 12.0,
+				("at progress %.2f the excavator is %.1f m from the newest of %d"
+				+ " heaps") % [progress, machine.distance_to(heap), drawn])
+	# **And it WALKS between them.** Snapping to the newest heap put the machine
+	# 119 m away in one step, which at 1× is a machine vanishing and reappearing
+	# across the block every fifty seconds. Sampled at 1 % of the phase, no step
+	# may be more than a machine length.
+	# Sampled from the end of the ARRIVAL onward: the first tenth of the phase is
+	# the machine driving up the street at a street's pace, which is 14 m of
+	# honest travel per 1 % of the phase and is not what this is looking for.
+	var previous := Vector3.INF
+	for step in 91:
+		var p := LandMotion.ARRIVE_FRAC \
+				+ (1.0 - LandMotion.ARRIVE_FRAC) * float(step) / 90.0
+		_pose(stack, block_id, &"GRADING", p)
+		view.motion.refresh(0.0, 0.0, 0.0)
+		var here: Vector3 = (view.motion.motion.exc_poses[0]
+				as ConstructionActivity.Pose).origin
+		if previous.x < INF:
+			assert_true(previous.distance_to(here) < 20.0,
+					"the excavator teleported %.1f m at progress %.2f"
+					% [previous.distance_to(here), p])
+		previous = here
+	_drop(stack)
+	sim.dispose()
+
+
 func test_the_paver_is_at_the_edge_of_what_it_has_laid() -> void:
 	# One walk, two answers (`LandMotion.pave_state`): the machine's pose and the
 	# number of slabs behind it come out of the same traverse, so the screed can

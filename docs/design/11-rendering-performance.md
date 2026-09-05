@@ -3835,7 +3835,7 @@ and the sim's state hash cannot move because this layer exists.
 |---|---|---|
 | SURVEY | none — two figures on the boundary | nothing; the block is untouched |
 | CLEARING | **two dozers**, each sweeping its own half of the block in 3 strips, outside in, reversing at each strip end | **the brush in the strip they have covered is gone** — `sweep_of()` is the order and `LandWorksView._scatter_brush` keeps a clump only while its own sweep coordinate is ahead of the machines |
-| GRADING | an **excavator** working the heap that is currently growing, with §2.16's dig cycle; a **tipper** shuttling heap → frontage → back | the heaps grow with the cut |
+| GRADING | an **excavator** parked beside the heap currently growing for half of each heap's span and tracking across to the next for the other half, with §2.16's dig cycle; a **tipper** shuttling heap → frontage → back | the heaps grow with the cut |
 | ROAD_INSTALL | a **paver** crawling doc 10's six template runs, a **roller** one machine-length behind it | **the base appears BEHIND the screed** |
 | UTILITY_CORRIDOR | a **trencher** cutting down the collector line | the cut opens behind it and **the staged pipe is consumed as it passes** |
 | FINAL_DEVELOPMENT | a **slipform kerb machine** (the paver body at 0.72, in kerb grey) on the same runs | the kerbs |
@@ -3979,7 +3979,7 @@ distance any body travelled between two frames — and separates the two clocks,
 |---|---|---|---|---|---|
 | SURVEY | 0.000 | 4.680 | 0.0000 | 0.000 | 0.0000 |
 | CLEARING | 43.976 | 43.976 | 0.3202 | 0.000 | 0.3202 |
-| GRADING | 61.914 | 64.442 | 1.0000 | 42.897 | 1.0000 |
+| GRADING | 50.961 | 49.421 | 1.0000 | 45.268 | 1.0000 |
 | ROAD_INSTALL | 66.338 | 70.281 | 0.4231 | 0.000 | 0.2793 |
 | UTILITY_CORRIDOR | 7.000 | 11.387 | 0.8142 | 0.000 | 0.8142 |
 | FINAL_DEVELOPMENT | 66.338 | 70.281 | 0.2793 | 0.000 | 0.2793 |

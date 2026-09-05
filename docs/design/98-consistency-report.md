@@ -10744,7 +10744,7 @@ any one body travelled between two frames, and separately with progress FROZEN
     phase                mach  crew machine dx   crew dx     joint    clock dx clk joint
     SURVEY                  0     2     0.000     4.680    0.0000       0.000   0.0000
     CLEARING                2     3    43.976    43.976    0.3202       0.000   0.3202
-    GRADING                 2     3    61.914    64.442    1.0000      42.897   1.0000
+    GRADING                 2     3    50.961    49.421    1.0000      45.268   1.0000
     ROAD_INSTALL            2     3    66.338    70.281    0.4231       0.000   0.2793
     UTILITY_CORRIDOR        1     4     7.000    11.387    0.8142       0.000   0.8142
     FINAL_DEVELOPMENT       1     3    66.338    70.281    0.2793       0.000   0.2793
