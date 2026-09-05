@@ -403,6 +403,29 @@ func test_the_toast_names_the_material_and_splits_the_money() -> void:
 			"the panel's own copy, not the pipeline's spelling")
 
 
+func test_a_find_off_the_bus_reaches_the_toast_and_the_chip() -> void:
+	# **The DOOR, not the model.** `find_feedback` above proves the sentence is
+	# right; this proves the sentence reaches a screen — the same shape
+	# `tests/test_ui_street.gd` uses for a bounty, and the difference between a
+	# feature and a feature nobody wired.
+	var packed: PackedScene = load("res://game/ui/ui_root.tscn")
+	var root: UIRoot = packed.instantiate()
+	root.apply_content_scale = false
+	(Engine.get_main_loop() as SceneTree).root.add_child(root)
+	root.initialize()
+	root.feed_events([{"type": &"land_works_find", "block": "B_3_5",
+			"block_id": "B_3_5", "phase": "CLEARING", "material": "timber",
+			"value": 540, "amount": 540, "stockpiled": 0, "bonus": false,
+			"capped": false, "block_total": 540, "ceiling": 4292, "stockpile": 0}])
+	assert_true(root.hud.model.chip_flashing(HudModel.CHIP_TREASURY),
+			"the treasury acknowledges the deposit")
+	assert_eq(root.toast_view.text(), "Timber — $540")
+	assert_true(root.event_log.model.entries().size() > 0,
+			"…and the log kept it, so the player can find it an hour later")
+	(Engine.get_main_loop() as SceneTree).root.remove_child(root)
+	root.free()
+
+
 func test_a_find_reaches_the_event_log_with_its_block_and_its_dollars() -> void:
 	var log_model := EventLogModel.load_from_files()
 	log_model.set_clock(9 * 60, 3)

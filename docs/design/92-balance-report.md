@@ -11272,7 +11272,9 @@ Three cities, three blocks each, developed to READY, 30 game-days apiece.
 | **magnitude** | **$207.49 of `land_works` cash per game-day** |
 
 **$207.49/game-day is $8.65 per game-hour, or 2.7 % of the founding city's
-$319/gh net** (doc 92 §35's own reference number). A player developing land
+$319/gh net** — doc 03 §2.12's published founding net, which is the same
+denominator §35 measures the street layer against, so the two side-income lines
+can be read on one scale. A player developing land
 continuously sees roughly $200–$520 a game-day — the higher figure is the
 two-blocks-in-ten-game-days arm, where the finds are not spread thin — and a
 player who has stopped buying land sees exactly $0, which is the correct answer
