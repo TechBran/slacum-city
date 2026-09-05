@@ -177,6 +177,37 @@ func _curve_ladder(seed: float, seed_field: String, k: float, level: int, ladder
 	return _round_step(num, digits, _ladder_step(num, digits, ladder))
 
 
+## `_round_step`'s one-sided twin — snap DOWN. Doc 93 §BC-1's clamp is a
+## CEILING, so rounding it half-up would put the clamped cell one grid step over
+## the capacity it clamps to, which is the wall the rule exists to forbid.
+func _floor_step(num: int, digits: int, step: Array) -> float:
+	var step_num: int = step[0]
+	var step_digits: int = step[1]
+	var numerator := num * _ipow(10, step_digits)
+	var denominator := _ipow(10, digits) * step_num
+	return float((numerator / denominator) * step_num) / float(_ipow(10, step_digits))
+
+
+## Doc 93 §BC-1's ceiling on ONE authored `power_demand_kw` cell (Wave 28).
+## `ceiling_peak_kw` is a PEAK budget and an authored cell is a BASE, so the
+## budget is divided by the archetype's own doc 01 channel peak and floored onto
+## the §8 `kw` grid. Exact integer arithmetic throughout, like every other
+## oracle in this file: `6,075 × 100 × 100 / 146 = 416,095` hundredths of a kW,
+## floored on the 10 kW step, is `4,160`.
+const ENVELOPE_PEAK_DIGITS := 2
+
+func _demand_ceiling(rules: Dictionary, archetype: String) -> float:
+	var envelope: Dictionary = rules["service_envelope"]
+	var class_id := String((envelope["demand_class"] as Dictionary)[archetype])
+	var peak: int = _scaled(float((envelope["channel_peak"] as Dictionary)[class_id]),
+			ENVELOPE_PEAK_DIGITS)
+	var ceiling: int = _scaled(float(envelope["ceiling_peak_kw"]), ENVELOPE_PEAK_DIGITS)
+	# ceiling / (peak / 10^d) expressed at `ENVELOPE_PEAK_DIGITS` decimal places.
+	var num := ceiling * _ipow(10, ENVELOPE_PEAK_DIGITS) / peak
+	return _floor_step(num, ENVELOPE_PEAK_DIGITS,
+			_ladder_step(num, ENVELOPE_PEAK_DIGITS, rules["rounding"]["kw"]))
+
+
 ## round_rule(seed x k^(L-1)) on a single fixed step.
 func _curve_step(seed: float, seed_field: String, k: float, level: int, step: float) -> float:
 	var digits: int = int(SEED_DIGITS[seed_field]) + K_DIGITS * (level - 1)
@@ -217,7 +248,11 @@ func _expected_row(rules: Dictionary, archetype: String, level: int) -> Dictiona
 	var expected := {
 		"population": _curve_step(float(seed["pop"]), "pop", k_out, level, integer_step),
 		"jobs": _curve_step(float(seed["jobs"]), "jobs", k_out, level, integer_step),
-		"power_demand_kw": _curve_ladder(float(seed["power_kw"]), "power_kw", k_dem, level, ladders["kw"]),
+		# The doc 93 §BC-1 clamp, the same `min(curve, ceiling)` shape the two
+		# coverage rows below already had for `max_requirement` (Wave 28).
+		"power_demand_kw": minf(
+				_curve_ladder(float(seed["power_kw"]), "power_kw", k_dem, level, ladders["kw"]),
+				_demand_ceiling(rules, archetype)),
 		"water_demand": _curve_ladder(float(seed["water"]), "water", k_dem, level, ladders["wu"]),
 		"build_time_hours": _curve_ladder(float(seed["time_h"]), "time_h", k_time, level, ladders["time_h"]),
 		"decay_per_hour": _curve_ladder(float(seed["decay"]), "decay", float(shared["k_decay"]), level, ladders["decay"]),
@@ -319,7 +354,11 @@ func test_rounding_regimes_sampled() -> void:
 		["house", 5, "power_demand_kw", 91.0, "kW <100 -> 1: 3 x 2.35^4 = 91.494"],
 		["apartment", 3, "power_demand_kw", 130.0, "kW <1000 -> 5: 22 x 2.45^2 = 132.055"],
 		["high_rise", 4, "power_demand_kw", 1490.0, "kW <10000 -> 10: 90 x 2.55^3 = 1492.324"],
-		["data_center", 5, "power_demand_kw", 16900.0, "kW >=10000 -> 50: 400 x 2.55^4 = 16913.0025"],
+		["data_center", 5, "power_demand_kw", 4230.0, "kW <10000 -> 10: 100 x 2.55^4 = 4228.25063"],
+		# The clamp, sampled: the curve says 100 x 2.55^5 = 10,782.03 -> 10,800 on
+		# the tail rung, and doc 93 §BC-1's ceiling says 6,070 (Wave 28).
+		["data_center", 6, "power_demand_kw", 6070.0, "clamped: 6,075 / 1.00, floored on the 10 kW step"],
+		["high_rise", 6, "power_demand_kw", 4160.0, "clamped: 6,075 / 1.46 = 4,160.96, floored on the 10 kW step"],
 		["house", 2, "water_demand", 0.19, "WU <1 -> 0.01: 0.08 x 2.35 = 0.188"],
 		["high_rise", 2, "water_demand", 3.3, "WU <10 -> 0.1: 1.28 x 2.55 = 3.264 (seed 1.28, not cell 1.3)"],
 		["high_rise", 5, "water_demand", 54.0, "WU <100 -> 0.5: 1.28 x 2.55^4 = 54.121608"],
@@ -390,10 +429,25 @@ func test_water_anchor() -> void:
 
 func test_signature_published_cells() -> void:
 	var catalog := _catalog()
-	assert_almost_eq(float(catalog.stats("data_center", 5)["power_demand_kw"]), 16900.0, EPS,
-			"doc 02 §2.4 signature balance fact: L5 data center draws 16,900 kW")
+	# **The signature fact moved in Wave 28, and the reason is the point of the
+	# wave.** It used to read *"L5 data center draws 16,900 kW"*, which was true
+	# of the table and false of the game: a building attaches to exactly one
+	# transformer, the biggest transformer was 2,500 kW, and 16,900 kW was a load
+	# the grid could not carry at any price. The seed moved 400 → 100 and doc 04
+	# grew a sixth rung, so the fact is now the one a player can act on — the
+	# TOP data center is the biggest single load in the game and it is exactly
+	# one top-rung transformer's worth (doc 93 §BC, doc 92 §68.1).
+	assert_almost_eq(float(catalog.stats("data_center", 6)["power_demand_kw"]), 6070.0, EPS,
+			"doc 02 §2.4 signature balance fact: an L6 data center draws 6,070 kW")
+	assert_almost_eq(float(catalog.stats("data_center", 6)["power_demand_kw"]),
+			_demand_ceiling(_rules_data(), "data_center"), EPS,
+			"…which is doc 93 §BC-1's ceiling exactly: it is the clamped cell")
+	assert_true(float(catalog.stats("data_center", 6)["power_demand_kw"])
+			<= PowerGrid.UPGRADE_MAX_R * float(PowerGrid.CAPACITY[&"transformer"][
+					(PowerGrid.CAPACITY[&"transformer"] as Array).size() - 1]),
+			"…and one transformer carries it, which is the whole ruling")
 	assert_almost_eq(float(catalog.stats("data_center", 5)["water_demand"]), 135.0, EPS,
-			"…and 135 m3/h")
+			"the water ladder is untouched: L5 still 135 m3/h off the 3.2 seed")
 	assert_eq(catalog.stats("high_rise", 5)["fire_load"], 1120,
 			"doc 02 §2.7 E5: high_rise L5 fire_load = 56 x house L1's 20")
 	assert_eq(catalog.stats("house", 1)["fire_load"], 20, "the S_req_base anchor")

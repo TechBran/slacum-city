@@ -446,6 +446,34 @@ func _render_customers(v: Dictionary) -> void:
 		UIWidgets.paint_state(self, button, StringName(String(row["state"])))
 		_customers.add_child(button)
 		_customer_rows[sim_id] = button
+	# **What the buildings under this pad want it to BE** (Wave 28, doc 12 D-123,
+	# doc 93 §BC-3). S18's whole promise is "everything about this transformer in
+	# one place", and the decision a player opens it to make is whether to
+	# re-rate it — which is a question about the customers, not about the pad.
+	# The line is drawn in every state: silence when nothing needs a bigger unit
+	# reads as "the panel does not know", and the point of the row is that it
+	# does. `customer_stranded` wins, because "no rung carries this" is a wall
+	# and the row above it would send the player shopping for nothing.
+	var stranded := str(v.get("customer_stranded", ""))
+	var needs_key := "ui_transformer_customers_fit"
+	var needs_state := HudModel.STATE_NORMAL
+	var needs_args := {}
+	if stranded != "":
+		needs_key = "ui_transformer_customer_stranded"
+		needs_state = HudModel.STATE_CRITICAL
+		needs_args = {"id": stranded}
+	elif bool(v.get("customers_need_bigger", false)):
+		needs_key = "ui_transformer_customers_need_rung"
+		needs_state = HudModel.STATE_WARNING
+		needs_args = {"id": str(v.get("customers_need_rung_for", "")),
+				"rung": int(v.get("customers_need_rung", 0)),
+				"kw": str(v.get("customers_need_capacity_text", "")),
+				"host": int(v.get("level", 1))}
+	var wants := UIWidgets.label("CustomersNeedRung",
+			_text_args(needs_key, needs_args, ""), &"LegendRow", true)
+	wants.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_apply_state_color(wants, needs_state)
+	_customers.add_child(wants)
 	var hidden := int(v.get("customers_hidden", 0))
 	if hidden > 0:
 		# The cap is a LAYOUT decision and the panel says so, rather than

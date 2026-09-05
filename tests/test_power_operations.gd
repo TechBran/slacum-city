@@ -277,24 +277,27 @@ func test_b_fix_this_refuses_honestly() -> void:
 
 func test_b_at_the_top_of_the_ladder_the_fix_places_a_parallel_transformer() -> void:
 	# Doc 04 §2.9's parallel transformer, chosen for the player: T-18 is at the
-	# roster's top (L5 since Wave 17) but hobbled, so the next rung does not
-	# exist and the answer is a second L5 on the nearest legal tile that keeps
-	# WTR-2 in reach — which adoption then hands WTR-2 to.
+	# roster's top (L5 since Wave 17, L6 since Wave 28) but hobbled, so the next
+	# rung does not exist and the answer is a second top-rung unit on the nearest
+	# legal tile that keeps WTR-2 in reach — which adoption then hands WTR-2 to.
+	# The rung is read off the ladder, not spelled 5, so appending a rung moves
+	# this test's subject instead of turning it red for the wrong reason.
 	var sim := _starter()
 	sim.treasury.credit(100_000, &"test_grant")
+	var top: int = (PowerGrid.CAPACITY[&"transformer"] as Array).size()
 	var t18 := sim.grid.component("T-18")
-	t18["level"] = 5
+	t18["level"] = top
 	t18["capacity_kw"] = 60.0   # test-only: a top rung that cannot carry the plant
 	var quote := sim.cmd_fix_power_capacity("WTR-2", true)
 	assert_true(bool(quote["ok"]), str(quote))
 	var plan: Dictionary = quote["payload"]
 	assert_eq(String(plan["action"]), "place_transformer")
-	assert_eq(int(plan["level"]), 5, "the biggest placeable transformer")
+	assert_eq(int(plan["level"]), top, "the biggest placeable transformer")
 	var tile: Vector2i = plan["tile"]
 	var origin: Vector2i = (sim.buildings["WTR-2"] as Building).origin
 	assert_true(maxi(absi(tile.x - origin.x), absi(tile.y - origin.y))
-			<= int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[4]), "inside WTR-2's reach")
-	assert_true(int(plan["cost"]) >= 16300, "doc 03 §2.13(b) L5 plus the lateral")
+			<= int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[top - 1]), "inside WTR-2's reach")
+	assert_true(int(plan["cost"]) >= 41500, "doc 03 §2.13(b) L6 plus the lateral")
 	var bought := sim.cmd_fix_power_capacity("WTR-2")
 	assert_true(bool(bought["ok"]), str(bought))
 	var new_id := sim.grid.attachment_of("WTR-2")
@@ -304,21 +307,29 @@ func test_b_at_the_top_of_the_ladder_the_fix_places_a_parallel_transformer() -> 
 
 
 func test_b_when_no_placeable_transformer_carries_it_the_fix_says_so() -> void:
-	# Above even the top rung: an L5 is 2,500 kW, so a next level worth 4,600 kW
+	# Above even the top rung: an L6 is 6,750 kW, so a next level worth 12,600 kW
 	# (× the ×1.15 margin) fits on nothing the player can place, alone or in
 	# parallel. The refusal names the truth and prices the alternative.
+	#
+	# **The demand this test has to invent grew in Wave 28, and that is the
+	# ruling working.** It used to be 4,600 kW, which was not a synthetic number
+	# at all — it sat between `data_center` L3 (2,600) and L4 (6,630), so this
+	# "impossible" case was a load doc 02 actually shipped. Doc 93 §BC-1 now
+	# forbids that, and gate 34 proves no authored cell reaches this branch, so
+	# the branch can only be entered by a test that hand-writes a stat row.
 	var sim := _starter()
+	var top: int = (PowerGrid.CAPACITY[&"transformer"] as Array).size()
 	var t18 := sim.grid.component("T-18")
-	t18["level"] = 5
+	t18["level"] = top
 	t18["capacity_kw"] = 60.0
 	var b: Building = sim.buildings["WTR-2"]
 	b.stats = b.stats.duplicate()
-	b.stats["power_demand_kw"] = -4500.0   # delta becomes ~4,600 kW × 1.15
+	b.stats["power_demand_kw"] = -12500.0   # delta becomes ~12,600 kW × 1.15
 	var refused := sim.cmd_fix_power_capacity("WTR-2", true)
 	assert_eq(refused["reason_code"], &"E_NEEDS_TRANSFORMER")
 	assert_eq(String(refused["payload"]["at"]), "T-18")
-	assert_eq(int(refused["payload"]["max_level"]), 5)
-	assert_eq(int(refused["payload"]["place_cost"]), 16300, "doc 03 §2.13(b) L5")
+	assert_eq(int(refused["payload"]["max_level"]), top)
+	assert_eq(int(refused["payload"]["place_cost"]), 41500, "doc 03 §2.13(b) L6")
 
 
 func test_b_a_feeder_bound_blocker_gets_heavier_copper_or_a_new_run() -> void:
@@ -407,28 +418,37 @@ func test_b_a_substation_bound_blocker_quotes_the_shell_upgrade() -> void:
 
 func test_c_upgrade_grid_component_prices_and_refuses_per_its_header() -> void:
 	var sim := _starter()
+	# The founding purse is ~$28k and the sixth rung is $41,500 (Wave 28), so a
+	# PRICE test has to be able to afford the price it is checking. The E_FUNDS
+	# path is `test_b_…`'s subject, not this one's.
+	sim.treasury.credit(100_000, &"test_grant")
 	assert_eq(sim.cmd_upgrade_grid_component("nope")["reason_code"], &"E_UNKNOWN_COMPONENT")
 	assert_eq(sim.cmd_upgrade_grid_component("SUB-A")["reason_code"], &"E_UNKNOWN_COMPONENT",
 			"a substation is a building — cmd_upgrade_building (C-30)")
 	# Transformer: the whole doc 04 §2.2 ladder, at doc 03 §2.13(b)'s prices —
-	# L1 → L2 $1,100, L2 → L3 $2,800, L3 → L4 $6,900, L4 → L5 $16,300, and only
-	# L5 answers E_MAX_LEVEL. It stopped at L3 until Wave 17 opened the roster
-	# (A91-D-55), which is why the authored city ran on rungs nothing could buy.
+	# L1 → L2 $1,100, L2 → L3 $2,800, L3 → L4 $6,900, L4 → L5 $16,300,
+	# L5 → L6 $41,500, and only the TOP rung answers E_MAX_LEVEL. It stopped at
+	# L3 until Wave 17 opened the roster (A91-D-55), which is why the authored
+	# city ran on rungs nothing could buy; Wave 28 appended the sixth (doc 93
+	# §BC-2), and this test reads the ladder's own length so the next append
+	# cannot slip past it either.
 	var q1 := sim.cmd_upgrade_grid_component("T-18", true)
 	assert_true(bool(q1["ok"]))
 	assert_eq(int(q1["payload"]["cost"]), 1100)
 	assert_eq(int(q1["payload"]["to_level"]), 2)
 	assert_eq(int(q1["payload"]["to_service_radius_tiles"]), 4, "§2.2: the radius grows")
-	for rung: Array in [[2, 2800], [3, 6900], [4, 16300]]:
+	for rung: Array in [[2, 2800], [3, 6900], [4, 16300], [5, 41500]]:
 		sim.grid.set_level("T-18", int(rung[0]))
 		var q: Dictionary = sim.cmd_upgrade_grid_component("T-18", true)
 		assert_true(bool(q["ok"]), str(q))
 		assert_eq(int(q["payload"]["cost"]), int(rung[1]),
 				"L%d → L%d" % [int(rung[0]), int(rung[0]) + 1])
-	sim.grid.set_level("T-18", 5)
+	var top: int = (PowerGrid.CAPACITY[&"transformer"] as Array).size()
+	assert_eq(top, 6, "doc 04 §2.2 publishes six transformer rungs")
+	sim.grid.set_level("T-18", top)
 	var q5 := sim.cmd_upgrade_grid_component("T-18", true)
 	assert_eq(q5["reason_code"], &"E_MAX_LEVEL")
-	assert_eq(int(q5["payload"]["max_level"]), 5)
+	assert_eq(int(q5["payload"]["max_level"]), top)
 	sim.grid.set_level("T-18", 2)
 	assert_eq(int(sim.cmd_upgrade_grid_component("T-18", true)["payload"]["cost"]), 2800)
 	# Feeder: class 1 → 2 at $210 × tiles, 2 → 3 at $400 × tiles, 3 is the top.

@@ -99,8 +99,22 @@ func transformer_block(component_id: String) -> Dictionary:
 	var band := PowerGrid.capacity_band(peak / maxf(1.0, effective))
 	var served := sim.grid.buildings_served_by(component_id)
 	var rows: Array[Dictionary] = []
+	# The rung the HUNGRIEST customer's next level asks for, and who is asking
+	# (Wave 28, doc 12 D-123). One pass over the rows already built, so S18 can
+	# say "T-04 is L2; the data center under it needs L4" without the player
+	# opening every building panel underneath it to find that out.
+	var wanted := int(c["level"])
+	var wanted_for := ""
+	var stranded := ""
 	for building_id: Variant in served:
-		rows.append(_customer_row(String(building_id)))
+		var row := _customer_row(String(building_id))
+		rows.append(row)
+		if bool(row.get("no_rung_carries", false)):
+			if stranded == "":
+				stranded = String(building_id)
+		elif int(row.get("needs_rung", 0)) > wanted:
+			wanted = int(row["needs_rung"])
+			wanted_for = String(building_id)
 	# The two hops ABOVE this one — the feeder and the substation behind the pad.
 	# Wave 17 drew them on the BUILDING panel; they belong here, because they are
 	# facts about the transformer and not about any one house it feeds.
@@ -190,6 +204,16 @@ func transformer_block(component_id: String) -> Dictionary:
 		"customers": rows,
 		"customer_count": rows.size(),
 		"unattached": rows.is_empty(),
+		# Wave 28, doc 12 D-123 / doc 93 §BC-3. `customers_need_rung` is the
+		# highest rung any customer's NEXT level asks of this pad — this unit's
+		# own level when nothing under it wants more, which is why the flag and
+		# not the number is what a view branches on.
+		"customers_need_rung": wanted,
+		"customers_need_bigger": wanted > int(c["level"]),
+		"customers_need_rung_for": wanted_for,
+		"customers_need_capacity_kw": _rung_capacity(wanted),
+		"customers_need_capacity_text": RequirementFormatter.power(_rung_capacity(wanted)),
+		"customer_stranded": stranded,
 		"upstream": upstream,
 		"upgrade": upgrade_quote(component_id),
 		"repair": repair,
@@ -212,10 +236,20 @@ func _customer_row(sim_id: String) -> Dictionary:
 				"priority_key": BuildController.priority_key("STANDARD"),
 				"powered": false, "tile": Vector2i.ZERO}
 	var priority := String(sim.grid.priority_class_of(sim_id))
+	# **What this customer's NEXT level would ask of the pad it is standing on**
+	# (Wave 28, doc 12 D-123). The transformer panel's job is "everything about
+	# this transformer", and the thing a player is deciding on S18 is whether to
+	# re-rate it — which is a question about the buildings under it, not about
+	# the pad. `needs_rung` 0 is the wall doc 93 §BC-1 forbids and stays visible.
+	var needs: Dictionary = next_level(sim_id)
 	return {
 		"sim_id": sim_id,
 		"exists": true,
 		"archetype": String(b.archetype),
+		"next_level": needs,
+		"needs_rung": int(needs.get("needs_rung", 0)),
+		"needs_bigger": bool(needs.get("needs_bigger", false)),
+		"no_rung_carries": bool(needs.get("no_rung_carries", false)),
 		"name_key": BuildController.card_name_key(String(b.archetype), String(b.variant)),
 		"name_fallback": str(sim.catalog.archetype_info(String(b.archetype)).get("name",
 				String(b.archetype))),
@@ -312,6 +346,18 @@ func _hop_row(row: Dictionary) -> Dictionary:
 	}
 
 
+## `_next_level_block` for a caller that has only the id — the compact power row
+## on S5 and the customer rows on S18 (Wave 28). Deliberately NOT
+## `building_block(id).next_level`: that computes the whole hop list AND a
+## `fix_quote`, whose parallel-transformer search previews up to 289 placements,
+## and a one-line row must not cost that.
+func next_level(sim_id: String) -> Dictionary:
+	if sim == null or not sim.buildings.has(sim_id):
+		return {"available": false}
+	var b: Building = sim.buildings[sim_id]
+	return _next_level_block(sim_id, b, sim.catalog.max_level_of(String(b.archetype)))
+
+
 ## "Does the wire carry the next level?" — the same numbers `cmd_upgrade_building`
 ## refuses on, quoted whether or not it refuses, because a player deciding to
 ## save up wants the answer BEFORE the row turns red.
@@ -322,7 +368,7 @@ func _next_level_block(sim_id: String, b: Building, top: int) -> Dictionary:
 	var delta := (float(next_stats.get("power_demand_kw", 0.0))
 			- float(b.stats.get("power_demand_kw", 0.0))) * CitySim.UPGRADE_HEADROOM_MARGIN
 	var headroom := sim.power_headroom(sim_id, delta)
-	return {
+	var out := {
 		"available": true,
 		"to_level": b.level + 1,
 		"delta_kw": delta,
@@ -334,6 +380,86 @@ func _next_level_block(sim_id: String, b: Building, top: int) -> Dictionary:
 		"deficit_kw": float(headroom.get("deficit_kw", 0.0)),
 		"deficit_text": RequirementFormatter.power(headroom.get("deficit_kw", 0.0)),
 	}
+	out.merge(rung_needed(sim, sim_id, delta, headroom))
+	return out
+
+
+## **Which RUNG the next level needs** (Wave 28, doc 93 §BC-3, doc 12 D-123).
+##
+## `deficit_kw` says how much the wire is short and `binds_at` says which
+## component is short; neither says the one thing a player can act on, which is
+## *which transformer to buy*. This is that: the smallest rung of doc 04 §2.2's
+## ladder whose NAMEPLATE carries the host transformer's post-upgrade PEAK load
+## at §5.3's ceiling — the whole load, siblings and streetlights included,
+## because that is what the gate is actually judged on.
+##
+## `{host_transformer, host_level, host_capacity_kw, after_kw, needs_rung,
+## needs_capacity_kw, needs_bigger, no_rung_carries}`.
+##
+##   * `needs_rung` **0 means no rung on the ladder carries it** — the wall doc
+##     93 §BC-1 forbids, kept as a distinguishable answer rather than clamped to
+##     the top rung, so a surface can say "nothing you can buy fixes this"
+##     instead of selling a purchase that will not clear.
+##   * Nameplate, not `cap_eff`: a player buys a nameplate. A unit derated by
+##     heat or condition can still refuse the upgrade the rung would allow, and
+##     that is the REPAIR row's sentence, not this one's.
+## STATIC so `ui/fix_router.gd` — which has a `CitySim` and no `PowerActions`,
+## and must not build one because that would load `RequirementFormatter`'s JSON
+## on a camera move — reads the same arithmetic instead of a second copy of it.
+static func rung_needed(sim: CitySim, sim_id: String, delta_kw: float,
+		headroom: Dictionary) -> Dictionary:
+	var host := String(sim.grid.attachment_of(sim_id))
+	var out := {"host_transformer": host, "host_level": 0, "host_capacity_kw": 0.0,
+			"after_kw": 0.0, "needs_rung": 0, "needs_capacity_kw": 0.0,
+			"needs_bigger": false, "no_rung_carries": false}
+	if host == "" or not sim.grid.has_component(host):
+		return out
+	var c := sim.grid.component(host)
+	out["host_level"] = int(c["level"])
+	out["host_capacity_kw"] = float(c["capacity_kw"])
+	# The transformer hop of the gate's own walk, so the panel and the refusal
+	# are reading one number. `path` is empty for a zero-delta upgrade and for an
+	# unserved building; the peak table is the fallback, never the live trough.
+	var peak := 0.0
+	for row: Variant in (headroom.get("path", []) as Array):
+		if String((row as Dictionary).get("id", "")) == host:
+			peak = float((row as Dictionary).get("peak_load_kw", 0.0))
+			break
+	if peak <= 0.0:
+		peak = maxf(float(c["load_kw"]), float(sim.peak_component_loads().get(host, 0.0)))
+	var after := peak + maxf(0.0, delta_kw)
+	var rung := PowerGrid.transformer_rung_for(after)
+	out["after_kw"] = after
+	out["needs_rung"] = rung
+	out["needs_capacity_kw"] = _rung_capacity(rung)
+	out["needs_bigger"] = rung > int(c["level"])
+	out["no_rung_carries"] = rung == 0
+	return out
+
+
+## The nameplate of one rung of doc 04 §2.2's ladder; 0.0 for the `needs_rung`
+## 0 that means no rung carries the load at all.
+static func _rung_capacity(rung: int) -> float:
+	var ladder: Array = PowerGrid.CAPACITY[&"transformer"]
+	return float(ladder[rung - 1]) if rung >= 1 and rung <= ladder.size() else 0.0
+
+
+## `rung_needed` for a caller that has only the id — it works the delta out of
+## the catalog itself, exactly as `_next_level_block` does. `{}` at the top of a
+## ladder, where there is no next level to size a transformer for.
+static func rung_needed_for_next_level(sim: CitySim, sim_id: String) -> Dictionary:
+	if sim == null or not sim.buildings.has(sim_id):
+		return {}
+	var b: Building = sim.buildings[sim_id]
+	if b.level >= sim.catalog.max_level_of(String(b.archetype)):
+		return {}
+	var next_stats: Dictionary = sim.catalog.stats(String(b.archetype), b.level + 1)
+	var delta := (float(next_stats.get("power_demand_kw", 0.0))
+			- float(b.stats.get("power_demand_kw", 0.0))) * CitySim.UPGRADE_HEADROOM_MARGIN
+	var out := rung_needed(sim, sim_id, delta, sim.power_headroom(sim_id, delta))
+	out["to_level"] = b.level + 1
+	out["delta_kw"] = delta
+	return out
 
 
 # ===========================================================================

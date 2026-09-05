@@ -13245,3 +13245,215 @@ command: `can_upgrade_power("WTR-2", 97.75)` is refused at `T-18` with `r_after`
 pool, and the binding transformer's ratio went UP, because an hour of city passed
 and the plant is not on that transformer. That is doc 92 §48.1's whole sentence,
 made against the layer that was always the honest one to make it against.
+
+## 68. Wave 28 — every building fits the transformer envelope, and the data centre did not (2026-09-05)
+
+**The player, on the device:** *"A fully loaded data center still pulls too much,
+and I haven't even upgraded it past level two. Transformers may need more power,
+or we just make the data centers fit in that envelope, so a transformer can
+handle it fully upgraded."*
+
+Ruling: doc 93 §BC. Instrument: `tools/measure_envelope.gd`, read-only, two
+arms (`--table`, `--panel`).
+
+### 68.1 The envelope table — every archetype, every level, the rung it needs
+
+A building attaches to **exactly one** transformer (doc 04 §2.1), so the rung it
+needs is the smallest capacity that carries it at doc 04 §5.3's own 0.90
+ceiling. Two columns, not one: the `base kW` doc 02 publishes, and what that
+becomes **at the archetype's own doc 01 channel peak**, which is the hour §5.3's
+gate is judged at (`CitySim.peak_component_loads`, RR-120). Peaks:
+`power_demand_residential` **1.46** (20:00), `commercial` **1.51** (10:00–18:00),
+`industrial` **1.13**, `civic` **1.15**, `datacenter` **1.00** (flat).
+
+**AT THE FORK** — ladder `[50, 150, 400, 1,000, 2,500]`, ceilings
+`[45, 135, 360, 900, 2,250]`. `X` is *no rung on the ladder carries this*:
+
+```
+archetype          class       peak   L: base kW / at peak -> rung
+house              residential x1.46  L1 3/4->1  L2 7/10->1  L3 17/25->1  L4 39/57->2  L5 91/133->2  L6 215/314->3
+apartment          residential x1.46  L1 22/32->1  L2 54/79->2  L3 130/190->3  L4 325/474->4  L5 795/1161->5  L6 1940/2832->X
+store              commercial  x1.51  L1 9/14->1  L2 21/32->1  L3 50/76->2  L4 115/174->3  L5 275/415->4  L6 645/974->5
+office             commercial  x1.51  L1 35/53->2  L2 86/130->2  L3 210/317->3  L4 515/778->4  L5 1260/1903->5  L6 3090/4666->X
+high_rise          residential x1.46  L1 90/131->2  L2 230/336->3  L3 585/854->4  L4 1490/2175->5  L5 3810/5563->X  L6 9700/14162->X
+data_center        datacenter  x1.00  L1 400/400->4  L2 1020/1020->5  L3 2600->X  L4 6630->X  L5 16900->X  L6 43150->X
+police_station     civic       x1.15  L1 25/29->1  L2 61/70->2  L3 150/172->3  L4 370/425->4  L5 900/1035->5
+fire_station       civic       x1.15  L1 28/32->1  L2 69/79->2  L3 170/195->3  L4 410/471->4  L5 1010/1162->5
+power_facility     civic       x1.15  L1..L5 0
+substation         none        x1.00  L1..L5 0
+water_facility     civic       x1.15  L1 60/69->2  L2 145/167->3  L3 360/414->4  L4 880/1012->5  L5 2160/2484->X
+construction_yard  industrial  x1.13  L1 12/14->1  L2 28/32->1  L3 66/75->2  L4 155/175->3  L5 365/412->4
+
+doc05 pump         civic       x1.15  L5 2160/2484->X
+doc05 tank         civic       x1.15  L5 2396/2755->X          (the other 28 rows all fit)
+
+cells with NO transformer rung: 9 in doc 02, 2 in doc 05
+```
+
+**Nine, not one.** The player found `data_center` L2 by hand — which is the cell
+that costs a *level-5* transformer, the whole ladder, for one building at level
+two of six — and behind it were `data_center` L3–L6, `high_rise` L5–L6, `office`
+L6, `apartment` L6 and `water_facility` L5. `apartment` L6 is the one worth
+naming twice: at 1,940 kW it looks comfortably inside a 2,250 kW ceiling and is
+not, because at 20:00 it asks for 2,832. **The peak column is where four of the
+nine live**, and it had never been checked against the ladder in any document.
+
+**AS SHIPPED** — ladder `[50, 150, 400, 1,000, 2,500, 6,750]`, ceilings
+`[45, 135, 360, 900, 2,250, 6,075]`, `data_center` seed 400 → 100, doc 93 §BC-4's
+clamp on the top rung of `high_rise`:
+
+```
+archetype          class       peak   L: base kW / at peak -> rung
+house              residential x1.46  L1 3.0/4.4->1  L2 7.0/10->1  L3 17/25->1  L4 39/57->2  L5 91/133->2  L6 215/314->3
+apartment          residential x1.46  L1 22/32->1  L2 54/79->2  L3 130/190->3  L4 325/474->4  L5 795/1161->5  L6 1940/2832->6
+store              commercial  x1.51  L1 9.0/14->1  L2 21/32->1  L3 50/76->2  L4 115/174->3  L5 275/415->4  L6 645/974->5
+office             commercial  x1.51  L1 35/53->2  L2 86/130->2  L3 210/317->3  L4 515/778->4  L5 1260/1903->5  L6 3090/4666->6
+high_rise          residential x1.46  L1 90/131->2  L2 230/336->3  L3 585/854->4  L4 1490/2175->5  L5 3810/5563->6  L6 4160/6074->6
+data_center        datacenter  x1.00  L1 100/100->2  L2 255/255->3  L3 650/650->4  L4 1660/1660->5  L5 4230/4230->6  L6 6070/6070->6
+police_station     civic       x1.15  L1 25/29->1  L2 61/70->2  L3 150/172->3  L4 370/425->4  L5 900/1035->5
+fire_station       civic       x1.15  L1 28/32->1  L2 69/79->2  L3 170/195->3  L4 410/471->4  L5 1010/1162->5
+water_facility     civic       x1.15  L1 60/69->2  L2 145/167->3  L3 360/414->4  L4 880/1012->5  L5 2160/2484->6
+construction_yard  industrial  x1.13  L1 12/14->1  L2 28/32->1  L3 66/75->2  L4 155/175->3  L5 365/412->4
+
+doc05 source_river civic       x1.15  L1 32/37->1  L2 79/91->2  L3 195/224->3  L4 470/540->4  L5 1160/1334->5
+doc05 source_well  civic       x1.15  L1 50/57->2  L2 120/138->3  L3 300/345->3  L4 735/845->4  L5 1800/2070->5
+doc05 treatment    civic       x1.15  L1 40/46->2  L2 98/113->2  L3 240/276->3  L4 590/678->4  L5 1440/1656->5
+doc05 pump         civic       x1.15  L1 60/69->2  L2 145/167->3  L3 360/414->4  L4 880/1012->5  L5 2160/2484->6
+doc05 tank         civic       x1.15  L1 5.0/5.8->1  L2 12/14->1  L3 30/34->1  L4 74/85->2  L5 180/207->3
+doc05 booster      civic       x1.15  L1 12/14->1  L2 29/33->1  L3 72/83->2  L4 175/201->3  L5 430/494->4
+
+cells with NO transformer rung: 0
+```
+
+Read the rung column down each row and doc 93 §BC-3 is visible: **no archetype
+ever climbs more than one rung per level, and every L1 sits on rung 1 or 2.** At
+the fork `data_center` L1 sat on rung **4** — a $6,900 transformer before the
+first server was switched on.
+
+**The table is an UPPER bound, and deliberately.** Real demand is
+`base × state_mult × channel × occ` and `occ ≤ 1.0`
+(`PopulationSystem.occ_of`), so a cell that fits here fits in play with room to
+spare. A contract that had to model occupancy would be a contract nobody could
+check from the data files.
+
+### 68.2 Why both doors, and why the sixth rung is the LAST one
+
+The player offered two doors and the arithmetic refuses each of them alone.
+
+**Bigger transformers, alone.** `data_center` L6 at 43,150 kW wants a
+`43,150 / 0.90 = 47,944 kW` "transformer" — larger than a substation at L3
+(30,000) and **six times** the biggest feeder in the game (7,500). Every
+transformer sits under a feeder and the §5.3 gate walks it, so the true ceiling
+of the distribution model is `0.90 × 7,500 = 6,750 kW` **however large the
+transformer is**. There is no ladder that reaches 43 MW without a new conductor
+class, a new substation ladder and a new transmission ladder underneath it.
+
+**A smaller data centre, alone.** `k_dem > TAX_LEVEL_GROWTH` (2.15, doc 02 §8 /
+spec §55 rule 3) forces a six-rung demand ladder to span at least `2.15⁴ = 46×`,
+and the `vertical` class actually spans `2.55⁵ = 107.9×`. Against the old
+2,250 kW ceiling that caps the seed at `2,250 / 107.9 = 20.9 kW` — a data centre
+drawing less at level one than a `store` L3. It also collides with `high_rise`,
+whose own six-rung ladder needs the same room: two `vertical` archetypes cannot
+both be aligned to a ladder that has only `2,250 / 45 = 50×` of span between its
+first ceiling and its last.
+
+**The pair works because each buys what the other cannot.** A sixth rung lifts
+the span to `6,075 / 45 = 135×` against the 107.9× the curve needs, which is
+enough for both towers; and a seed inside **(55.4, 135] kW** is what puts the
+data centre's ladder in step with the copper. The sixth rung is
+`0.90 × FEEDER_CAPACITY[2] = 6,750 kW` — derived from the feeder, not chosen —
+and **a seventh cannot exist without a fourth conductor class**, so doc 04's
+ladder is now provably finished rather than merely longer. Gate 18c is amended
+to assert exactly that: the five shipped rungs cell by cell, the sixth against
+its own derivation.
+
+**Cost of the rung, and what it commits a city to.** $41,500 (doc 03 §2.13(b),
+the ladder's own $/kW curve continued: 10.00 / 7.33 / 7.00 / 6.90 / 6.52 → 6.15,
+× 6,750). It needs a class-3 feeder — 6,750 kW is 0.90 of one, and 0.80 of its
+nameplate — and a substation at **L2 or better**, since `0.90 × 6,000 = 5,400 <
+6,750`. A top-rung transformer is an infrastructure decision, not a pole-top,
+and the panel walk in §68.3 is where the player is told so.
+
+### 68.3 What the three surfaces say, measured on a data centre at every level
+
+`tools/measure_envelope.gd --panel`, founding city, seed 1337, 6 game-hours.
+`WTR-2` on `T-18` (an L1, 50 kW, the only customer on that pad) is re-stated as
+a `data_center` at each rung — synthetic, because doc 02 gates the archetype at
+city level 4 and the founding city is level 0, and stated rather than hidden;
+every number under it is the catalog's own stats row, the grid's own gate and the
+panel's own model.
+
+```
+DC level  base kW  next kW   host  needs  panel row
+L1        100      255       L1    L3     ui_power_row_needs_rung to=2 rung=3 host=1 kw=400 kW
+L2        255      650       L1    L4     ui_power_row_needs_rung to=3 rung=4 host=1 kw=1 MW
+L3        650      1660      L1    L5     ui_power_row_needs_rung to=4 rung=5 host=1 kw=2.5 MW
+L4        1660     4230      L1    L6     ui_power_row_needs_rung to=5 rung=6 host=1 kw=6.75 MW
+L5        4230     6070      L1    L6     ui_power_row_needs_rung to=6 rung=6 host=1 kw=6.75 MW
+L6        6070     —         —     —      (the pad it has carries it)
+
+S18 on T-18: customers=1 need_rung=4 need_bigger=true for=WTR-2 cap=1 MW stranded=''
+router POWER: action=upgrade_transformer to_level=2 cost=1100 clears=false
+              | needs rung 4 (1000 kW), host L1
+```
+
+**The router line is the whole of doc 93 §BC-3's second half.** Before this wave
+it stopped after `clears=false` — the player was told, correctly, that the $1,100
+purchase would not work, and nothing at all about what would. It now carries
+`needs`, so the row can say *"this is a level 1; your level 3 wants a level
+4"* and a player can decide to climb the ladder instead of tapping once and being
+refused again. The quote itself is unchanged and deliberately so:
+`cmd_upgrade_grid_component` moves one rung per call, so a quote naming L4 from
+L1 would price a purchase the verb cannot charge.
+
+### 68.4 What moved, what did not, and what is filed
+
+**Seven authored cells moved**, against nine that had no transformer:
+`data_center` power L1–L6 (400/1,020/2,600/6,630/16,900/43,150 →
+100/255/650/1,660/4,230/6,070) and `high_rise` L6 (9,700 → 4,160). Nothing else
+in `data/buildings.json` changed — the `water_demand` column is generated from a
+separate seed and did not move a cell, and jobs, population, footprints, decay,
+fire, crime, coverage and `min_city_level` are untouched.
+
+**Hash deltas, `tools/profile_sim.gd --hash-only`, A/B-isolated to ONE cause**
+(fork `a581948`; each arm is the whole shipped tree with `data/buildings.json`
+alone rolled back, so every arm differs from the next in exactly one column):
+
+| arm | starter coarse / fine | bench coarse / fine |
+|---|---|---|
+| **fork** `a581948` | `9004573d…` / `d5c6678d…` | `9695f766…` / `b8548805…` |
+| **A** everything except `data/buildings.json` — the sixth rung, its radius, its roster row, its price, `PowerGrid.transformer_rung_for`, the gate, the panels | `9004573d…` / `d5c6678d…` **unchanged** | `9695f766…` / `b8548805…` **unchanged** |
+| **B** A + `high_rise` L6 only (9,700 → 4,160) | `9004573d…` / `d5c6678d…` **unchanged** | `9695f766…` / `b8548805…` **unchanged** |
+| **shipped** B + `data_center` L1–L6 | `9004573d…` / `d5c6678d…` **unchanged** | `ebb5f476…` / `307a6a27…` **MOVED** |
+
+**Three readings, and each was predicted before it was run.** (A) The ladder
+append is hash-neutral because appending to `CAPACITY` moves no existing
+component's `capacity_kw`, and `TRANSFORMER_SERVICE_RADIUS[5]` is read only by a
+rung neither authored city owns. (B) The `high_rise` clamp is hash-neutral
+because no city in the project holds a level-6 `high_rise` — the benchmark's
+tallest is **L4** (15 × L1, 20 × L2, 15 × L3, 9 × L4). (shipped) **The entire
+bench delta is the data centre and nothing else**: `tests/fixtures/bench_city.json`
+authors **15** of them, 3 at L1 and 12 at L2, and the founding city authors none,
+which is exactly why the starter hash does not move in any arm.
+
+The size of that delta is arithmetic anyone can check: `3 × (400 − 100) + 12 ×
+(1,020 − 255) = 900 + 9,180 = ` **10,080 kW** of base demand removed from a
+1,500-building city.
+
+**Filed to Lane B (water), not re-fitted here.** Two rows of doc 05's per-variant
+ladder — `pump` L5 (2,160 kW → 2,484 at the civic peak) and `tank` L5 (2,396 →
+2,755) — had **no transformer rung at the fork** and have one now, at no cost to
+doc 05: the sixth rung rescued them and not one number in `data/water.json`
+moved. The lane that owns the gate matrix should know that a top-level pump is
+now buyable where it was not, and that the purchase it needs is a $41,500
+transformer. No gate-matrix cell was re-fitted by this lane (`awaiting_consumer`:
+doc 92 §17's matrix and §18b's dark share are unmeasured against the new rung).
+
+**The data centre's operating cost fell and its revenue did not**, which is the
+direction the player asked for and a balance delta this lane publishes rather
+than absorbs: a level-5 data centre draws 4,230 kW where it drew 16,900, so the
+generation a city must own to run one falls by **12,670 kW** — from 14 % of a
+top-rung gas plant to 3.5 %. Doc 03's tax, jobs and capital columns for
+`tax_class: tech` are untouched, so the archetype is strictly more profitable
+than it was. That is a re-fit for the lane that owns doc 03's matrix; it is named
+here with its number so it cannot be discovered later as a surprise.

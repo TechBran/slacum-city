@@ -156,6 +156,19 @@ static func route(sim: CitySim, fix_target: Dictionary,
 				armed["sim_id"] = subject
 				if with_quote:
 					armed["quote"] = sim.cmd_fix_power_capacity(subject, true)
+					# **…and WHICH RUNG the row is actually asking for** (Wave 28,
+					# doc 93 §BC-3). `cmd_fix_power_capacity` quotes ONE purchase —
+					# the next rung up — and returns `clears: false` when that rung
+					# is not enough, which is honest and unactionable: the player
+					# is told the purchase will not work and not what will.
+					# `rung_needed` names the rung that carries the load, so the
+					# row can say "L2 → this needs L4" and the player can decide to
+					# buy the ladder rather than tap once and be refused again.
+					# `needs_rung` 0 is `E_NEEDS_TRANSFORMER`'s own case — no rung
+					# on the ladder carries it — and is passed through as 0 rather
+					# than clamped, because "nothing you can buy fixes this" is a
+					# different sentence from "buy the top one".
+					armed["needs"] = PowerActions.rung_needed_for_next_level(sim, subject)
 			return armed
 		RequirementFormatter.FIX_BUILDING, RequirementFormatter.FIX_BLOCK, \
 				RequirementFormatter.FIX_TILE, RequirementFormatter.FIX_DISTRICT, \

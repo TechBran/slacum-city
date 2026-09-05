@@ -214,10 +214,30 @@ static func building_row(actions: PowerActions, sim_id: String) -> Dictionary:
 	# transformer, which is working perfectly — so it is the one line besides the
 	# row itself that stays on S5 (doc 93 §AY3).
 	var feeder := String(actions.sim.grid.component(transformer).get("parent", ""))
+	# **Which rung the NEXT level needs** (Wave 28, doc 12 D-123, doc 93 §BC-3).
+	# The row already named the transformer and its ratio; what it could not say
+	# is the one thing the player is deciding — whether the pad they are on can
+	# carry the upgrade they are looking at, and if not, which rung can. The
+	# numbers are `PowerActions.rung_needed`'s, which is the sim's own gate walk.
+	var next: Dictionary = actions.next_level(sim_id)
+	var upgrade := {}
+	if bool(next.get("needs_bigger", false)) or bool(next.get("no_rung_carries", false)):
+		upgrade = {
+			"to_level": int(next.get("to_level", 0)),
+			"needs_rung": int(next.get("needs_rung", 0)),
+			"host_level": int(next.get("host_level", 0)),
+			"needs_capacity_text": RequirementFormatter.power(
+					next.get("needs_capacity_kw", 0.0)),
+			# `needs_rung` 0 is "no transformer in the game carries this", and it
+			# gets its OWN sentence rather than a rung number the player cannot buy.
+			"text_key": "ui_power_row_no_rung" if bool(next.get("no_rung_carries", false)) \
+					else "ui_power_row_needs_rung",
+		}
 	return {
 		"available": true,
 		"unserved": false,
 		"transformer": transformer,
+		"needs_upgrade": upgrade,
 		"shed": feeder != "" and actions.sim.grid.shed_feeders.has(feeder),
 		"ratio": float(block.get("load_ratio", 0.0)),
 		"band_state": StringName(String(block.get("band_state", HudModel.STATE_NORMAL))),

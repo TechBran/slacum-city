@@ -6754,3 +6754,138 @@ Closing it is one line — `plans_water = true` by default — and the whole cos
 it is the re-derivation that line forces: §17's matrix, §18b's 50-game-day dark
 share and every gate fitted to them, which is a lane of its own and not a
 footnote on this one (doc 92 §67.5).
+
+## BC. Wave-28 ruling — every building fits the transformer envelope (2026-09-05)
+
+**The player, on the device:** *"A fully loaded data center still pulls too much,
+and I haven't even upgraded it past level two. Transformers may need more power,
+or we just make the data centers fit in that envelope, so a transformer can
+handle it fully upgraded."*
+
+They had measured the game correctly and the hole was **ten cells wide**, not
+one. A building attaches to **exactly one** transformer — `PowerGrid._attachments`
+is a `building_id → transformer id` map and doc 04 §2.1's rule picks one — so the
+largest load the distribution model can serve is one rung of doc 04 §2.2's ladder
+at §5.3's own 0.90 ceiling. Against that, doc 02 §2.14 authored a **sixth** rung
+of demand while doc 04 stayed at **five** rungs of copper, and nobody asked the
+two tables to agree. Measured at each archetype's own doc 01 channel peak — the
+hour §5.3's gate is actually judged at (`CitySim.peak_component_loads`, RR-120) —
+**nine of doc 02's sixty-six published `power_demand_kw` cells had no transformer
+at all**, plus two of doc 05's thirty per-variant rows. Doc 92 §68.1 publishes the
+whole table.
+
+**The tell was already on this page.** §G5 rider 1 ruled, of the coverage columns
+of that same sixth rung, that *"those columns are a demand ON the service stock;
+the service stock did not gain a rung, and demanding coverage the player has no
+verb to buy is a wall with no door"* — and then, four paragraphs above it, §G5
+published *"a `data_center` that draws 43,150 kW, which is not a mistake but the
+point of `k_dem > TAX_LEVEL_GROWTH`."* `power_demand_kw` is a demand on the
+service stock in exactly the sense the rider means, and doc 04's stock had not
+gained a rung either. The rider was written, and applied to one of the two
+columns it was true of.
+
+### BC-1. THE ENVELOPE. No authored cell may exceed one transformer at §5.3's ceiling
+
+> For every archetype and every level,
+> `power_demand_kw × channel_peak(demand class) ≤ PowerGrid.UPGRADE_MAX_R ×
+> CAPACITY.transformer[top]`.
+
+**At the PEAK, not at the base, and that is the half that had never been
+checked.** `power_demand_residential` runs to **1.46** at 20:00 and
+`power_demand_commercial` to **1.51** from 10:00 — so `high_rise` L5, authored at
+3,810 kW, asks its transformer for **5,563 kW** at dinner, and `apartment` L6 at
+1,940 kW asks for **2,832**, which is past the old 2,250 kW ceiling on a building
+nobody had thought to suspect. The comparison is made at the peak because doc 04
+§5.3's gate is (RR-120), and a rule that passed at the trough would be a rule the
+game does not run.
+
+**Enforced in three places, on purpose.** `tools/gen_buildings.py` refuses to
+write a table that breaks it; `BuildingCatalog._check_service_envelope` refuses
+to LOAD one, so a hand-edited `data/buildings.json` cannot get past boot; and
+`tests/test_balance_gates.gd::test_gate_34_every_building_fits_the_transformer_envelope`
+proves the mirror the first two read still equals `PowerGrid`'s own derivation,
+`CitySim.DEMAND_CLASS_CHANNEL`'s own class map and `DayCurveSet.channel_peak`'s
+own curves.
+
+### BC-2. THE LADDER GAINS ITS SIXTH RUNG — 6,750 kW — and it is the LAST one
+
+Doc 04 §2.2's transformer ladder appends **6,750 kW / radius 10**, and the
+number is derived rather than chosen:
+
+```
+rung 6 = UPGRADE_MAX_R x FEEDER_CAPACITY[2] = 0.90 x 7,500 = 6,750 kW
+```
+
+— the largest transformer the top conductor class can carry at §5.3's own
+ceiling. **A seventh rung is arithmetically impossible without a fourth
+conductor class**, because a transformer bigger than 6,750 kW could not be fed by
+any feeder in the game, so the ladder is now provably complete rather than
+merely longer. Two consequences are stated rather than discovered: a top-rung
+transformer needs a **class-3 feeder** and a **substation at L2 or better** to
+sit under (0.90 × 6,000 = 5,400 < 6,750), which is what it costs to run a load
+this size; and §2.6's THERMAL and HAZARD rows are per-KIND rather than per-rung,
+so the sixth rung adds no row there — an oil-filled unit is an oil-filled unit.
+Service radius extends the 3/4/5/6/8 ladder by its own last step (+2). Price is
+doc 03 §2.13(b)'s: **$41,500**, the ladder's own $/kW curve continued.
+
+**Both doors the player offered, and neither one alone.** Bigger transformers
+cannot reach `data_center` L4's 6,630 kW, let alone L6's 43,150 — that would want
+a 47,944 kW "transformer", six times the biggest feeder in the game. A smaller
+data center cannot reach the bottom either: `k_dem > TAX_LEVEL_GROWTH` (2.15)
+forces a six-rung ladder to span at least 46×, so a data center whose top fits
+2,250 kW must start under 49 kW, less than a `water_facility` L1. The pair works
+because each closes what the other cannot: the rung buys the headroom, the seed
+buys the alignment.
+
+### BC-3. SINGLE STEP AND FOOT. A player can always answer "upgrade the transformer"
+
+> `rung(L+1) ≤ rung(L) + 1` for every archetype, and `rung(1) ≤ 2`.
+
+The first is what makes the answer *buyable*: one building upgrade never costs
+more than one transformer upgrade, so `cmd_fix_power_capacity` — which quotes
+**the next rung and only the next rung**, because that is all
+`cmd_upgrade_grid_component` can charge in one purchase — is never quoting a
+purchase that cannot clear. The second is what makes an archetype *startable*: a
+first level servable from the bottom of the ladder. `data_center` failed it at
+the fork (its L1 needed rung **4**, a $6,900 transformer on day one, which is
+what *"I haven't even upgraded it past level two"* feels like from the inside).
+
+**And it is now SAID.** The building panel's power row, S18's customer block and
+the fix router's POWER row all carry `PowerActions.rung_needed` — the smallest
+rung whose nameplate carries the host transformer's post-upgrade PEAK load. Doc
+12 D-123. `needs_rung == 0` is kept as its own answer rather than clamped to the
+top rung, because *"nothing you can buy fixes this"* is a different sentence from
+*"buy the top one"*, and BC-1 is what guarantees a shipped table never says it.
+
+### BC-4. THE CLAMP MAY BIND THE TOP RUNG AND NOTHING ELSE
+
+The generator's power cell becomes
+`min(round_rule(seed x k_dem^(L-1)), ceiling_peak_kw / channel_peak)` — the same
+`min(curve, ceiling)` shape `coverage_ladder.max_requirement` has had since doc
+02 §2.9, applied for the reason §G5 rider 1 already gave. Two riders:
+
+1. **The clamp is floored onto the `kw` grid, never rounded half-up**, or a
+   clamped cell would land one grid step past the capacity it clamps to, which is
+   the wall BC-1 exists to forbid. `high_rise` L6 is `6,075 / 1.46 = 4,160.96`
+   floored to **4,160**; `data_center` L6 is `6,075 / 1.00` floored to **6,070**.
+2. **It may bind at most the TOP rung.** Two rungs at the same kW is an upgrade
+   that costs nothing to power, and an archetype whose second-from-top cell needs
+   clamping does not have a rounding problem, it has the wrong seed.
+
+Which is why `data_center`'s power seed moves **400 → 100 kW** and `high_rise`'s
+does not move at all. The interval that makes the data center climb exactly one
+rung per level is **(55.4, 135]** kW; 100 is the round number in it, it keeps the
+data center the largest first-level draw in the roster (`high_rise` 90,
+`water_facility` 60, `office` 35), and it leaves the clamped sixth rung a real
+**+43.6 %** step over L5 instead of a free one. `high_rise` L1–L5 are untouched:
+its ladder was already aligned (L1 rung 2 → L5 rung 6) and only ran one rung past
+the top, which is precisely §G5 rider 1's case. **Seven cells moved in all** —
+six `data_center`, one `high_rise` — against nine that had no transformer.
+
+**What this does NOT touch, said plainly.** `k_dem` is unmoved at 2.35 / 2.45 /
+2.55 and the class ordering still holds; the `water_demand` column is generated
+from a separate seed and did not move a cell, so doc 05's balance is unchanged by
+the doc 02 half of this wave; and jobs, population, tax class and every money
+column are untouched. The data center's revenue side is exactly what it was and
+its power bill fell, which is the direction the player asked for — doc 92 §68.4
+measures what that is worth and files it to the lane that owns the gate matrix.
