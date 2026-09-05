@@ -52,6 +52,10 @@ const REPAIR_CHECKS: Array[StringName] = [
 	&"E_ALREADY_REPAIRING", &"E_FUNDS",
 ]
 
+## How far S18's FED BY list will walk up doc 04 §2.1's radial tree. Three is the
+## whole tree (transformer → feeder → substation); four is one rung of slack.
+const MAX_UPSTREAM_HOPS := 4
+
 ## §5.10's overlay bands, as the doc 12 §2.5 state tokens the row tints with, so
 ## the panel reads the same three colours the overlay paints (A5: the glyph and
 ## the word carry it too, colour is the third channel).
@@ -103,7 +107,12 @@ func transformer_block(component_id: String) -> Dictionary:
 	var upstream: Array[Dictionary] = []
 	var parent := String(c["parent"])
 	var hop := 1
-	while parent != "" and sim.grid.has_component(parent):
+	# §2.1's tree is radial and three deep, so `MAX_UPSTREAM_HOPS` is slack rather
+	# than a rule. It is here because this walk follows a `parent` field out of a
+	# SAVE: a body whose parents formed a cycle would hang the panel rather than
+	# draw a wrong one, and a UI that can be hung by a corrupt file is worse than
+	# one that draws four rows and stops.
+	while parent != "" and sim.grid.has_component(parent) and hop <= MAX_UPSTREAM_HOPS:
 		var up := sim.grid.component(parent)
 		var up_eff := sim.grid.cap_eff(parent, ambient)
 		var up_peak := maxf(float(up["load_kw"]), float(peaks.get(parent, 0.0)))
