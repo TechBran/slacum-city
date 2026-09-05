@@ -624,6 +624,44 @@ func level_up_grant(city_level: int) -> int:
 	return int(ladder[city_level])
 
 
+## The highest curriculum level [level_up_grant] can pay anything for — the top
+## of the published ladder. `_settle_grant_arrears` walks to it and no further,
+## so a curriculum that grows a rung the table has no row for is paid nothing
+## rather than extrapolated (the same refusal `level_up_grant` makes one level
+## down).
+func top_level_up_grant_level() -> int:
+	return maxi(0, (grants().get("LEVEL_UP_GRANT_BY_CITY_LEVEL", []) as Array).size() - 1)
+
+
+## Doc 03 §2.5a's back-pay seed (Wave 24) — what a SUPERSEDED build would have
+## paid this level, for a save written at `save_version` of doc 08 §2.8's city
+## section.
+##
+## A save written before rung 10 carries no grant ledger, so the ledger has to be
+## seeded with what that binary actually paid, and the answer is a function of
+## which binary it was. `LEVEL_UP_GRANT_SUPERSEDED_BY_SAVE_VERSION` publishes one
+## row per shipped table keyed by the LOWEST section version that shipped it, and
+## this reads the highest key at or below `save_version` — so an unknown future
+## key cannot be selected by an old save, and an old save cannot fall off the
+## bottom of the table (row `"0"` is the project's first ladder).
+##
+## The rows are dollars and therefore live in `data/economy.json` (C-07); the
+## VERSION RULE is code because it is a rule about saves, not about prices.
+func superseded_level_up_grant(city_level: int, save_version: int) -> int:
+	var rows: Dictionary = grants().get("LEVEL_UP_GRANT_SUPERSEDED_BY_SAVE_VERSION", {})
+	var best := -1
+	for raw_key: Variant in rows:
+		var key := int(String(raw_key))
+		if key <= save_version and key > best:
+			best = key
+	if best < 0:
+		return 0
+	var ladder: Array = rows[str(best)]
+	if city_level < 0 or city_level >= ladder.size():
+		return 0
+	return int(ladder[city_level])
+
+
 ## doc 03 §2.5 — preventive maintenance, allowed on condition ∈ [PM_MIN, 0.99].
 func pm_cost(capital: int) -> int:
 	return round_half_up(float(capital) * _pm_cost_fraction)

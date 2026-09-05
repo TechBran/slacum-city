@@ -1055,6 +1055,8 @@
 	"ui_toast_city_level_grant": "City level {level} — {amount} paid into the treasury",
 	"ui_toast_flood": "Streets are flooding — {depth} mm of standing water",
 	"ui_toast_goal_level": "Level {level} — {title}",
+	"ui_toast_grant_arrears": "Back-pay collected — {amount} for levels {levels}",
+	"ui_toast_grid_headroom": "Grid at {pct} % load — build generation before your next block",
 	"ui_unit_kind_ambulance": "Ambulance",
 	"ui_veil_catchup": "Your city ran {hours} hours",
 	"ui_veil_catchup_capped": "The longest stretch this city simulates at once is {hours} hours; the rest of your time away was not run.",

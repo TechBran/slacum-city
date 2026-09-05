@@ -426,7 +426,7 @@ const CHIP_POPULATION := "population"
 ## gives the STANDING pulse to `grid` and `water`, and clearing one of those
 ## would blink a state pulse off for a HUD frame, so they are not here and must
 ## not be added.
-const FLASHABLE_CHIPS: Array[String] = [CHIP_TREASURY, CHIP_POPULATION]
+const FLASHABLE_CHIPS: Array[String] = [CHIP_TREASURY, CHIP_POPULATION, "grid"]
 ## What `GoalsModel` puts between the level and the fraction. The compact form
 ## splits on it, so the two files have to agree about one character.
 const GOAL_CHIP_SEPARATOR := "·"
@@ -498,6 +498,21 @@ func net_income_state(net_per_hour: float, balance: int) -> StringName:
 ## ≥95 NORMAL, 85–94 WARNING, 60–84 CRITICAL, <60 CRITICAL + pulse (§2.4 P3/P4).
 ## A negative percentage means "no reading yet" and reads as OFFLINE, which is
 ## exactly what the fourth data state is for.
+## The grid chip's state, and the one place the HUD knows the pool is FILLING
+## before it is short (Wave 24 merge, doc 92 §63 AC-24-2, doc 12 D-119). Coverage
+## is `health_state` — 100 % right up to the hour the lights go out — so a city
+## handed a million dollars could build itself dark with a green chip. From
+## `grid_headroom_warn_ratio` (0.75 — the band `tools/playtest.gd`'s planner
+## buys generation at) the chip is amber while coverage is still whole; a worse
+## coverage state always wins.
+func grid_chip_state(pct: float, load_ratio: float) -> StringName:
+	var state := health_state(pct, "grid")
+	if state == STATE_NORMAL and load_ratio >= UIConfig.get_num(_thresholds,
+			"grid_headroom_warn_ratio", 0.75):
+		return STATE_WARNING
+	return state
+
+
 func health_state(pct: float, prefix: String = "grid") -> StringName:
 	if pct < 0.0:
 		return STATE_OFFLINE
@@ -1007,7 +1022,7 @@ func chip_values(snapshot: Dictionary) -> Dictionary:
 		"incidents": _chip("incidents", str(count), str(count),
 				incidents_state(count, badge)),
 		"grid": _chip("grid", _percent_text(grid_pct), _percent_text(grid_pct),
-				health_state(grid_pct, "grid")),
+				grid_chip_state(grid_pct, float(snapshot.get("grid_load_ratio", 0.0)))),
 		"water": _chip("water", _percent_text(water_pct), _percent_text(water_pct),
 				health_state(water_pct, "water")),
 		"population": _chip("population", pop(population),

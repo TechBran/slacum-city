@@ -422,6 +422,53 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > (`tools/profile_sim.gd --baseline`). What it does not get is the city v3 would
 > have produced next, and that is exactly what the rung records.
 
+> ### Shipped 2026-09-04 — `city.section_version` 9 → 10, **the celebration-grant ledger**
+>
+> A SHAPE rung, and the first one on this ladder whose migrator can neither
+> supply the new key nor honestly leave it out. The `treasury` block gains
+> `grant_paid_by_level` — an Array of dollars paid per curriculum level (doc 03
+> §2.5a.1, ruling 93 §AW3) — and the feature that reads it pays a returning city
+> the difference between what it was paid and what the table pays now.
+>
+> **Why zero is the wrong default, which is what makes this rung different from
+> rung 7 and rung 9.** Both of those added a key whose absent value was a FACT: a
+> v6 city genuinely had no live opportunities and a v8 city genuinely had no
+> commission, so `deserialize({})` was the truth. A v9 city at curriculum level 5
+> has genuinely been paid five celebration grants. An empty ledger would not be a
+> documented default, it would be a false statement — and the feature reading it
+> would pay that city a second time for every rung it ever climbed.
+>
+> **So `_v10_to_v11` marks rather than answers (the lane wrote `_v9_to_v10`; at the merge Wave 25's yard took rung 10 and this ledger is rung 11)** — v2 → v3's line, for v2 → v3's
+> two reasons. The answer needs `data/economy.json`'s superseded grant tables,
+> which §2.8 forbids a migrator from opening, and it needs the restored city's
+> own curriculum level, which does not exist until `CitySim._restore_goals`
+> returns several steps later. The one thing this migrator can honestly write is
+> the question: `treasury.grant_ledger_bootstrap`, **the section version the body
+> came from** — because what a legacy city was paid depends on which binary paid
+> it, and the section version is the only thing in the body that says which one
+> that was.
+>
+> `CitySim._settle_grant_arrears` consumes the mark after `_restore_goals`, seeds
+> the ledger from `grants.LEVEL_UP_GRANT_SUPERSEDED_BY_SAVE_VERSION`, pays the
+> per-level difference on the levels the city has EARNED, and emits one receipt.
+> `Treasury.deserialize` never persists the mark, so no body carries it twice and
+> the next save writes a real ledger. A body with no `treasury` section at all is
+> a fragment, not a city, and is left exactly as it is — the line `_v5_to_v6`
+> took, for the same reason.
+>
+> **It is NOT a rules rung.** Every key a v9 body carries means what it meant, no
+> draw order moves, and a v10 city advanced under v11 sees the city v10 would have
+> produced — with more money in it, which is the feature rather than a side
+> effect. `state_hash()` moves for every city, played or founding, because the
+> treasury block has one more key; that is the honest record of a shape that
+> grew, and report 98 §66 publishes the before/after for all four determinism
+> baselines.
+>
+> **What it costs a returning player: nothing, and it hands them something.** The
+> player's own 2026-09-03 city is a v8 body at `earned_level` 5 with a treasury of
+> −$22,624; it opens at **$14,899,376**, and the load after that pays $0. Doc 92
+> §63.5 has the run.
+
 > ### Shipped 2026-09-03 — `city.section_version` 8 → 9, **the commissions board**
 >
 > A SHAPE rung, and the second one of exactly this shape: doc 03 §2.5b's

@@ -355,8 +355,26 @@ func test_the_city_section_is_on_rung_ten() -> void:
 	# tenth named stream, beside two `treasury` sub-keys. `_v9_to_v10` is the
 	# identity function for exactly the reason its two predecessors were: every
 	# one of those has a documented default that is what an old save MEANS.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 10,
+	assert_true(CitySim.SAVE_SECTION_VERSION >= 10,
 			"the excavation yield is rung 10 (doc 08 §2.8, report 98 §69 RR-209)")
+	# **Rung 11, Wave 24** (report 98 §66 RR-199; the lane wrote rung 10, the merge landed it above Wave 25's yard): doc 03 §2.5a.1's celebration-
+	# grant LEDGER adds one key inside an existing block, `treasury.
+	# grant_paid_by_level` — and it is the first rung on this ladder whose
+	# migrator can neither supply the new key nor honestly leave it out, because
+	# a v9 city at curriculum level 5 HAS been paid and a zeroed ledger would
+	# have the back-pay pay it a second time for every rung it climbed. So
+	# `_v10_to_v11` MARKS rather than answers, in v2 → v3's line and for v2 → v3's
+	# two reasons: the answer needs `data/economy.json`'s superseded tables,
+	# which doc 08 §2.8 forbids a migrator from opening, and it needs the
+	# restored city's own curriculum level, which does not exist until
+	# `CitySim._restore_goals` returns.
+	#
+	# **Rung 9, Wave 19** (report 98 §60 RR-170) was doc 03 §2.5b's commissions
+	# board: one top-level key, `contracts`, plus `rng.contracts`, with
+	# `_v8_to_v9` the identity function for the same reason `_v6_to_v7` was.
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 11,
+			"the celebration-grant ledger is rung 11 (doc 08 §2.8, report 98 "
+			+ "§66 RR-199)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()

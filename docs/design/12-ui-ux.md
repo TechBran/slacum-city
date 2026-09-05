@@ -2561,6 +2561,21 @@ player says so.
 --strict` exits 0 at 412×915, 360×800, 880×400 and at 360×800 with
 `--text-scale=1.3 --large-targets`.
 
+### Wave 24 delta — the money a returning city was already owed, and the one surface that says so (2026-09-04)
+
+*(Doc 92 §63.4–§63.5, ruling 93 §AW3, report 98 §66 RR-199/RR-200.)*
+
+| # | change | reads | why |
+|---|---|---|---|
+| D-112 | **The back-pay receipt: one toast, named, with the rungs in it.** `ui_root._check_grant_arrears` watches the batch for `level_up_grant_arrears_paid` — emitted once, inside a restore, by `CitySim._settle_grant_arrears` — and pushes `ui_toast_grant_arrears`: *"Back-pay collected — $14,922,000 for levels 1–5"*. §2.21's payday surfaces come with it, `hud.flash_chip(CHIP_TREASURY)`, for the same reason D-95 spends them. The rung SPAN comes off the event's own `levels` array (`1` for a single rung, `1–5` for a run), so the copy cannot claim a rung the sim did not pay for. | §2.13, §2.15, §2.21, doc 03 §2.5a.1 | **A balance that moves by fourteen million dollars with nothing on any surface saying why is indistinguishable from a bug**, and the player's instruction was that the money be *collected* — which is a thing you are told about. Measured on their own 2026-09-03 city: −$22,624 → $14,899,376 on the frame after a load. It is a SEPARATE toast from D-95's and not a fold into it, because it is a different moment — nothing was just earned, a debt was just settled — and the two can never collide: arrears are emitted inside a restore and a level-up cannot be. |
+| D-113 | **The level-up toast's amount is now the DIFFERENCE, and it did not have to change to become one.** `CitySim._pay_level_up_grant` pays `table[k] − Treasury.grant_paid(k)` and puts that figure in `level_up_grant_paid.amount`; D-95 already read the amount off the sim's own event rather than off `data/economy.json`, so a rung that pays $3,977,500 because $22,500 of it was collected years ago says **$3,977,500** on the toast and needs no new code to do it. | §2.13, doc 03 §2.5a.1 | This is D-95's own reason paying off — *"a toast that predicted a payment could be right about the table and wrong about the city"* — one wave later and against a case that did not exist when it was written. A surface that had computed the figure itself would now be lying to exactly the players Wave 24 is for: the ones who have been here a while. **No UI change ships for it**; the row exists so the next reader knows the behaviour is intended and knows which decision bought it. |
+| D-119 | **The grid chip goes amber while the lights are still on.** (Wave 24 merge, doc 92 §63 AC-24-2.) The verifier measured the player's arm of the millions — shipped money, unchanged game — at 37.6 % of building-time dark; the lane's fix lived in `tools/playtest.gd`. Three surfaces now carry the planner's own band: `HudModel.grid_chip_state` turns the ⚡ chip WARNING from `thresholds.grid_headroom_warn_ratio` (0.75 load) while coverage is still 100 %; `UIRoot.note_grid_load` pushes one `ui_toast_grid_headroom` toast ("Grid at 76 % load — build generation before your next block") and flashes the chip, re-armed under 0.65; and `power_summary_lines` bands the pool line amber at 0.75 / red at 0.9 and keeps the wall line ("The pool is short. Build generation.") on screen while shedding instead of replacing it. Fed from `game/main.gd::_refresh_hud` at 1 Hz off `PowerActions.grid_reading`. |
+
+**The deck is unchanged at 83 states.** `ui_toast_grant_arrears` is a toast, and
+§2.15's toast layer is already photographed by every screen that carries one;
+`--screen=all --audit --strict` exits 0 at 412×915, 360×800, 880×400 and at
+360×800 with `--text-scale=1.3 --large-targets`.
+
 ### Wave 20 delta — the surfaces that were already right, and had nothing to draw (2026-09-03)
 
 *This lane adds no widget, no string and no preview state. It is here because it

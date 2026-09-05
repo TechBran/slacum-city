@@ -1452,6 +1452,11 @@ func feed_events(batch: Array) -> void:
 	_check_street(batch)
 	_check_construction(batch)
 	_check_land_works(batch)
+	# LAST, on purpose (Wave 24 merge): `push_toast` is newest-replaces, and a
+	# cold resume drains the whole offline batch in one call — the player's own
+	# save crosses a flood band 69 times a game-day. A $14,922,000 receipt must
+	# be the toast that survives that batch, not the one a flood line erases.
+	_check_grant_arrears(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
 	for entry: Variant in batch:
@@ -1576,6 +1581,78 @@ func _check_city_level(batch: Array) -> void:
 		if hud != null:
 			hud.flash_chip(StringName(HudModel.CHIP_TREASURY),
 					street.chip_flash_s() if street != null else 0.9)
+
+
+## **The back-pay receipt** (Wave 24, doc 03 §2.5a, doc 12 §2.13).
+##
+## `CitySim._settle_grant_arrears` pays a returning city every celebration grant
+## the table has grown since it last played, and on the player's own 2026-09-03
+## save that is **$14,922,000 arriving on the frame after a load**. A balance
+## that moves by fourteen million dollars with nothing on any surface saying why
+## is indistinguishable from a bug, and the player's instruction was that the
+## money be *collected*, which is a thing you are told about.
+##
+## So this is one toast, named, with the RUNGS in it — *"back-pay for levels
+## 1–5"* — and the same §2.21 payday surfaces the level-up grant spends: the
+## treasury chip flashes, because a jump of that size on a bar the eye is not
+## looking at is otherwise invisible.
+##
+## It is a separate toast from `_check_city_level`'s and not a fold into it,
+## because it is a different moment: nothing was just earned, a debt was just
+## settled. `push_toast` replaces, and these two cannot arrive in the same batch
+## — arrears are emitted inside a restore and a level-up cannot be.
+## **The pool is filling — say so once** (Wave 24 merge, doc 92 §63 AC-24-2, doc
+## 12 D-119). The lane fixed gate 18b for the scripted agent by teaching
+## `tools/playtest.gd` to buy generation at 0.75 load; the verifier measured the
+## player's arm — shipped money, unchanged game — at 37.6 % of building-time
+## dark, and the only in-game words were on the power overlay's legend card,
+## shown once demand already EXCEEDED supply. This is the human's planner:
+## one toast when load first crosses `grid_headroom_warn_ratio`, re-armed once
+## it falls under `grid_headroom_rearm_ratio`, and the grid chip flashes so
+## the player learns which chip to watch. Fed by `game/main.gd::_refresh_hud`.
+var _grid_headroom_warned := false
+
+
+func note_grid_load(load_ratio: float) -> void:
+	var thresholds: Dictionary = config.section("thresholds") if config != null else {}
+	var warn := UIConfig.get_num(thresholds, "grid_headroom_warn_ratio", 0.75)
+	var rearm := UIConfig.get_num(thresholds, "grid_headroom_rearm_ratio", 0.65)
+	if _grid_headroom_warned:
+		if load_ratio < rearm:
+			_grid_headroom_warned = false
+		return
+	if load_ratio < warn:
+		return
+	_grid_headroom_warned = true
+	push_toast(UIWidgets.t_args(config, "ui_toast_grid_headroom",
+			{"pct": str(roundi(load_ratio * 100.0))}), HudModel.STATE_WARNING)
+	if hud != null:
+		hud.flash_chip(StringName("grid"), street.chip_flash_s() if street != null else 0.9)
+
+
+func _check_grant_arrears(batch: Array) -> void:
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != &"level_up_grant_arrears_paid":
+			continue
+		var amount := int(event.get("amount", 0))
+		if amount <= 0:
+			continue
+		var levels: Array = event.get("levels", [])
+		var span := "—"
+		if levels.size() == 1:
+			span = str(int(levels[0]))
+		elif levels.size() > 1:
+			span = "%d–%d" % [int(levels[0]), int(levels[levels.size() - 1])]
+		push_toast(UIWidgets.t_args(config, "ui_toast_grant_arrears",
+				{"levels": span, "amount": HudModel.money_exact(amount)}),
+				HudModel.STATE_NORMAL)
+		if hud != null:
+			hud.flash_chip(StringName(HudModel.CHIP_TREASURY),
+					street.chip_flash_s() if street != null else 0.9)
+		return
 
 
 ## Doc 07 §2.4's flood, the first time a player meets one (defect A91-D-26).
@@ -2649,8 +2726,12 @@ static func power_summary_lines(reading: Dictionary, cfg: UIConfig) -> Array:
 	var lines: Array = [
 		{"id": "pool", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_pool"),
 				"value": "%s / %s" % [reading["demand_text"], reading["supply_text"]],
-				"state": HudModel.STATE_NORMAL if float(reading["load_ratio"]) < 0.9
-						else HudModel.STATE_WARNING},
+				# Amber from 0.75 — the band `tools/playtest.gd`'s planner buys
+				# generation at (doc 92 §63, AC-24-2), so the player sees the same
+				# number the agent acts on; red from 0.9.
+				"state": HudModel.STATE_NORMAL if float(reading["load_ratio"]) < 0.75
+						else (HudModel.STATE_WARNING if float(reading["load_ratio"]) < 0.9
+						else HudModel.STATE_CRITICAL)},
 		{"id": "wires", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_wires"),
 				"value": "%d / %d" % [int(reading["transformers_warning"])
 						+ int(reading["feeders_warning"]),
@@ -2661,10 +2742,13 @@ static func power_summary_lines(reading: Dictionary, cfg: UIConfig) -> Array:
 		lines.append({"id": "shed",
 				"label": UIWidgets.t(cfg, "ui_overlay_summary_power_shed"),
 				"value": str(reading["shed_text"]), "state": HudModel.STATE_CRITICAL})
-	else:
-		lines.append({"id": "wall", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_wall"),
-				"value": UIWidgets.t(cfg, str(reading["wall_key"])),
-				"state": HudModel.STATE_NORMAL})
+	# The wall line used to be REPLACED by the shed line, so "The pool is short.
+	# Build generation." vanished at the exact moment it applied (Wave 24 merge
+	# verifier). It stays; shedding is a fourth line, not a substitute.
+	lines.append({"id": "wall", "label": UIWidgets.t(cfg, "ui_overlay_summary_power_wall"),
+			"value": UIWidgets.t(cfg, str(reading["wall_key"])),
+			"state": HudModel.STATE_WARNING if float(reading["shed_kw"]) > 0.0
+					else HudModel.STATE_NORMAL})
 	return lines
 
 

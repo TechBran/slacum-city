@@ -871,6 +871,13 @@ func _on_hour_settled(data: Dictionary) -> void:
 	var power01 := HudModel.mean01(power)
 	var water01 := HudModel.mean01(sim.water.service_factors())
 	ui_root.ingest_service({"power01": power01, "water01": water01})
+	# Wave 24 merge (AC-24-2): the pool's load ratio, so the grid chip can go
+	# amber and the one-shot "build generation" toast can fire BEFORE the
+	# lights go out — coverage alone reads 100 % right up to that hour.
+	var grid_load_ratio := 0.0
+	if build_controller != null and build_controller.power != null:
+		grid_load_ratio = float(build_controller.power.grid_reading().get("load_ratio", 0.0))
+	ui_root.note_grid_load(grid_load_ratio)
 	# §2.5 mode 2. The chips take the city-wide MEAN; the overlay wants to know
 	# WHICH taps are dry, which is a different question and a different feed.
 	_feed_water_overlay()
@@ -882,6 +889,7 @@ func _on_hour_settled(data: Dictionary) -> void:
 		"happiness": sim.happiness.happiness,
 		"stability": sim.districts.city_stability,
 		"power01": power01, "water01": water01,
+		"grid_load_ratio": grid_load_ratio,
 	})
 
 
@@ -1845,6 +1853,10 @@ func _advance_restore() -> void:
 		return
 	_resumed_slot = _restore_slot
 	_on_ui_save_loaded(_restore_slot)
+	# Doc 03 §2.5a's back-pay receipt is emitted inside `restore_state`; drain it
+	# on THIS frame so the toast is on screen when the veil lifts, not one tick
+	# later behind whatever that tick's batch pushes (Wave 24 merge, RR-199).
+	flush_sim_events()
 	ui_root.set_city_level(sim_host.sim.progression.city_level)
 	ui_root.dismiss_title()
 	ui_root.dismiss_veil()

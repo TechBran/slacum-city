@@ -1410,7 +1410,32 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## block has a tenth entry, the `treasury` block has two new sub-keys and the
 ## body has a new top-level key. The four `profile_sim` baselines are re-taken
 ## with each cause A/B-isolated (doc 92 §66.6).
-const SAVE_SECTION_VERSION := 10
+## **v11 — 2026-09-04, the celebration-grant LEDGER (Wave 24, doc 03 §2.5a,
+## ruling 93 §AW3).** A SHAPE rung, the third one on this ladder after v3 and
+## v7: the `treasury` block gains `grant_paid_by_level`, an Array of dollars
+## paid per curriculum level.
+##
+## The rung exists because the player asked for back-pay — *"check if you have
+## received it, and if you haven't, then you get it"* — and back-pay is only
+## answerable against a record of what was received. A body below v11 has no such
+## record, and unlike v7's `street` block the honest default is NOT zero: a city
+## at curriculum level 5 HAS been paid, just not this much, and seeding zeros
+## would pay it a second time for every rung it climbed.
+##
+## `_v10_to_v11` therefore takes v2 → v3's line — **mark, do not answer** — for
+## the same two reasons: the answer needs `data/economy.json`, which doc 08 §2.8
+## forbids a migrator from opening, and it needs the restored city's curriculum
+## level, which is established several steps later by `_restore_goals`. The
+## marker it stamps is the VERSION the body came from, because what a legacy
+## city was paid depends on which binary paid it, and the section version is the
+## only thing in the body that says which one that was.
+##
+## It is NOT a rules rung. Every key a v10 body carries means what it meant, no
+## draw order moves, and a v10 city advanced under v11 sees the same city v10
+## would have produced — with more money in it, which is the feature.
+## `state_hash()` moves for every city, played or founding, because the treasury
+## block has one more key; that is the honest record of a shape that grew.
+const SAVE_SECTION_VERSION := 11
 
 
 func save_section_version() -> int:
@@ -1434,6 +1459,13 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			7: body = _v7_to_v8(body)
 			8: body = _v8_to_v9(body)
 			9: body = _v9_to_v10(body)
+			# The one rung that needs to know where the walk STARTED, not where
+			# it currently is: what a legacy city was paid for its rungs depends
+			# on which binary paid it, and `from_version` is the only thing that
+			# says which. See `_v10_to_v11`. (Both Wave 24 and Wave 25 claimed v10
+			# in their branches; the merge ordered them by landing: v10 is the yard,
+			# v11 is the ledger.)
+			10: body = _v10_to_v11(body, from_version)
 		version += 1
 	return body
 
@@ -1603,6 +1635,38 @@ static func _v8_to_v9(body: Dictionary) -> Dictionary:
 ## and nothing else, and a city with no pipeline in flight completes none. What
 ## does move for every city is `state_hash()`, because the shape moved.
 static func _v9_to_v10(body: Dictionary) -> Dictionary:
+	return body
+
+
+## v10 → v11: **mark, do not answer** — v2 → v3's line, for v2 → v3's two
+## reasons (see `SAVE_SECTION_VERSION`).
+##
+## The `treasury` block gains `grant_paid_by_level`, and the honest default for
+## an old body is NOT an empty ledger: a city at curriculum level 5 has been
+## paid five celebration grants, and a zeroed ledger would have Wave 24's
+## back-pay hand it all five again. What it WAS paid is a function of
+## `data/economy.json`'s superseded tables (which doc 08 §2.8 forbids a migrator
+## from opening) and of the restored city's own level (which does not exist
+## yet), so the only thing this can honestly write is the question:
+## `grant_ledger_bootstrap`, the version the body came from.
+##
+## `CitySim._settle_grant_arrears` consumes it after `_restore_goals`, and
+## `Treasury.deserialize` never persists it — the next save writes a real
+## ledger and no body carries the marker twice.
+##
+## A body with no `treasury` section at all is a fragment, not a city, and gets
+## nothing stamped: `_v5_to_v6` took the same line for the same reason, and
+## `Treasury.deserialize({})` seeds from version 0, which is the right reading
+## for a body that predates everything.
+static func _v10_to_v11(body: Dictionary, from_version: int) -> Dictionary:
+	var raw: Variant = body.get("treasury", null)
+	if not (raw is Dictionary):
+		return body
+	var block: Dictionary = raw
+	if block.has("grant_paid_by_level"):
+		return body
+	block["grant_ledger_bootstrap"] = from_version
+	body["treasury"] = block
 	return body
 
 
@@ -2141,6 +2205,10 @@ func _restore_finish(body: Dictionary) -> void:
 	# teach the curriculum something the boot it is restoring into does not
 	# know; the next hourly reconcile tells both of them, together.
 	population.settle_aggregates(_population_inputs())
+	# Doc 03 §2.5a's back-pay, and it is ordered AFTER the curriculum on purpose:
+	# it pays for levels `_restore_goals` has just finished establishing, and on a
+	# bootstrapped body those levels do not exist until that call returns.
+	_settle_grant_arrears()
 
 
 ## Doc 03 §2.9 + doc 08 §2.8 city section v6: the preset is part of the city, so
@@ -2260,13 +2328,96 @@ func publish_progression(events: Array) -> void:
 ## restore emits nothing at all: `bootstrap` drains its own event queue (doc 09
 ## §2.14.4 point 3), which is what stops a migrated level-6 city being handed
 ## $1,605,000 for work it did last week.
+## **Once per level per city is now a LEDGER, not only a structure** (Wave 24,
+## ruling 93 §AW3). It was structural before — `GoalSystem.earned_level` is
+## monotone and `_settle` emits one event per rung — and it still is; what the
+## ledger adds is the ability to pay a DIFFERENCE, which is what the player's
+## back-pay instruction requires and what a sticky `done` set cannot express.
+## `Treasury.note_grant_paid` only ever adds, so the two payment sites (here and
+## `_settle_grant_arrears`) cannot between them pay a rung twice.
 func _pay_level_up_grant(level: int) -> void:
-	var amount := econ_curves.level_up_grant(level)
-	if amount <= 0:
+	var owed := econ_curves.level_up_grant(level) - treasury.grant_paid(level)
+	if owed <= 0:
 		return
-	treasury.credit(amount, &"grant", "city_level_%d" % level)
-	bus.emit(&"level_up_grant_paid", {"city_level": level, "amount": amount,
+	treasury.credit(owed, &"grant", "city_level_%d" % level)
+	treasury.note_grant_paid(level, owed)
+	bus.emit(&"level_up_grant_paid", {"city_level": level, "amount": owed,
 			"balance": treasury.balance})
+
+
+## **RETROACTIVE BACK-PAY** — doc 03 §2.5a, ruling 93 §AW3, and the second half
+## of the player's 2026-09-04 instruction: *"if a player has already passed level
+## one and was supposed to get a million dollars, you should be able to collect
+## it for all of them AUTOMATICALLY — you should just check if you have received
+## it, and if you haven't, then you get it. That way we can keep one city going
+## for a while."*
+##
+## Runs once per load, after `_restore_goals`, because it needs the curriculum
+## level the restored city actually holds. Three things happen and the order is
+## the argument:
+##
+## 1. **Seed the ledger** for a body that has none. What a legacy city was paid
+##    depends on which binary paid it, so the seed comes from
+##    `CostCurves.superseded_level_up_grant` keyed on the version `_v10_to_v11`
+##    stamped. It is seeded up to the level the OLD RULE PAID — the composed
+##    city level below section 9, where the grant rode `max()` (ruling 93 §AU6
+##    moved it), and the curriculum level from 9 up — which is not always the
+##    level the new rule EARNS. That asymmetry is exactly why the ledger stores
+##    dollars per level rather than a paid bit: a rung the population backstop
+##    already bought is recorded, is never back-paid, and is credited against
+##    the day the curriculum finally earns it.
+## 2. **Pay the difference** on levels 1..`earned_level`, and only there. The
+##    walk stops at the curriculum level, never the composed one, because that
+##    is where the live payment site is and a level is not a lesson.
+## 3. **Print a receipt.** One `level_up_grant_arrears_paid` event carrying the
+##    per-level breakdown, so the player is told what the money was for instead
+##    of finding their balance changed. A silent credit of $14,922,000 would be
+##    indistinguishable from a bug.
+##
+## **Idempotent by construction, not by a flag.** The second load recomputes the
+## same differences against a ledger that now records them, gets zero for every
+## level, and emits nothing. A fresh city runs this with `earned_level = 0` and
+## it is a no-op, which is why it is safe on the boot path too.
+func _settle_grant_arrears() -> void:
+	var seed_from := treasury.grant_ledger_migrate_from
+	if seed_from >= 0:
+		treasury.grant_ledger_migrate_from = -1
+		# Below rung 9 the grant rode doc 93 §G1's composed level, so that is the
+		# level the old binary paid up to; from 9 it rode the curriculum's.
+		var paid_to := goals.earned_level if seed_from >= 9 \
+				else maxi(progression.city_level, goals.earned_level)
+		for level in range(1, paid_to + 1):
+			treasury.note_grant_paid(level,
+					econ_curves.superseded_level_up_grant(level, seed_from))
+	# A NATIVE body (no migration mark) whose ledger is EMPTY while the city
+	# claims earned levels is a body somebody stripped the ledger out of: a v11
+	# binary records the level-1 payment at the live site the hour it is earned,
+	# so no honest v11 body has levels and no ledger. Fail SAFE — seed the ledger
+	# as paid at today's table and pay nothing (the merge verifier's farm vector
+	# F, the one of eight that paid: $27,839,000 for deleting one key). A fresh
+	# city is `earned_level 0` and never enters here; a migrated body was marked.
+	if seed_from < 0 and treasury.grant_paid_by_level.is_empty() \
+			and goals.earned_level >= 1:
+		for level in range(1, goals.earned_level + 1):
+			treasury.note_grant_paid(level, econ_curves.level_up_grant(level))
+		return
+	var top := mini(goals.earned_level, econ_curves.top_level_up_grant_level())
+	var levels: Array[int] = []
+	var amounts: Array[int] = []
+	var total := 0
+	for level in range(1, top + 1):
+		var owed := econ_curves.level_up_grant(level) - treasury.grant_paid(level)
+		if owed <= 0:
+			continue
+		treasury.credit(owed, &"grant", "arrears_city_level_%d" % level)
+		treasury.note_grant_paid(level, owed)
+		levels.append(level)
+		amounts.append(owed)
+		total += owed
+	if total <= 0:
+		return
+	bus.emit(&"level_up_grant_arrears_paid", {"levels": levels, "amounts": amounts,
+			"amount": total, "balance": treasury.balance})
 
 
 ## The O(1) scalars `GoalSystem.STATE_KINDS` reads, once a game-hour.
