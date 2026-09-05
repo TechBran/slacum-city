@@ -2997,7 +2997,7 @@ func cmd_demolish_grid_component(component_id: String, preview: bool = false) ->
 	return CommandQueue.ok(quote)
 
 
-# ------------------- doc 04 §4.2 — CALL THE CREWS (Wave 25, RR-206)
+# ------------------- doc 04 §2.15.2 — CALL THE CREWS (Wave 25, RR-206)
 #
 # The player, 2026-09-04: *"if you click on the transformer, you can repair it —
 # which means calling your crews there. If it fails, you can fix it from there,
@@ -3035,7 +3035,7 @@ func cmd_demolish_grid_component(component_id: String, preview: bool = false) ->
 const GRID_REPAIR_CREW := "YARD-CREW-1"
 
 
-## Repair a placed grid component, by sending a crew (doc 04 §4.2). Order of
+## Repair a placed grid component, by sending a crew (doc 04 §2.15.2). Order of
 ## checks — every one of them a row the panel's checklist draws:
 ##
 ##   1 E_UNKNOWN_COMPONENT  no such id, or a kind with no repair here. A

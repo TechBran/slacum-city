@@ -2021,12 +2021,20 @@ func _on_transformer_repaired(component_id: String, result: Dictionary) -> void:
 	grid_action.emit(&"repair", component_id, result)
 
 
+## The two S5 signals this root raises on the panel's behalf — see
+## `BuildingPanel.grid_upgraded`'s docstring. A shell binding `grid_action`
+## instead should also drop these two (report 98 §68.1 snippet 3); until it does,
+## both fire and both say the same thing, which is `_refresh_hud()`.
 func _on_transformer_upgraded(component_id: String, result: Dictionary) -> void:
 	grid_action.emit(&"upgrade", component_id, result)
+	if building_panel != null:
+		building_panel.grid_upgraded.emit(component_id, result)
 
 
 func _on_transformer_demolished(component_id: String, result: Dictionary) -> void:
 	grid_action.emit(&"demolish", component_id, result)
+	if building_panel != null:
+		building_panel.grid_demolished.emit(component_id, result)
 
 
 func _on_transformer_customer(sim_id: String, world_pos: Vector3) -> void:

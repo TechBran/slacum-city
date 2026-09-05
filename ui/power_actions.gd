@@ -487,7 +487,7 @@ func demolish(component_id: String) -> Dictionary:
 
 
 # ===========================================================================
-# Call the crews — doc 04 §4.2 (Wave 25, RR-206, doc 93 §AY1)
+# Call the crews — doc 04 §2.15.2 (Wave 25, RR-206, doc 93 §AY1)
 # ===========================================================================
 
 ## `cmd_repair_grid_component(preview = true)`, shaped for a button face:

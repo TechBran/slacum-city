@@ -11254,6 +11254,16 @@ a neighbouring building's tile, which is correct: at the edge of a finger the
 nearer object should win, and the transformer is 2.4 m across inside a 2.581 m
 radius.
 
+**The cap, and the zoom at which it starts to matter.** `component_near` takes
+`min(tap_radius_m, tile_m × 0.5)` = `min(finger, 4.0 m)`. At the default camera
+height the finger is **2.581 m** and the cap never binds, which is why the table
+above is unchanged by it. It binds from the zoom at which 48 dp exceeds 4 m of
+ground — and doc 92 §38.3 measures 48 dp at **16.04 m** at full zoom-out, four
+times the cap. Without it a tap squarely on a house two tiles from a pad would
+open the transformer, which is the regression the constant exists to prevent;
+`tests/test_ui_transformer.gd::test_the_component_pick_is_capped_at_half_a_tile_so_it_cannot_steal_a_house`
+drives exactly that zoom.
+
 ### 65.4 What the building panel was carrying
 
 The real panel, mounted from `game/ui/ui_root.tscn`, laid out by

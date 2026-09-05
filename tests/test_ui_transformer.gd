@@ -473,3 +473,66 @@ func test_the_selected_pad_is_ringed_and_the_ring_leaves_with_the_selection() ->
 			"an id the view has never heard of clears it rather than stranding it")
 	_tree().root.remove_child(view)
 	view.free()
+
+
+func test_every_signal_this_wave_added_or_kept_has_a_consumer() -> void:
+	# The project's signature defect is a thing that is emitted and read by
+	# nothing. S18's three verbs reach the shell through `UIRoot.grid_action`,
+	# and S5's two retired grid signals are still RAISED — by the root, on the
+	# panel's behalf — so an unpatched `game/main.gd` keeps working. Both halves
+	# are pinned here rather than described in a docstring.
+	var sim := _sim()
+	var root := _mount()
+	var controller := BuildController.new(sim)
+	root.building_panel.setup(root.config, controller)
+	root.transformer_panel.setup(root.config, TransformerPanelModel.new(
+			sim, controller.power, root.config, controller.tile_m))
+	var heard: Array[String] = []
+	root.grid_action.connect(func(action: StringName, component_id: String,
+			_result: Dictionary) -> void:
+		heard.append("root:%s:%s" % [String(action), component_id]))
+	root.building_panel.grid_upgraded.connect(
+			func(component_id: String, _result: Dictionary) -> void:
+				heard.append("panel:upgrade:" + component_id))
+	root.building_panel.grid_demolished.connect(
+			func(component_id: String, _result: Dictionary) -> void:
+				heard.append("panel:demolish:" + component_id))
+	var id := _busiest(sim)
+	sim.treasury.balance = 500_000
+	root.transformer_panel.show_component(id)
+
+	root.transformer_panel.upgrade_button().pressed.emit()
+	assert_true(heard.has("root:upgrade:" + id), "S18's UPGRADE reaches the shell")
+	assert_true(heard.has("panel:upgrade:" + id),
+			"…and the retired S5 signal is still raised, so an unpatched shell works")
+
+	root.transformer_panel.remove_button().pressed.emit()   # arms
+	root.transformer_panel.refresh()
+	root.transformer_panel.remove_button().pressed.emit()   # fires
+	assert_true(heard.has("root:demolish:" + id))
+	assert_true(heard.has("panel:demolish:" + id))
+	_unmount(root)
+
+
+func test_a_transformer_removed_from_its_own_panel_closes_it_and_clears_the_selection() -> void:
+	var sim := _sim()
+	var root := _mount()
+	var controller := BuildController.new(sim)
+	root.transformer_panel.setup(root.config, TransformerPanelModel.new(
+			sim, controller.power, root.config, controller.tile_m))
+	var cleared: Array[String] = []
+	root.transformer_selected.connect(func(component_id: String) -> void:
+		cleared.append(component_id))
+	var id := _busiest(sim)
+	sim.treasury.balance = 500_000
+	root.transformer_panel.show_component(id)
+	root.transformer_panel.remove_button().pressed.emit()
+	root.transformer_panel.refresh()
+	root.transformer_panel.remove_button().pressed.emit()
+	root.transformer_panel.close()
+	assert_false(sim.grid.has_component(id), "the transformer is gone")
+	assert_false(root.transformer_panel.is_open(),
+			"…and the panel describing it went with it")
+	assert_true(cleared.has(""),
+			"the shell is told to drop the world highlight, or it rings empty ground")
+	_unmount(root)

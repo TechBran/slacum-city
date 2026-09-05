@@ -530,7 +530,7 @@ func attach_building(building_id: String, tile: Vector2i,
 
 
 ## **Every building this transformer feeds**, ascending by building id (Wave 25,
-## RR-205 — doc 04 §4.1, doc 12 D-114).
+## RR-205 — doc 04 §2.15.1, doc 12 D-114).
 ##
 ## `attachment_of()` answers the question one building at a time and
 ## `attachment_map()` answers it for the whole city; neither answers *"who is

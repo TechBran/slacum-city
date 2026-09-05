@@ -9391,7 +9391,7 @@ taste:
    hop list, the per-hop UPGRADE buttons, the armed REMOVE row and the fix strip
    into `ui/building_panel.gd`, because the building was the only door there was.
 
-### RR-205 — `buildings_served_by`: the grid could not name its own customers (docs 04 §4.1, 12 D-114, 92 §65.1)
+### RR-205 — `buildings_served_by`: the grid could not name its own customers (docs 04 §2.15.1, 12 D-114, 92 §65.1)
 
 `PowerGrid` publishes `attachment_of(building_id)` (one building → its
 transformer) and `attachment_map()` (the whole table). It published **no way to
@@ -9418,7 +9418,7 @@ no consumer in `sim/`, `ui/`, `game/` or `data/` ever named the key. It is now
 `PowerGrid.FAILURE_DAMAGE`, one table, and RR-206's price is read off it. Values
 unchanged: all four `profile_sim` baselines are byte-identical (doc 92 §65.5).
 
-### RR-206 — `cmd_repair_grid_component`: the verb the player asked for by name (docs 03 §2.5, 04 §4.2, 06 §2.6, 92 §65.2, 93 §AY1)
+### RR-206 — `cmd_repair_grid_component`: the verb the player asked for by name (docs 03 §2.5, 04 §2.15.2, 06 §2.6, 92 §65.2, 93 §AY1)
 
 A doc-03-priced repair that **dispatches a crew** rather than healing on the tap.
 Nothing about it is authored in `sim/`:
@@ -9460,7 +9460,7 @@ and move nothing. The gate therefore refuses when the quoted price rounds to
 $0 as well as when the damage is zero — the threshold is doc 03's own rounding,
 not a number this wave authored.
 
-### RR-207 — `PICK_COMPONENT` and S18: the panel the pad opens (docs 12 §2.25, 04 §4.1, 92 §65.3, 93 §AY2)
+### RR-207 — `PICK_COMPONENT` and S18: the panel the pad opens (docs 12 §2.25, 04 §2.15.1, 92 §65.3, 93 §AY2)
 
 `pick_at_ground` gains a fourth answer between OPPORTUNITY and BUILDING, on the
 same 48 dp radius `set_tap_radius_from` already computes, measured against the
@@ -9491,3 +9491,82 @@ can make about this building; the coverage checklist is the requirement contract
 doc 12 §2.7 calls the game's most important teaching device; the progress block
 is the answer to *"is anything happening here?"*, which a player asks of the
 building and not of a queue.
+
+### 68.1 `game/main.gd` — the five snippets, with anchors
+
+This lane may not edit the shell (the lead owns `game/main.gd`). Everything else
+in Wave 25 is complete and green without these; what they add is the WORLD half —
+the tap routing, the pad highlight, and the HUD refresh after S18's verbs. All
+five are additive except snippet 3, which is a two-line DELETION and a tidy-up
+rather than a fix: `BuildingPanel.grid_upgraded` / `grid_demolished` are still
+declared and still RAISED — by `UIRoot`, on the panel's behalf — precisely so an
+unpatched shell keeps working. **Nothing below is needed for the tree to boot or
+for the suite to pass.**
+
+**1. Route `PICK_COMPONENT`.** In `_handle_tap`, immediately after the
+`PICK_OPPORTUNITY` arm's `return` and BEFORE the `PICK_BUILDING` arm:
+
+```gdscript
+	if StringName(str(pick["kind"])) == BuildController.PICK_COMPONENT \
+			and ui_root != null and ui_root.show_transformer(str(pick["id"])):
+		# S18 closes its siblings itself (`UIWidgets.close_siblings`), so the
+		# building panel and S4 stand down without being told twice.
+		ui_root.selected_entity_id = str(pick["id"])
+		if power_infra != null:
+			power_infra.set_selected(str(pick["id"]))
+		return
+```
+
+**2. Follow the selection into the world.** In `_wire_build_ui()`, in the
+`if building_panel != null:` block, beside the other panel connections
+(`ui_root` is in scope there as the member):
+
+```gdscript
+	if ui_root != null:
+		ui_root.transformer_selected.connect(func(component_id: String) -> void:
+			if power_infra != null:
+				power_infra.set_selected(component_id)
+			ui_root.selected_entity_id = component_id)
+		ui_root.transformer_customer_selected.connect(
+			func(sim_id: String, world_pos: Vector3) -> void:
+				camera_state.focus_on(world_pos)
+				if building_panel != null:
+					building_panel.show_building(sim_id)
+				ui_root.selected_entity_id = sim_id)
+		ui_root.grid_action.connect(
+			func(_action: StringName, _component_id: String, _result: Dictionary) -> void:
+				_refresh_hud()
+				if power_infra != null:
+					power_infra.note_topology_changed())
+```
+
+**3. Retire S5's two grid signals.** In the `if building_panel != null:` block,
+**delete** these two connections — S18 raises `upgraded` / `demolished` and
+snippet 2's `grid_action` arm does the same work:
+
+```gdscript
+		building_panel.grid_upgraded.connect(
+				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+		building_panel.grid_demolished.connect(
+				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+```
+
+`building_panel.power_fixed` stays: `cmd_fix_power_capacity`'s strip is still on
+S5 (doc 12 D-116).
+
+**4. Keep the panel live.** In the 1 Hz HUD block, on the line after
+`ui_root.refresh_land_panel()`:
+
+```gdscript
+		ui_root.refresh_transformer_panel()
+```
+
+**5. A loaded save is a different grid.** Beside the existing
+`power_infra.note_topology_changed()` in the post-load path:
+
+```gdscript
+	if power_infra != null:
+		power_infra.set_selected("")   # the ring cannot outlive the city under it
+	if ui_root != null:
+		ui_root.close_transformer_panel()
+```

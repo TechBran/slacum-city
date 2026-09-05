@@ -215,7 +215,7 @@ const CODE_TABLE := {
 	# the failure shape PA-24 found on `E_WATER_HEADROOM`.
 	&"E_OWNER_MAINTAINED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_JOB_IN_FLIGHT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
-	# Wave 25, doc 04 §4.2's `cmd_repair_grid_component` (report 98 §68 RR-206).
+	# Wave 25, doc 04 §2.15.2's `cmd_repair_grid_component` (report 98 §68 RR-206).
 	# `E_JOB_IN_FLIGHT`'s twin for a grid component, and a SEPARATE code rather
 	# than a re-use, because the two carry different copy: one says a crew is on
 	# this BUILDING, the other says a crew is on the transformer that feeds a
@@ -594,7 +594,7 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 			args["have"] = str(p.get("have", _tile_text(p)))
 			args["need"] = str(p.get("need", ""))
 		&"E_ALREADY_REPAIRING":
-			# Wave 25, doc 04 §4.2. `at` is the COMPONENT a crew is already on —
+			# Wave 25, doc 04 §2.15.2. `at` is the COMPONENT a crew is already on —
 			# the same `{at}` name `POWER_CAPACITY` above uses for the thing that
 			# runs out first, because a player reading two power rows should not
 			# have to learn two words for "which piece of equipment".

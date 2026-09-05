@@ -902,7 +902,7 @@ func test_g_the_transformer_demolish_quote_prices_the_move() -> void:
 
 
 # ===========================================================================
-# H — call the crews (Wave 25, doc 04 §4.2, report 98 §68 RR-206)
+# H — call the crews (Wave 25, doc 04 §2.15.2, report 98 §68 RR-206)
 #
 # The verb that did not exist: `PowerGrid.repair_component` had one caller in the
 # whole project — doc 06's incident resolution — so a player looking at a

@@ -42,14 +42,25 @@ signal rushed(sim_id: String, job_id: int, result: Dictionary)
 ## THIS building's next level — and it carries the sim's own
 ## `{ok, reason_code, payload}` so the shell re-reads the city.
 ##
-## **`grid_upgraded` and `grid_demolished` are gone from this panel** (Wave 25,
-## doc 12 D-115). They were a rung bought and a transformer pulled from the hop
-## list, on the panel of one of the N buildings that transformer feeds; both
-## verbs now live on S18, on the thing they act on, and
-## `ui/transformer_panel.gd` raises `upgraded` / `demolished` in their place.
-## `game/main.gd`'s two connections move with them — the snippet is in report 98
-## §68.
 signal power_fixed(sim_id: String, result: Dictionary)
+## **This panel no longer raises these two; `UIRoot` does, on its behalf** (Wave
+## 25, doc 12 D-115). They were a rung bought and a transformer pulled from the
+## HOP LIST — on the panel of one of the N buildings that transformer feeds —
+## and both verbs now live on S18, on the thing they act on.
+##
+## They are kept, and kept CONSUMED, because what they mean is still true and
+## still about this panel's subject: *a grid component this building's power path
+## depends on just moved, so re-read the city*. `UIRoot._on_transformer_upgraded`
+## / `_on_transformer_demolished` raise them beside `UIRoot.grid_action`, which
+## is the signal a shell should bind from now on — `game/main.gd`'s two existing
+## connections keep working across the wave that moved the verbs, and report 98
+## §68.1 snippet 3 is the one-line-each replacement that retires this pair.
+##
+## A panel that DECLARED these and left nothing emitting them would be this
+## project's signature defect in its own signal list, which is why they were not
+## simply deleted here and left for the shell to discover.
+signal grid_upgraded(component_id: String, result: Dictionary)
+signal grid_demolished(component_id: String, result: Dictionary)
 ## Wave 25 (doc 12 D-115). The one-row POWER summary was tapped: open S18 on the
 ## transformer that feeds this building. `component_id` is `""` for an UNSERVED
 ## building — the row still fires, so the shell answers "there is nothing to

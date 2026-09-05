@@ -177,7 +177,7 @@ func _customer(row: Dictionary) -> Dictionary:
 # The verbs. Each is one line, and each returns the sim's own answer.
 # ===========================================================================
 
-## Send a crew (doc 04 §4.2). The panel arms first and calls this on the second
+## Send a crew (doc 04 §2.15.2). The panel arms first and calls this on the second
 ## tap — see `ui/transformer_panel.gd`, and doc 12 §2.7's "never spend on one
 ## tap", which is the same contract the demolish row and the fix strip obey.
 func repair(component_id: String) -> Dictionary:
