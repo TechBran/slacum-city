@@ -9654,6 +9654,40 @@ the gate.
 | **AZ-1** | **Wave 23 (gate 29, insolvency)** | Re-record gate 29's baselines against `28627a98…` / `6c8df958…` / `fd86903b…` / `736a4f45…`. **A re-record, not a re-fit**: §69.3's A/B shows the stripped bodies are byte-identical to the fork, and gate 29's `do_nothing` agent buys no land, so its insolvency day cannot move. | If a re-fit is ever wanted anyway: `land_works` pays **$8.65 per game-hour** ($207.49/game-day, doc 92 §66.4) and **only while a development pipeline is running**. A city that has stopped buying land earns exactly $0 from it. |
 | **AZ-2** | **Wave 24 (the curriculum, gates 21 / 20 / 18b)** | Same re-record against the same four digests. The curriculum agent DOES develop blocks, so this is the row where a re-fit could genuinely be indicated — the check is whether an agent that buys land now reaches a rung earlier. | **$207.49/game-day while developing**, **2.7 % of the founding city's $319/gh net**, three finds per block, and a per-block ceiling of **10 %** of that block's own development bill (so a curriculum block can never fund itself). Doc 92 §66.4 has the per-block spread: 5.49 %–7.27 %. |
 
+### 69.5 The suite, the sweeps and the final readings
+
+| | |
+|---|---|
+| `tools/run_suite.sh` | **155 files, 2,821 tests, 583,925 asserts, failed 0, silent 0** |
+| `python3 tools/check_doc_refs.py` | *all resolving; no id assigned twice* over 5,364 references |
+| `grep -rn "^<<<<<<<" .` | nothing |
+| `ui_preview --screen=all --size=412x915 --audit --strict` | **exit 0** |
+| `ui_preview --screen=all --size=360x800 --text-scale=1.3 --large-targets --audit --strict` | **exit 0**, the accessibility sweep |
+| `ui_preview --screen=land_yield --audit --strict` | **exit 0** |
+| `tools/land_works_preview.gd --census` | **2 / 2 / 2 / 3 / 4 / 3** draw calls across the six phases (doc 11 §2.18) |
+| `tools/ab_land_works.gd --fork=…` | **4 of 4 MATCH** — the stripped bodies are byte-identical to the fork |
+
+**Three authored verbs with no door, found by this lane and recorded rather than
+swept.** `DevelopmentController.cancel_development`, `pause_development` and
+`resume_development` have **no callers anywhere in the project** —
+`grep -rn "cancel_development\|pause_development\|resume_development" sim/ ui/ game/`
+returns the controller itself and nothing else. Three verbs with refund rules, a
+mid-phase guard and a `development_paused` event, that no command and no screen
+can reach: doc 09 §2.3 authored them, doc 12 §2.8's panel never grew the button,
+and this is A91-D-19's shape again. They are doc 09's and not this lane's, so the
+honest thing was to make the renderer survive them — §69.3a's poll drops a block
+the pipeline let go of without an event, which is exactly what a cancel does —
+and to file the rest here.
+
+**And a milder one this lane's own key rides.** `city_services_by_source` has
+been published by `EconomySystem.settle_hour` since Wave 15 and
+`tests/test_city_services.gd` is its only reader, so `excavation` joins a
+per-source breakdown that reaches no screen. The money itself is on five
+surfaces — the balance, the toast, the event log, the `city_services` ledger row
+and `ledger_totals.lifetime_excavation` — and only the SPLIT is invisible. A
+per-source band on the Economy tab is the one-line fix whenever a lane owns
+`ui/budget_model.gd`.
+
 **One debt is offered and not taken.** §AC-3 has stood since Wave 19: the three
 `_note_lifetime` arms doc 91 A91-D-37 / A91-D-100 / A91-D-108 owe (`&"incident"`,
 `&"restore"`, `&"salvage"`) are "one edit and ONE baseline re-record", and three

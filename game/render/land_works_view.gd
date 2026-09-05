@@ -31,8 +31,11 @@ extends Node3D
 ## **SIX DRAW CALLS, and never all six at once.** One MultiMesh per prop kind,
 ## every buffer born hidden and switched off again the moment it empties, so a
 ## city with no pipeline in flight costs zero calls (`ConstructionVehicleView`'s
-## RR-83 rule, applied here). The busiest phase is UTILITY_CORRIDOR at five live
-## buffers; SURVEY costs two.
+## RR-83 rule, applied here). MEASURED, one block, `balanced`, mid-phase:
+## **2 / 2 / 2 / 3 / 4 / 3** across the six phases — the busiest is
+## UTILITY_CORRIDOR at four, and six is the ceiling however many blocks are
+## being developed, because every block writes into these same six buffers
+## (`tests/test_land_works_view.gd` holds the table; doc 11 §2.18 publishes it).
 ##
 ## **Heavy plant is not drawn here.** It goes through
 ## `ConstructionVehicleView.add_site` — the layer that already drives real
@@ -47,8 +50,8 @@ extends Node3D
 ##
 ## **WHAT IT READS, and the ruling behind it** (doc 93 §AZ4). Phase transitions
 ## are EVENTS — `development_phase_started`, `development_phase_completed`,
-## `block_ready`, `block_purchased` — drained by the shell once per tick, so
-## membership costs nothing between transitions. Progress *within* a phase is on
+## `block_ready` and `development_paused` — drained by the shell once per tick,
+## so membership costs nothing between transitions. Progress *within* a phase is on
 ## no event and must not be: it moves every tick and an event per tick is a bus
 ## flooded with a number. So this view polls, and it polls **its own active
 ## set** — the handful of blocks it has already been told are developing —
