@@ -6879,7 +6879,7 @@ does not move at all. The interval that makes the data center climb exactly one
 rung per level is **(55.4, 135]** kW; 100 is the round number in it, it keeps the
 data center the largest first-level draw in the roster (`high_rise` 90,
 `water_facility` 60, `office` 35), and it leaves the clamped sixth rung a real
-**+43.6 %** step over L5 instead of a free one. `high_rise` L1–L5 are untouched:
+**+43.5 %** step over L5 instead of a free one. `high_rise` L1–L5 are untouched:
 its ladder was already aligned (L1 rung 2 → L5 rung 6) and only ran one rung past
 the top, which is precisely §G5 rider 1's case. **Seven cells moved in all** —
 six `data_center`, one `high_rise` — against nine that had no transformer.

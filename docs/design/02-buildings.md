@@ -1012,7 +1012,7 @@ alone reaches: 43,150 kW would want a 47,944 kW transformer, six times the
 biggest feeder in the game.
 
 **The step is still a real one.** `high_rise` L5 → L6 is 3,810 → 4,160 (+9.2 %)
-and `data_center` L5 → L6 is 4,230 → 6,070 (**+43.6 %**), so no upgrade in the
+and `data_center` L5 → L6 is 4,230 → 6,070 (**+43.5 %**), so no upgrade in the
 roster is free to power — which is the rule the clamp is bounded by (the clamp
 may bind at most the TOP rung, and an archetype whose second-from-top cell needs
 clamping has the wrong seed).
