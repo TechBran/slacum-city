@@ -10654,3 +10654,269 @@ for a building in no pressure zone (doc 91 A91-D-139). And the wall this wave
 uncovered — doc 05's MAINS, both as `feed_capacity` and as the tile factor under
 `pressure_at` — is the next lane's, with `cmd_place_water_main` sitting probed,
 listed and undriven (doc 92 §67.8).
+
+## 71. WAVE 27 — the work moving: a still that named itself, and the ground that now follows the machine (binding)
+
+*Forked off `a581948` (main after Waves 23–26). The lane exists for one sentence
+from the player, 2026-09-05, after playing the merged build: "For the land
+excavation — like I said, we should be getting money and funds from resources
+that we find out there, but also the construction crews, big bulldozers and
+things like that, need to go to clear the land so we can actually see something
+happening. The animation you have — I see it's not bad — but we need to actually
+show MOVEMENT over there. Construction crews, building, clearing land, building
+roads."*
+
+*The MONEY half shipped in Wave 25 (§69: doc 03 §2.8b's `land_works` line, the
+receipts and the yard). This is the MOVEMENT half. Rulings doc 93 §BB. Drawn doc
+11 §2.19. Defect rows doc 91 A91-D-140..A91-D-142.*
+
+**What was there before this lane, in its own words.** `LandWorksView`'s
+docstring said it: *"No sim clock: this layer animates nothing — it re-reads its
+own active set at 4 Hz and re-uploads only when something moved."* `game/main.gd`
+carried the same sentence at the call site. A block under development showed
+stakes, scrub, spoil, base, a trench and kerbs, and every one of them was a
+fraction of a budget: forty clumps became twenty with nothing on the block to
+have removed them. The heavy plant the phase called for was real — Wave 25 gave
+each phase a `ConstructionVehicleView` profile — but it worked the site's STREET
+FRONTAGE, because that layer was written for a building rising on a lot it cannot
+stand on. Nothing ever crossed the block.
+
+### RR-217 — the ground follows the machine, and it moved four published numbers
+
+**The ruling is doc 93 §BB1** and it refuses both obvious designs. Placing a
+machine "at about the right place" for a count makes the machine decorative;
+deriving the count from the machine's live position makes the DRESSING depend on
+a layer that distance-gating and the governor are allowed to switch off.
+
+`game/render/land_motion.gd` therefore publishes the pass rules as **static pure
+functions**, and the dressing calls them:
+
+| rule | who reads it |
+|---|---|
+| `sweep_of(local, half)` — where a point falls in the two dozers' serpentine | the dozers' own positions, and `LandWorksView._scatter_brush` |
+| `pave_state(legs, total, segments, fill)` — the machine's pose AND the slab count, from ONE traverse | the paver, the roller, `_lay_pave` |
+| `trench_dug(segments, q)` | the trencher, `_lay_trench` |
+| `brush_local` / `spoil_local` / `template_runs` / `collector_offset` | both, and they used to be written twice |
+
+**The evidence the change is real is that it moved doc 11 §2.18's table.** Four
+counts, at one block on `balanced` at the middle of each phase:
+
+    CLEARING brush        20 -> 21    a clump stands until the dozers reach it
+    ROAD_INSTALL pave     18 -> 19    the screed's own position decides the count
+    FINAL_DEVELOPMENT pave 54 -> 55   the same, for the kerb machine
+    UTILITY_CORRIDOR trench 6 -> 5    3 cut + 2 staged pipe bundles NOT yet reached
+
+The DRAW CALLS did not move: still **2 / 2 / 2 / 3 / 4 / 3**. A rewrite that
+produced the same instance table would have meant the counts were never
+positional.
+
+The last row is the one worth reading twice. Wave 25 drew a pipe bundle beside
+every **dug** segment, so pipe appeared out of the hole as the trench opened. The
+whole run is now staged along the line from the moment the phase starts and a
+bundle **goes** as the machine reaches it — it went in the ground. That is
+monotone DOWN in progress against a cut that is monotone UP, and
+`tests/test_land_motion.gd::test_the_extents_are_monotone_in_progress` pins all
+four directions at once.
+
+**One walk, two answers, including at the joins.** `pave_state` walks a LAY leg
+per template run and a TRAVEL leg per reposition; while the machine is driving
+from one run to the next the strip **stops growing**, which is what happens on a
+site and is what a plain `total × fill` could never express
+(`test_the_strip_does_not_grow_while_the_paver_repositions`, 401 samples).
+
+### RR-218 — two clocks, and the one that makes a load correct
+
+**Doc 93 §BB2.** Doc 11 §2.16's plant runs entirely on game-minutes; this layer
+needs a second input, and the reason is a save file.
+
+* **PROGRESS** — `ConstructionQueue.progress(job_id)` — drives every position
+  ALONG a pass. The save stores the work units and the work units *are* the
+  position, so a load, a catch-up or an `advance_hours` puts the dozer exactly
+  where the save says. A dozer whose position were `f(game_minutes)` would come
+  back from a load in one place with the ground it had cleared in another.
+* **GAME-MINUTES** — `GameClock.game_seconds() / 60` — drives every CYCLE: the
+  dig, the drum, the haul shuttle, a crew's walk. §2.16's rule, unchanged.
+
+Measured, `tools/measure_land_motion.gd --frames=0,15,45` — the largest distance
+any one body travelled between two frames, and separately with progress FROZEN
+(what a paused-then-resumed city sees):
+
+    phase                mach  crew machine dx   crew dx     joint    clock dx clk joint
+    SURVEY                  0     2     0.000     4.680    0.0000       0.000   0.0000
+    CLEARING                2     3    43.976    43.976    0.3202       0.000   0.3202
+    GRADING                 2     3    50.961    49.421    1.0000      45.268   1.0000
+    ROAD_INSTALL            2     3    66.338    70.281    0.4231       0.000   0.2793
+    UTILITY_CORRIDOR        1     4     7.000    11.387    0.8142       0.000   0.8142
+    FINAL_DEVELOPMENT       1     3    66.338    70.281    0.2793       0.000   0.2793
+
+At the fork every column is 0.000. Two entries look like gaps and are the ruling:
+**ROAD_INSTALL's clock-only travel is zero** because a paver's position is its
+job's progress and a paused city parks it — only the screed floats; and **a
+roller's drum turns with the GROUND** (`fract(distance / circumference)`), so a
+parked roller has a still drum. A drum spinning on a parked machine is the tell
+that a layer is animating a number instead of a machine.
+
+`test_a_paused_city_parks_every_machine_where_it_stands` drives 30 frames at
+`gm_per_s = 0` and requires bit-identical poses;
+`test_a_load_puts_the_layer_where_the_save_says` free-runs one view a long way
+off, snaps it onto the sim's clock, and requires it to match a view that was
+never reloaded.
+
+### RR-219 — the player's roads are BUILT, and the question did not need asking
+
+The brief allowed a visual-only crew pass if doc 10 finishes a road instantly.
+**It does not.** `CitySim.cmd_place_road` submits an ordinary `ConstructionQueue`
+job — kind `&"road"`, crew `road_crew`, crew-hours from
+`RoadTunables.build_crew_hours` — and doc 10 §2.13's under-construction lifecycle
+stamps the tiles at `under_construction_seed` condition under a
+`construction_new` closure so the crew can reach the far end of its own job.
+`road_built` is emitted on completion.
+
+So the paver, the roller and the three barricade bays across the working end run
+on **that job's own progress**, and the suite asserts the premise rather than
+assuming it: `test_a_player_laid_road_gets_a_crew_that_works_along_it` lays a real
+run through `cmd_place_road`, asserts `construction.progress(job_id) < 1.0` — *"it
+is a JOB with time in it, not a stamp"* — reads the crew at 0.1 / 0.5 / 0.9 and
+requires the machine to have moved along the run, then force-completes the job
+and requires the crew to leave. The day doc 10 makes a road instant, that test
+goes red instead of the picture quietly becoming a lie.
+
+Two details are rulings rather than choices (doc 93 §BB3): the tiles come from
+`RoadNetwork.job_record` and not from the queue payload, because the payload's
+live `Vector2i` degrade to the text `"(3, 4)"` through a save (A91-D-47); and a
+run is dropped by the 4 Hz POLL rather than by `road_built`, because that event
+also fires for a repair and a cancelled job emits nothing at all.
+
+### RR-220 — seven buffers, and the still that the instrument itself was showing
+
+**The budget.** One MultiMesh per machine kind, born hidden and switched off the
+moment it empties (RR-83). A city with no pipeline in flight and no road being
+built costs **zero draw calls**; the pair costs a constant **15 nodes** however
+many blocks are in flight. Measured, `tools/measure_land_motion.gd`, `balanced`:
+
+    phase               blocks  dress motion  TOTAL  nodes   motion instances
+    SURVEY                   1      2      1      3     15   crew 2
+    CLEARING                 1      2      2      4     15   dozer 2, crew 3
+    GRADING                  1      2      3      5     15   excavator 1, tipper 1, crew 3
+    ROAD_INSTALL             1      3      3      6     15   paver 1, roller 1, crew 3
+    UTILITY_CORRIDOR         1      4      2      6     15   excavator 1, crew 4
+    FINAL_DEVELOPMENT        1      3      2      5     15   paver 1, crew 3
+    <mixed phases>           3      4      4      8     15   dozer 2, excavator 1, tipper 1, crew 8
+    <mixed phases>           8      6      6     12     15   dozer 4, excavator 2, tipper 1, paver 2, roller 1, crew 23
+    <nothing in flight>      8      0      0      0     15   (RR-83: hidden, not merely empty)
+
+Eight blocks in one phase cost the same calls as one; the ceiling is MIXED phases
+at **12**, because every block writes into the same thirteen buffers. Frame cost
+of one motion `refresh`, best of 30, worst phase: **22 µs at 1 block, 48–49 at 3,
+113 at 8** — 0.68 % of the flagship's 16.7 ms with eight sites in flight, and it
+FALLS per block with concurrency (22 → ~16 → 14.1) because the pools are warm.
+
+**Nothing was added to the shader.** The three new bodies
+(`game/render/land_machine_mesh.gd`: dozer, paver, roller) ride
+`construction_rig.gdshader` in `rig_mode = 0`, each spending exactly one of its
+four joints, with joints 2…4 given a zero range so the other three
+`INSTANCE_CUSTOM` channels cannot move a vertex. The crew is a fourth body on
+`street_life.gdshader` (`StreetLifeMesh.worker()`), which is the file that owns
+bodies for that shader. And the excavator and tipper materials are now built by
+`ConstructionVehicleView.excavator_material` / `.tipper_material`, public and
+static — the motion layer puts its own excavator on the block rather than at the
+frontage, and a second copy of the joint envelopes
+`ConstructionActivity.dig_pose` normalises against would have been a second
+machine that only looked like the first.
+
+**The governor's order is published and tested.** `particle_ratio` takes the
+CREW first, the SECOND machine (haul tipper, following roller) next, and **never
+the machine doing the work** — a CLEARING with no dozer on it is the still this
+lane exists to close. `test_the_governor_takes_the_crew_before_the_machine` walks
+1.00 → 0.60 → 0.30 → 1.00 and asserts each rung.
+
+**And the crew knob had to become a SCALE, because a ceiling could not bind.**
+The first draft shipped per-preset ceilings of 2 / 4 / 5; `LandMotion.CREW_BY_PHASE`
+is 2/3/3/3/4/3, so no phase wants more than four men and `quality`'s five could
+never change any outcome — doc 93 §AZ2's own objection ("a bound must be
+reachable or it is decoration") in a render knob's clothes. Caught by MEASURING
+the three presets rather than by reading the constant: `measure_land_motion
+--preset=quality` printed `balanced`'s crew at every phase. `crew_scale` 0.60 /
+1.00 / 1.34 gives **1/2/2/2/2/2 · 2/3/3/3/4/3 · 3/4/4/4/5/4**, and
+`test_every_preset_moves_the_crew_and_none_of_them_is_decoration` requires each
+preset to move a number some phase actually draws. Total calls per phase:
+`performance` **3/4/4/5/6/5**, `balanced` and `quality` **3/4/5/6/6/5**.
+
+That test then found what the ceiling had been hiding: UTILITY_CORRIDOR splits
+its gang between the head of the cut and the open trench behind it, and both
+halves ran through `_crew_at`, so the preset scale was applied TWICE and
+`quality` put **six** men on a four-man phase.
+
+**And the instrument itself was showing a still.** `tools/land_works_preview.gd`
+bound `DevelopmentController`, so `LandWorksView._poll` — the only writer of a
+block's phase and progress in a running city, correctly — fired every fifteenth
+frame and put the site back to whatever the sim said. Wave 25's six per-phase
+screenshots were intermittently six photographs of SURVEY: `survey.png` and
+`clearing.png` differ by **2 pixels out of 921,600**. The preview now binds
+`world` and passes `null` for the controller and the queue, so the poll returns
+on its first line and the harness is the only writer (A91-D-141). It shoots
+**three PNGs per phase from the same camera** at `t`, `t + 15`, `t + 45`
+game-minutes with the work advancing alongside the clock; measured pixel deltas
+between the first and last frame of each phase, threshold 8 of 765:
+
+    phase                t -> t+15   t+15 -> t+45
+    SURVEY                      40             39
+    CLEARING                 3,759          9,373
+    GRADING                 20,442         44,800
+    ROAD_INSTALL             6,397          7,044
+    UTILITY_CORRIDOR         1,934          3,541
+    FINAL_DEVELOPMENT        1,632          1,240
+
+SURVEY is the honest floor: it has no machine — doc 09 §2.3 gives it a
+`construction_crew` — so all that moves is two 1.9 m men at 150 m.
+
+And a seventh subject, which is the other half of the player's sentence: the
+preview lays a run through the real `cmd_place_road` and shoots it at progress
+0.15 / 0.50 / 0.85 (`road_run_p15/50/85.png`) — paver, roller, barricade bays and
+the gang, 18,042 and 11,622 px between consecutive frames. It is laid on the
+FIRST of those shots, so it cannot appear in the six per-phase census lines.
+
+### §71's whole-suite reading, and the shape of what this wave shipped
+
+`tools/run_suite.sh` on the lane branch: **files 158, tests 2,911, asserts
+591,216, failed 0, silent 0** — 23 tests and 828 asserts of that are the new
+`tests/test_land_motion.gd`, and 13 / 216 are `test_land_works_view.gd` with the
+re-taken table. `tools/ui_preview.tscn --screen=all --audit --strict` exits 0
+with 93 screens clean. **The four `profile_sim --hash-only` baselines are
+byte-identical to main at `a581948`** — starter `9004573d…` / `d5c6678d…`, bench
+`9695f766…` / `b8548805…` — which is the whole of the constitution §3 claim: this
+lane touched no file under `sim/` and could not have.
+
+**What changed, and where.** Three new files under `game/render/`
+(`land_motion.gd`, `land_motion_view.gd`, `land_machine_mesh.gd`), a fourth body
+in `street_life_mesh.gd`, two public statics extracted in
+`construction_vehicle_view.gd`, `land_works_view.gd` rewired to read the pass
+rules and to own the motion layer, one new section in `data/render.json`, a new
+`tools/measure_land_motion.gd`, three-frame shooting plus a road run in
+`tools/land_works_preview.gd`, and `tests/test_land_motion.gd`. **`game/main.gd`
+is untouched** — the lead owns it; the four-line snippet is open question 1.
+
+### §71's open questions, ranked by what breaks if nobody takes them
+
+1. **`game/main.gd` has not been wired** (the lead owns it). Until the four-line
+   snippet lands, the motion layer free-runs its own clock at 1× and ignores the
+   pause, the speed multiplier and the save; the player's own road runs get no
+   crew (`set_roads` is what finds their tiles); and `particle_ratio` never
+   reaches the layer. Nothing is broken without it — the defaults are a
+   free-running layer, which is what a preview harness wants — but three of the
+   four claims above are unobservable in the shipped game until it is applied.
+2. **The paver's 90 m reposition** at doc 10's run 4 → run 5 (A91-D-142). It
+   reads as a machine repositioning and happens once per phase; the fix is an
+   ORDER on the template runs and doc 10 owns that order for the stamp as well.
+3. **Road UPGRADES and REPAIRS get no crew.** Both are `&"road"` jobs with
+   crew-hours and would draw with the same three lines; `RUN_JOB_KIND` is the one
+   place that decision is written. The player said *"building roads"*, and a lane
+   that also animated repairs would be shipping something nobody asked for.
+4. **A road run's tiles are walked in doc 10's SORTED order**, not chained
+   end-to-end, so a drag that doubles back gives the paver a polyline with a jump
+   in it. Straight runs and simple Ls are fine.
+5. **No work lamps after dark.** The beacons run around the clock (§2.16's rule)
+   and the crew's reflective bands take `street_life.gdshader`'s glint, but a
+   night shift on a block has no light of its own. `LandWorksView.refresh`
+   already carries the `night` scalar for exactly this and currently spends it
+   only on the motion layer's shader uniforms.

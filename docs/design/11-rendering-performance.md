@@ -3778,12 +3778,266 @@ never had a view.
 
 #### The instrument
 
-`tools/land_works_preview.gd --out=DIR [--census]` shoots one PNG per phase from
-the block's own frontage and prints the table above. It is
-`tools/construction_preview.gd`'s sibling for a land block: same stack minus the
-building, same reason for existing — the suite holds the counts, and only a
-picture holds whether a graded plane with three spoil heaps on it reads as ground
-being worked.
+`tools/land_works_preview.gd --out=DIR [--census]` shoots **three** PNGs per
+phase from the block's own frontage — see §2.19's *The proof* — and prints the
+table above. It is `tools/construction_preview.gd`'s sibling for a land block:
+same stack minus the building, same reason for existing — the suite holds the
+counts, and only a picture holds whether a graded plane with three spoil heaps on
+it reads as ground being worked.
+
+#### Wave 27 amendment — four of the instance counts moved
+
+The DRAW CALLS above are unchanged. Four instance counts moved by one or two,
+because §2.19 turned them from a fraction of a budget into **a count of what a
+machine has reached**: CLEARING brush 20 → 21, ROAD_INSTALL pave 18 → 19, FINAL
+pave 54 → 55, UTILITY trench 6 → 5 (3 segments of cut plus 2 staged pipe bundles
+the trencher has not yet reached — Wave 25 drew a bundle beside every DUG
+segment, which read as pipe coming out of the hole). The table in
+`tests/test_land_works_view.gd` carries the new numbers and the reason for each.
+
+### 2.19 THE WORK MOVING — machines that cross the block, **shipped 2026-09-05**
+
+*The player, 2026-09-05, having played the merged Wave 25 build: "For the land
+excavation — like I said, we should be getting money and funds from resources
+that we find out there, but also the construction crews, big bulldozers and
+things like that, need to go to clear the land so we can actually see something
+happening. The animation you have — I see it's not bad — but we need to actually
+show MOVEMENT over there. Construction crews, building, clearing land, building
+roads." Rulings: doc 93 §BB. Arguments: report 98 §71 RR-217..RR-220. Sim: doc 09
+§2.3's pipeline and doc 10 §2.13's road jobs.*
+
+**§2.18's own docstring named the defect**: *"No sim clock: this layer animates
+nothing — it re-reads its own active set at 4 Hz and re-uploads only when
+something moved."* The money half of the player's brief shipped in Wave 25; a
+block being dug out was still a still life whose props changed between polls.
+`game/render/land_motion.gd` (the derivation) and
+`game/render/land_motion_view.gd` (seven buffers) are the movement half.
+
+#### Two clocks, and which one drives what
+
+This is the rule the whole layer is built on, and it is the reason a load, a
+catch-up and a pause all do the right thing without a special case:
+
+| driven by | what it decides | why |
+|---|---|---|
+| **PROGRESS** — `ConstructionQueue.progress(job_id)` | every position ALONG a pass: where the dozer is in its sweep, where the screed is, how far the trench has opened | the save stores the work units, and the work units *are* the position, so a load puts the machine exactly where the save says |
+| **GAME-MINUTES** — `GameClock.game_seconds() / 60` | every CYCLE: the dig, the drum, the haul shuttle, a crew's walk | doc 11 §2.16's own rule — three times as fast at 3×, still while paused |
+
+Nothing is persisted, no RNG is drawn, and every choice about which livery, which
+crew member stands and which walks is a hash of the block id and an index — so a
+block looks the same on every device and after every load
+(`tests/test_land_motion.gd::test_the_same_block_is_the_same_on_every_device`),
+and the sim's state hash cannot move because this layer exists.
+
+#### The passes
+
+| phase | the pass | what it leaves behind |
+|---|---|---|
+| SURVEY | none — two figures on the boundary | nothing; the block is untouched |
+| CLEARING | **two dozers**, each sweeping its own half of the block in 3 strips, outside in, reversing at each strip end | **the brush in the strip they have covered is gone** — `sweep_of()` is the order and `LandWorksView._scatter_brush` keeps a clump only while its own sweep coordinate is ahead of the machines |
+| GRADING | an **excavator** parked beside the heap currently growing for half of each heap's span and tracking across to the next for the other half, with §2.16's dig cycle; a **tipper** shuttling heap → frontage → back | the heaps grow with the cut |
+| ROAD_INSTALL | a **paver** crawling doc 10's six template runs, a **roller** one machine-length behind it | **the base appears BEHIND the screed** |
+| UTILITY_CORRIDOR | a **trencher** cutting down the collector line | the cut opens behind it and **the staged pipe is consumed as it passes** |
+| FINAL_DEVELOPMENT | a **slipform kerb machine** (the paver body at 0.72, in kerb grey) on the same runs | the kerbs |
+
+**One walk, two answers.** `LandMotion.pave_state()` returns the machine's pose
+AND the number of slabs behind it from a single traverse of the runs, so the
+strip and the machine that laid it cannot disagree — including at the JOINS,
+where the machine is repositioning from one run to the next and **the strip stops
+growing**, which is what happens on a real site
+(`test_the_strip_does_not_grow_while_the_paver_repositions`).
+
+#### The arrival, and why it is paid for out of the pass
+
+A dozer that appears out of nowhere is a pop; one that drives up the road and
+turns onto the lot is a story. The first `ARRIVE_FRAC` (0.10) of every phase is
+the machine ARRIVING, on the last 72 m of **the very polyline §2.16's lorries
+already drive** to this block's frontage — `ConstructionActivity.to_site`,
+street-true and lane-offset, resolved through `RoadNetwork.route_tiles()` — then
+one straight leg from the kerb onto the pass start. A block with no street in
+reach gets no arrival and no haul lorry, which is the same honest answer
+`frontage_ok` already gives.
+
+`pass_progress()` rescales 0…1 of the phase onto 0.10…1, and **the three things a
+machine lays or removes are measured with it and nothing else is**: the brush
+does not start going before the dozers reach it and the base does not appear
+before the paver has arrived. The graded plane and the spoil heaps keep the RAW
+progress — they are the state of the ground, not something a machine is dragging
+behind it, and holding them back would leave a block that had visibly started
+looking untouched.
+
+#### Player-laid roads get BUILT, not stamped
+
+Doc 10 does not stamp a road instantly. `CitySim.cmd_place_road` submits an
+ordinary `ConstructionQueue` job with `road_crew` and crew-hours, the tiles enter
+the grid at `under_construction_seed` condition under a `construction_new`
+closure, and `road_built` is emitted when the job completes. So a paver, a roller
+and three barricade bays work along the fresh run at **that job's own progress** —
+this is not a visual-only decoration over an instant edit, and
+`test_a_player_laid_road_gets_a_crew_that_works_along_it` asserts the job really
+does have time in it, so the day that changes the suite says so.
+
+Membership is `road_build_started` (which carries the `job_id`); the tiles come
+from doc 10's DURABLE record `RoadNetwork.job_record`, not from the queue payload
+that a save degrades to text (report 98 A91-D-47). A job that leaves the queue —
+finished, cancelled or rejected — is dropped on the 4 Hz poll rather than on
+`road_built`, because that one event covers a repair too and a cancel emits
+nothing at all. **Upgrades and repairs get no crew**; see the open questions.
+
+#### Seven buffers, and the budget
+
+One MultiMesh per machine kind, every buffer born hidden and switched off again
+the moment it empties (RR-83). **A city with no pipeline in flight and no road
+being built costs ZERO draw calls**, and the pair costs a constant **15 nodes**
+(this layer's `Node3D` + 6 dressing buffers + the motion `Node3D` + 7 motion
+buffers) however many blocks are being developed.
+
+`MM_dozer` · `MM_excavator` · `MM_tipper` · `MM_paver` · `MM_roller` ·
+`MM_crew` (`street_life.gdshader`, `StreetLifeMesh.worker()`) · `MM_barrier`.
+
+The three new bodies are in `game/render/land_machine_mesh.gd` and ride
+`construction_rig.gdshader` **unchanged**, in `rig_mode = 0`, each spending
+exactly ONE of its four joints (dozer = blade lift, paver = screed float, roller
+= drum ROLL about the axle, whose angle is `fract(distance / circumference)` —
+so a parked roller has a still drum). Joints 2…4 are given a zero range, so the
+other three `INSTANCE_CUSTOM` channels cannot move a vertex. Nothing was added to
+the shader for this wave, and the excavator and tipper materials are now built by
+`ConstructionVehicleView.excavator_material` / `.tipper_material`, public and
+static, so the joint envelopes `ConstructionActivity.dig_pose` normalises against
+are written in exactly one place.
+
+Measured by `tools/measure_land_motion.gd`, `balanced`, one block, mid-phase
+(`tests/test_land_motion.gd::test_the_per_phase_budget_is_what_doc_11_publishes`
+holds it):
+
+| phase | dressing | motion | **TOTAL** | machines | crew |
+|---|---|---|---|---|---|
+| SURVEY | 2 | 1 | **3** | — | 2 |
+| CLEARING | 2 | 2 | **4** | dozer 2 | 3 |
+| GRADING | 2 | 3 | **5** | excavator 1, tipper 1 | 3 |
+| ROAD_INSTALL | 3 | 3 | **6** | paver 1, roller 1 | 3 |
+| UTILITY_CORRIDOR | 4 | 2 | **6** | excavator 1 | 4 |
+| FINAL_DEVELOPMENT | 3 | 2 | **5** | paver 1 | 3 |
+| *nothing in flight* | 0 | 0 | **0** | — | — |
+
+**Draw calls are bounded by KINDS, not by blocks.** One phase at 1 / 3 / 8
+concurrent blocks costs exactly the same calls; the worst case is MIXED phases,
+where every block writes into the same thirteen buffers:
+
+| concurrent blocks | dressing | motion | **TOTAL** | nodes |
+|---|---|---|---|---|
+| 3, mixed phases | 4 | 4 | **8** | 15 |
+| 8, mixed phases | 6 | 6 | **12** | 15 |
+
+Frame cost of one motion `refresh`, best of 30 (`measure_land_motion --repeats=30`),
+worst phase (ROAD_INSTALL): **22 µs at 1 block, 48–50 µs at 3, 113–117 µs at 8** (best of 30 on the 24-core build host; the top of each range was re-taken by the merge verifier with three other suites running, so read these as a range, not a constant) —
+0.68 % of a 16.7 ms frame at the flagship budget, with eight blocks in flight at
+once. Per block it FALLS with concurrency (22 → ~16 → 14.1 µs) because the pose
+pools are already warm. The layout each phase fixes — the six run lengths and the
+trench line — is rebuilt on a phase change and never per frame, which is §2.16's
+RR-42 discipline applied to the one expensive derivation in the file.
+
+#### The governor, and the order it gives things up in
+
+`particle_ratio` (§2.13's ladder, rung 2) takes the **crew first** and the
+**second machine** (the haul tipper, the following roller) next. Above 0.85
+nothing is given up; below 0.50 the second machine goes; the crew thins
+continuously in between and never below one figure, because a site with a machine
+on it and nobody there reads as abandoned plant. **The machine doing the work is
+on no knob at all** — a CLEARING with no dozer on it is the still this layer
+exists to close.
+
+**`crew` is a SCALE on `LandMotion.CREW_BY_PHASE`, not a ceiling**, and the
+distinction is a ruling rather than a style. The first draft shipped ceilings of
+2 / 4 / 5; no phase wants more than four men, so `quality`'s could never bind and
+the row was decoration — doc 93 §AZ2's own objection ("a bound must be reachable
+or it is decoration") in a render knob's clothes. Measured, one block, mid-phase
+(`test_every_preset_moves_the_crew_and_none_of_them_is_decoration` requires every
+preset to move a number some phase draws):
+
+| preset | crew scale | second machine | crew per phase | total calls per phase |
+|---|---|---|---|---|
+| performance | 0.60 | **no** | 1 / 2 / 2 / 2 / 2 / 2 | 3 / 4 / 4 / 5 / 6 / 5 |
+| balanced | 1.00 | yes | 2 / 3 / 3 / 3 / 4 / 3 | 3 / 4 / 5 / 6 / 6 / 5 |
+| quality | 1.34 | yes | 3 / 4 / 4 / 4 / 5 / 4 | 3 / 4 / 5 / 6 / 6 / 5 |
+
+#### The proof
+
+`tools/land_works_preview.gd` now shoots **three PNGs per phase from the same
+camera** at `t`, `t + 15` and `t + 45` game-minutes, with the work advancing
+alongside the clock exactly as it does in the game: `<phase>.png` keeps Wave 25's
+filename and `<phase>_t15.png` / `<phase>_t45.png` are the other two. Put them
+side by side and the dozer is in a different strip with the brush behind it gone,
+the paver has moved on with a longer strip behind it, and the tipper has crossed
+the block.
+
+`tools/measure_land_motion.gd` reports the same thing as a number — the largest
+distance any body travelled between two frames — and separates the two clocks, so
+"clock only" (progress frozen) is what a paused-then-resumed city sees:
+
+| phase | machine dx | crew dx | joint | clock-only dx | clock-only joint |
+|---|---|---|---|---|---|
+| SURVEY | 0.000 | 4.680 | 0.0000 | 0.000 | 0.0000 |
+| CLEARING | 43.976 | 43.976 | 0.3202 | 0.000 | 0.3202 |
+| GRADING | 50.961 | 49.421 | 1.0000 | 45.268 | 1.0000 |
+| ROAD_INSTALL | 66.338 | 70.281 | 0.4231 | 0.000 | 0.2793 |
+| UTILITY_CORRIDOR | 7.000 | 11.387 | 0.8142 | 0.000 | 0.8142 |
+| FINAL_DEVELOPMENT | 66.338 | 70.281 | 0.2793 | 0.000 | 0.2793 |
+
+A layer that animated nothing reads 0.000 in every column, and that is exactly
+what Wave 25's did.
+
+Measured pixel deltas between the three frames of each phase (threshold 8 of
+765, 1280x720):
+
+| phase | t → t+15 | t+15 → t+45 |
+|---|---|---|
+| SURVEY | 40 | 39 |
+| CLEARING | 3,759 | 9,373 |
+| GRADING | 20,442 | 44,800 |
+| ROAD_INSTALL | 6,397 | 7,044 |
+| UTILITY_CORRIDOR | 1,934 | 3,541 |
+| FINAL_DEVELOPMENT | 1,632 | 1,240 |
+
+SURVEY is the honest floor and not a defect: it has no machine on it — doc 09
+§2.3 gives it a `construction_crew` and this layer gives it two figures on the
+boundary — so all that moves is two 1.9 m men at 150 m.
+
+**And a seventh subject, which is the other half of the player's sentence.** The
+preview lays a run through the real `CitySim.cmd_place_road` and photographs it
+at three points along its own progress — `road_run_p15/50/85.png`: the paver, the
+roller a machine-length behind, the barricade bays across the working end and the
+gang around them. **18,042** and **11,622** px between consecutive frames. The
+run is laid on the FIRST of those shots and not at bring-up, so it cannot appear
+in the six per-phase `--census` lines, which are a published table about the
+BLOCK.
+
+**And the harness itself had a defect this wave found**: the preview bound
+`DevelopmentController`, so `LandWorksView._poll` — the only writer of a block's
+phase and progress in a running city — fired every fifteenth frame and put the
+site back to whatever the SIM said. Wave 25's six per-phase shots were,
+intermittently, six photographs of SURVEY (`survey.png` and `clearing.png` were
+two pixels apart out of 921,600). The preview now binds the world and not the
+pipeline, because in that harness the harness is the writer.
+
+#### Open questions
+
+1. **The paver teleports between runs.** `pave_state` walks a TRAVEL leg between
+   each pair of template runs, so the machine drives the join rather than
+   jumping — except at run 4 → run 5, where doc 10's template puts the two
+   collector lines at right angles and the reposition is a 90 m diagonal across
+   a block the machine has just paved. It reads as a machine repositioning, and
+   it happens once per phase; ordering the runs into a single traversal is a
+   template question, not a render one.
+2. **Road UPGRADES and REPAIRS get no crew**, only builds. Both are `&"road"`
+   jobs with crew-hours and would draw with the same three lines; the player's
+   sentence was *"building roads"*, and a lane that also animated repairs would
+   be shipping something nobody asked to see. `LandWorksView.RUN_JOB_KIND` is
+   the one place that decision is written.
+3. **The road run's tiles are walked in doc 10's SORTED order**, not chained
+   end-to-end, so a drag that doubles back on itself gives the paver a polyline
+   with a jump in it. Every straight run and every simple L is fine; a chain
+   solve belongs with whoever next touches `query_road_preview`.
 
 ## 3. Data Schema
 

@@ -6754,3 +6754,142 @@ Closing it is one line — `plans_water = true` by default — and the whole cos
 it is the re-derivation that line forces: §17's matrix, §18b's 50-game-day dark
 share and every gate fitted to them, which is a lane of its own and not a
 footnote on this one (doc 92 §67.5).
+
+## BB. Wave-27 rulings — what a machine is allowed to be a function of, and who owns the ground it changed (2026-09-05)
+
+*The lane's brief is one sentence from the player, 2026-09-05, after playing the
+merged Wave 25 build: "For the land excavation — like I said, we should be
+getting money and funds from resources that we find out there, but also the
+construction crews, big bulldozers and things like that, need to go to clear the
+land so we can actually see something happening. The animation you have — I see
+it's not bad — but we need to actually show MOVEMENT over there. Construction
+crews, building, clearing land, building roads." The money half shipped in Wave
+25 (§AZ); this is the movement half. §BB1 rules on who owns a pass and the ground
+it changes; §BB2 on which clock drives what and why there are two; §BB3 on
+whether a player-laid road may be animated over an instant sim edit; §BB4 on what
+the layer may keep. Drawn: doc 11 §2.19. Arguments: report 98 §71 RR-217..RR-220.
+Defect rows doc 91 A91-D-140..A91-D-142.*
+
+### BB1. A machine and the ground it changed — one rule or two?
+
+**Q.** Wave 25's dressing turned a phase's progress straight into a COUNT: keep
+`budget × (1 − progress)` clumps, lay `total × progress` slabs. Wave 27 puts a
+bulldozer on the block. Is the machine placed to match the count, or is the count
+derived from the machine?
+
+**Ruling: neither — both read ONE rule, and the rule lives with the machine.**
+
+The obvious two options are both wrong in the same way. Placing the machine "at
+about the right place for the count" makes the machine decorative: a dozer
+hovering over a field that is thinning uniformly is worse than no dozer, because
+it invites the player to look at exactly the thing that does not hold up.
+Deriving the count from the machine's position each frame makes the DRESSING
+depend on a layer that is allowed to be gated out by distance and by the
+governor — so a block at the edge of the visible radius would stop clearing.
+
+So `LandMotion` publishes the pass rules as **static, pure functions** and both
+layers call them: `sweep_of()` (where a point falls in the two dozers'
+serpentine), `pave_state()` (the machine's pose AND the number of slabs behind
+it, from one traverse), `trench_dug()`, `brush_local()`, `spoil_local()`,
+`template_runs()`. `LandWorksView` keeps a clump exactly while
+`sweep_of(clump) > pass_progress`, and lays exactly the slabs `pave_state`
+reports. There is no frame on which the two can disagree, and there is no
+ordering dependency between the layers.
+
+**And it moved four published numbers, which is the evidence the change is
+real.** CLEARING brush 20 → 21, ROAD_INSTALL pave 18 → 19, FINAL pave 54 → 55,
+UTILITY trench 6 → 5. A rewrite that produced the same table would have meant the
+counts were never positional.
+
+**The corollary is a scope rule, and it is the one that keeps the picture
+honest.** Only what a machine LAYS OR REMOVES is measured on the pass — brush,
+base, kerbs, trench, staged pipe. The graded plane and the spoil heaps keep the
+RAW progress, because they are the state of the ground and not something being
+dragged behind a machine; holding them back through the arrival would leave a
+block that had visibly started work looking untouched.
+
+### BB2. Two clocks, and why one would not do
+
+**Q.** Doc 11 §2.16's plant runs entirely on GAME-MINUTES. Why does this layer
+need a second input?
+
+**Ruling: position along a pass is a function of the JOB'S PROGRESS; every cycle
+is a function of GAME-MINUTES; and the split is what makes a load correct.**
+
+A single clock fails at exactly one moment and it is the moment that matters. If
+a dozer's position were `f(game_minutes)`, then loading a save — or catching up
+from `advance_hours`, or resuming after the pipeline was paused — would put the
+machine wherever the clock happened to land, on a block whose *work* is stored as
+an integer count of work units in `ConstructionQueue`. The machine would be in
+one place and the ground it had cleared in another, and the save file already
+knows which of the two is right.
+
+So: **PROGRESS drives every position along a pass** (the dozer's sweep, the
+screed, the trench head, and the paver on a player's road run), because
+`ConstructionQueue.progress(job_id)` is persisted and *is* the position.
+**GAME-MINUTES drives every cycle** (the dig, the drum, the haul shuttle, a
+crew's walk), for §2.16's own reasons — three times as fast at 3×, still while
+paused.
+
+Two consequences are worth stating because they look like bugs and are not:
+
+* **A paused city is completely still.** `gm_per_s = 0` stops the cycles and a
+  paused pipeline stops the progress. That is the promise, not a gap.
+* **A roller's drum turns with the GROUND, not with the clock** — its angle is
+  `fract(distance / circumference)` — so a roller that is not moving has a still
+  drum. A drum spinning on a parked machine is the tell that a layer is animating
+  a number instead of a machine.
+
+### BB3. May a player-laid road be animated? — the question did not need asking
+
+**Q.** The brief allows a visual-only crew pass over a road the sim finishes
+instantly, "measured against what doc 10 actually does".
+
+**Ruling: doc 10 does not finish it instantly, so nothing here is visual-only.**
+
+`CitySim.cmd_place_road` submits an ordinary `ConstructionQueue` job — kind
+`&"road"`, crew `road_crew`, crew-hours from `RoadTunables.build_crew_hours` —
+and doc 10 §2.13's under-construction lifecycle puts the tiles into the grid
+immediately at `under_construction_seed` condition under a `construction_new`
+closure so the crew can reach the far end of its own job. `road_built` is emitted
+on completion. The pass is therefore **that job's own progress, drawn**, and the
+suite asserts the job really has time in it
+(`test_a_player_laid_road_gets_a_crew_that_works_along_it`) so the day that
+changes, the gate says so rather than the picture quietly becoming a lie.
+
+Two smaller rulings fall out of it:
+
+1. **The tiles come from `RoadNetwork.job_record`, not from the queue payload.**
+   The payload carries live `Vector2i` that `JSON.stringify` degrades to the text
+   `"(3, 4)"` on the way into a save (report 98 A91-D-47); `job_record` is the
+   durable form and doc 02's construction roster already reads it for the same
+   reason. The payload is the fallback for a caller with no road network wired.
+2. **A run is dropped by the POLL, not by `road_built`.** That event also fires
+   for a repair, and a cancelled job emits nothing at all — so the honest test is
+   "the queue no longer holds this job id", which covers all three.
+
+### BB4. What the motion layer may keep — nothing, and the arrival proves it
+
+**Q.** A machine arriving up the street is the one thing here that looks like it
+needs a state machine: it starts somewhere, it drives, it stops.
+
+**Ruling: it keeps nothing. The arrival is a function of progress, and it is paid
+for OUT of the pass rather than added to it.**
+
+The first `ARRIVE_FRAC` (0.10) of every phase is the machine arriving, sampled
+along the last 72 m of **the polyline doc 11 §2.16 already resolved** for this
+block's frontage — `ConstructionActivity.to_site`, street-true and lane-offset,
+held as a read-only reference so a road edit that re-routes the lorries re-routes
+the arrival with it. `pass_progress()` then rescales 0…1 of the phase onto
+0.10…1, so the brush does not start going before the dozers reach it.
+
+That is what makes the arrival re-derivable: a save reloaded at progress 0.04
+draws the machine four tenths of the way up the street, every time, on every
+device. A latch would have made it a coin flip.
+
+The same rule refuses the two things that would have needed state. A block with
+no street in reach gets **no arrival and no haul lorry** rather than a machine
+appearing at the kerb — the same honest answer `ConstructionActivity.frontage_ok`
+already gives a building site with no road. And a livery is salted off the SITE
+and never off the machine's position: the first draft salted the roller off
+`int(pos.x) * 31 + int(pos.z)` and repainted it every frame it moved.

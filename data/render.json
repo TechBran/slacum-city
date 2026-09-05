@@ -326,6 +326,21 @@
       "quality":     { "brush": 64, "spoil": 8, "blocks": 12 }
     }
   },
+  "_land_motion": "Doc 11 section 2.19, THE WORK MOVING: the machines that cross a developing block and the crews that walk beside them, derived by LandMotion and drawn by LandMotionView. Everything here is PACE, in GAME-MINUTES, because that is the clock that makes a machine run three times as fast at 3x and stand still while paused. The STRUCTURE is not here and is not a tunable: how many dozers, how many strips each sweeps, how far the roller trails the screed and how much of a phase is spent arriving are const in game/render/land_motion.gd, because they are what the passes ARE and they are read by the DRESSING as well -- a strip count moved here could put the brush and the bulldozer clearing it on two different answers. dig_cycle_gm defaults to construction_vehicles.dig_cycle_gm above and is only written here so it CAN be overridden: an excavator on a land block and an excavator on a building site are the same machine. drum_circumference_m is not a speed -- the roller's POSITION comes from the job's progress -- it is the gearing between ground covered and drum rotation, which is why a parked roller has a still drum. The two per-preset knobs are the two the governor's particle_ratio walks down, in this order: crew first, then secondary (the haul tipper and the following roller). crew is a SCALE on LandMotion.CREW_BY_PHASE -- how many men each phase takes, times how generous the device is being -- and NOT a ceiling: a ceiling of 5 on quality could never bind, because no phase wants more than four, and a bound that cannot bind is decoration (doc 93 AZ2's rule, in a render knob's clothes). At the three shipped values the per-phase crew is 1/2/2/2/2/2, 2/3/3/3/4/3 and 3/4/4/4/5/4. The machine doing the work is on no knob at all, because a CLEARING with no dozer on it is the still this layer exists to close.",
+  "land_motion": {
+    "dig_cycle_gm": 7.0,
+    "haul_cycle_gm": 26.0,
+    "crew_step_gm": 0.92,
+    "crew_loop_gm": 21.0,
+    "drum_circumference_m": 5.15,
+    "crew_rim_gain": 0.34,
+    "crew_glint_energy": 1.9,
+    "presets": {
+      "performance": { "crew": 0.60, "secondary": false },
+      "balanced":    { "crew": 1.00, "secondary": true },
+      "quality":     { "crew": 1.34, "secondary": true }
+    }
+  },
   "_street_life": "Doc 11 section 2.17, STREET LIFE: the crook, the stray, the goat and the dropped stash the sim's opportunity system puts on the street, drawn by StreetLifeView off StreetLifeModel. TWO CLOCKS and they are not the same one. The WANDER is in GAME-MINUTES, like the traffic and the plant, so a paused city is a still city; the FX (collect_s, expire_s, burst_s, label_s) are REAL SECONDS, because a +$N that freezes in mid-air because the player paused a quarter-second after tapping is a bug. The footway numbers this layer stands a body on are NOT here: it reads road_surface.asphalt_top_m, kerb_height_m and the two sidewalk widths, so a body stands on the kerb the street pass actually drew. marker_angular is METRES OF MARKER PER METRE OF CAMERA DISTANCE -- an ANGULAR size, so a marker is the same number of screen pixels at Z0 (18 m) as at Z1 (86.9 m); at the shipped 0.0310 with a 40 deg vertical FOV that is 46 px on a 1080-line frame, and the clamps stop it becoming a postage stamp at Z0 or a billboard at Z2. max_live is the RENDER ceiling and deliberately above the sim's own cap: the slack is for the frame on which one opportunity is collected and its replacement spawns.",
   "street_life": { "wander_radius_m": 2.9, "wander_across_frac": 0.30, "waypoints": 5,
                    "gait_move_gm": [0.90, 1.10, 1.55, 1.0],

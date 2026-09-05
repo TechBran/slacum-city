@@ -2,7 +2,12 @@ class_name StreetLifeMesh
 extends ConstructionRigMesh
 ## The bodies of the STREET LIFE layer (doc 11 §2.17): **the crook, the dog and
 ## the goat**, plus the flat quad every marker, label, puff and sparkle in the
-## layer is drawn on.
+## layer is drawn on — and, since doc 11 §2.19, **the site crew** (`worker()`),
+## which is on this shader rather than the plant's because a man is a limbed
+## animal and not a boom-arm-bucket. The joint model below is the reason the two
+## layers share a file: `LandMotionView` builds its crew buffer out of
+## `worker()` / `worker_pivots()` / `worker_sel()` and animates it with the same
+## four channels the crook uses.
 ##
 ## IT EXTENDS `ConstructionRigMesh` ON PURPOSE, and the inheritance is the
 ## interesting decision in the file. That class is not "the excavator" — it is
@@ -408,6 +413,114 @@ static func dog_rig() -> PackedVector4Array:
 static func goat_rig() -> PackedVector4Array:
 	return quadruped_pivots(0.20, -0.28, 0.115, 0.50,
 			Vector3(0.26, 0.62, 0.0), Vector3(-0.42, 0.62, 0.0))
+
+
+# ------------------------------------------------------------- the site crew
+
+## Hip and shoulder heights for the crew figure — its own numbers, because a
+## working man in boots stands a little differently from a hunched thief and the
+## view's stride length is derived from these.
+const CREW_HIP_Y := 0.94
+const CREW_SHOULDER_Y := 1.48
+const CREW_LEG_HALF_Z := 0.135
+const CREW_ARM_HALF_Z := 0.235
+## Crown of the hard hat.
+const CREW_TOP_M := 1.86
+## Hi-vis, authored sRGB and decoded at the vertex write like every other tint
+## in this file. It is a PART tint and not the instance colour: the instance
+## colour is the crew's own livery (a yellow gang and an orange gang), and the
+## vest multiplies it toward white so a dark livery still leaves a bright vest.
+const VEST := Color(1.0, 1.0, 1.0)
+const HARD_HAT := Color(0.97, 0.94, 0.72)
+const TROUSER := Color(0.20, 0.21, 0.24)
+
+
+## **THE SITE CREW** (doc 11 §2.19) — a fourth body on this shader, and the one
+## the player named: *"construction crews … building, clearing land, building
+## roads."*
+##
+## Same brief as the crook, opposite silhouette. At thirty screen pixels the
+## crook is a dark hooded lean with a pale sack; this is the inverse — **a
+## bright block of vest over dark legs, with a hard hat on top**, which is the
+## one figure a person reads as "worker" without any detail at all. The vest is
+## deliberately the widest part of the body: hi-vis is cut boxy, and a torso
+## wider than the shoulders is what stops this reading as a pedestrian who
+## happens to be standing on a building site.
+##
+## Six joints, and they are the crook's six in the same order, so
+## `street_life.gdshader`'s channel contract, the view's animator and this body
+## all agree without a second table: legs on `.r`, arms on `.b`, head yaw on
+## `.g`, the leaving channel on `.a` (which a crew figure never uses — a crew
+## does not get collected).
+static func worker() -> StreetLifeMesh:
+	var m := StreetLifeMesh.new()
+
+	# ---- joint 0: pelvis, vest, shoulders ---------------------------------
+	m.add_box(Vector3(0.0, CREW_HIP_Y + 0.09, 0.0), Vector3(0.32, 0.28, 0.44),
+			TROUSER, J_BODY, SURF_DARK)
+	# The vest. Two boxes rather than one: a waist and a chest, the chest
+	# proud of the shoulders, so the block has a shoulder line in it.
+	m.add_box(Vector3(0.0, 1.20, 0.0), Vector3(0.34, 0.28, 0.52), VEST, J_BODY)
+	m.add_box(Vector3(0.0, 1.42, 0.0), Vector3(0.38, 0.28, 0.58), VEST, J_BODY)
+	m.add_box(Vector3(0.0, CREW_SHOULDER_Y + 0.06, 0.0), Vector3(0.34, 0.14, 0.60),
+			VEST, J_BODY)
+	# The reflective bands, authored bright and carried on the GLINT surface so
+	# they pick up the same after-dark lift the swag clasp does — a night crew
+	# under a work lamp is exactly when a band earns its triangles.
+	for y: float in [1.16, 1.36]:
+		m.add_box(Vector3(0.0, y, 0.0), Vector3(0.40, 0.06, 0.60), GLINT,
+				J_BODY, SURF_GLINT)
+
+	# ---- joints 1 & 2: the legs -------------------------------------------
+	for sz: float in [1.0, -1.0]:
+		var z := sz * CREW_LEG_HALF_Z
+		var joint := J_1 if sz > 0.0 else J_2
+		m.add_taper(Vector3(0.0, CREW_HIP_Y, z), Vector3(0.0, 0.13, z),
+				0.21, 0.16, TROUSER, joint, SURF_DARK)
+		m.add_box(Vector3(0.05, 0.06, z), Vector3(0.30, 0.12, 0.17), BOOT,
+				joint, SURF_DARK)
+
+	# ---- joints 3 & 4: the arms -------------------------------------------
+	for sz2: float in [1.0, -1.0]:
+		var z2 := sz2 * CREW_ARM_HALF_Z
+		var joint2 := J_3 if sz2 > 0.0 else J_4
+		m.add_taper(Vector3(0.0, CREW_SHOULDER_Y, z2),
+				Vector3(0.06, 1.02, z2 * 0.94), 0.15, 0.11, VEST, joint2)
+		m.add_box(Vector3(0.09, 0.96, z2 * 0.94), Vector3(0.12, 0.12, 0.12),
+				SKIN, joint2)
+
+	# ---- joint 5: head and hard hat ---------------------------------------
+	m.add_box(Vector3(0.0, 1.60, 0.0), Vector3(0.22, 0.24, 0.23), SKIN, J_5)
+	# The hat is a shallow crown plus a brim. The BRIM is the whole read: a
+	# rounded head at thirty pixels is a head, a head with a disc on it is a
+	# head in a hard hat, and that is the difference between a bystander and a
+	# man who is allowed on the site.
+	m.add_box(Vector3(0.0, 1.76, 0.0), Vector3(0.25, 0.16, 0.26), HARD_HAT, J_5)
+	m.add_box(Vector3(0.03, 1.70, 0.0), Vector3(0.36, 0.045, 0.32), HARD_HAT, J_5)
+	return m
+
+
+## The crew figure's rig table — identical in shape to the crook's, because the
+## view animates both with one walk cycle and a body that needed its own
+## animator would be a second animator to keep in step.
+static func worker_pivots() -> PackedVector4Array:
+	return _pivots([
+		Vector4(0.0, 0.0, 0.0, AXIS_PITCH),
+		Vector4(0.0, CREW_HIP_Y, CREW_LEG_HALF_Z, AXIS_PITCH),
+		Vector4(0.0, CREW_HIP_Y, -CREW_LEG_HALF_Z, AXIS_PITCH),
+		Vector4(0.0, CREW_SHOULDER_Y, CREW_ARM_HALF_Z, AXIS_PITCH),
+		Vector4(0.0, CREW_SHOULDER_Y, -CREW_ARM_HALF_Z, AXIS_PITCH),
+		Vector4(0.0, CREW_SHOULDER_Y + 0.02, 0.0, AXIS_YAW),
+	])
+
+
+static func worker_sel() -> PackedVector4Array:
+	return _sel([
+		Vector4.ZERO,
+		CH_LIMB, -CH_LIMB,
+		CH_EXTRA * 0.80, -CH_EXTRA * 0.80,
+		CH_HEAD,
+	])
 
 
 # ------------------------------------------------------------ the flat quad

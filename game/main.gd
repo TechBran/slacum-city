@@ -40,7 +40,7 @@ var ghost_view: GhostView
 var path_ghost_view: PathGhostView
 var construction_view: ConstructionSiteView
 var construction_plant: ConstructionVehicleView   # doc 11 §2.16: plant + deliveries
-var land_works: LandWorksView                     # doc 11 §2.18: land under development
+var land_works: LandWorksView                     # doc 11 §2.18 + §2.19: land under development, and the crews working it
 ## doc 11 §2.17: the crook, the stray, the goat and the dropped stash. A pure
 ## event consumer — three `opportunity_*` types in, four MultiMeshes out.
 var street_life: StreetLifeView
@@ -487,6 +487,9 @@ func _build_city_view(render_data: Dictionary) -> void:
 	land_works.bind(sim_host.sim.world, sim_host.sim.development,
 			sim_host.sim.construction)
 	land_works.set_plant(construction_plant)
+	# Wave 27 (doc 11 §2.19): the road runs the PLAYER lays get a crew, so the
+	# layer needs the network before it adopts what is already in flight.
+	land_works.set_roads(sim_host.sim.roads)
 	# A city resumed mid-pipeline has no events left to tell this layer about it.
 	land_works.adopt()
 	# doc 11 §2.17 — STREET LIFE. The road CLASS probe is what puts a crook on a
@@ -1963,6 +1966,7 @@ func _resync_world_views() -> void:
 	if land_works != null:
 		land_works.clear()
 		land_works.bind(sim.world, sim.development, sim.construction)
+		land_works.set_roads(sim.roads)
 		land_works.adopt()
 	if construction_view != null:
 		construction_view.clear()
@@ -2595,11 +2599,18 @@ func _process(delta: float) -> void:
 		construction_plant.refresh(delta, environment_controller.last_night,
 				0.0 if sim_host.paused else float(sim_host.speed),
 				float(sim_host.sim.clock.game_seconds()) / 60.0)
-	# doc 11 §2.18. No sim clock: this layer animates nothing — it re-reads its
-	# own active set at 4 Hz and re-uploads only when something moved.
+	# doc 11 §2.18 + §2.19 (Wave 27). The dressing re-reads its active set at
+	# 4 Hz; the MOTION under it runs on the sim's own clock — `gm_per_s` is 0
+	# while paused, which parks every dozer where it stands, and `game_minutes`
+	# pins the passes to the save so a load or a catch-up puts the machines
+	# where the save says (the merge verifier measured a free-running clock
+	# without these two arguments: 0.99 game-minutes of movement per 30 paused
+	# frames).
 	if land_works != null:
 		land_works.set_focus(camera_state.focus)
-		land_works.refresh(delta, environment_controller.last_night)
+		land_works.refresh(delta, environment_controller.last_night,
+				0.0 if sim_host.paused else float(sim_host.speed),
+				float(sim_host.sim.clock.game_seconds()) / 60.0)
 	# doc 11 §2.17. Same two arguments the plant takes and for the same reasons,
 	# plus the CAMERA position — the marker's angular size and the distance gate
 	# are both computed from it.
@@ -2642,6 +2653,8 @@ func _process(delta: float) -> void:
 			_apply_quality(String(knobs["preset"]))
 			if power_infra != null:
 				power_infra.apply_governor(knobs)   # `particle_ratio` only
+			if land_works != null:
+				land_works.apply_governor(knobs)   # Wave 27: crew count first, machines last
 			_apply_frame_cap(perf_governor.target_fps())          # doc 13 §2.8 / RR-126
 			if String(knobs["preset"]) != render_model.preset:   # a latched drop
 				render_model.set_preset(String(knobs["preset"]))

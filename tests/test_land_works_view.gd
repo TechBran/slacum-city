@@ -66,8 +66,10 @@ func _pose(view: LandWorksView, block_id: String, phase: StringName,
 			"phase": phase}])
 	var site: Variant = view.site_view(block_id)
 	assert_false((site as Dictionary).is_empty(), "the view took the block")
-	view._sites[block_id].progress = progress
-	view._dirty = true
+	# Wave 27's named harness seam — see `LandWorksView.force_progress`. It also
+	# pushes the phase and the progress into the motion layer, which is what
+	# makes a photographed phase a photograph of the whole site.
+	view.force_progress(block_id, progress)
 	view.refresh(0.0)
 
 
@@ -97,19 +99,36 @@ func test_the_per_phase_budget_is_what_doc_11_publishes() -> void:
 	var view := _view(sim)
 	var block_id := _some_block(sim)
 	assert_ne(block_id, "")
+	#
+	# **RE-TAKEN IN WAVE 27** (doc 11 §2.19). The DRAW CALLS are unchanged —
+	# 2/2/2/3/4/3 — and four instance counts moved by one or two, because four of
+	# them are no longer a fraction of a budget but a count of what a MACHINE has
+	# reached:
+	#
+	#   CLEARING brush 20 → 21   a clump stands until the dozers sweep over it
+	#                            (`LandMotion.sweep_of`), and the first tenth of
+	#                            the phase is the machines arriving
+	#   ROAD_INSTALL pave 18→19  the paver's own position decides how many slabs
+	#                            are behind it (`LandMotion.pave_state`)
+	#   FINAL pave 54 → 55       the same, for the kerb machine, over a finished
+	#                            36-slab base
+	#   UTILITY trench 6 → 5     3 segments of cut (the trencher's position) plus
+	#                            2 staged pipe bundles it has NOT reached yet.
+	#                            Wave 25 drew a bundle beside every DUG segment,
+	#                            which read as pipe coming out of the hole.
 	var expected := {
 		&"SURVEY": {"buffers": 2, "stake": 8, "brush": 40, "graded": 0,
 				"spoil": 0, "pave": 0, "trench": 0},
-		&"CLEARING": {"buffers": 2, "stake": 8, "brush": 20, "graded": 0,
+		&"CLEARING": {"buffers": 2, "stake": 8, "brush": 21, "graded": 0,
 				"spoil": 0, "pave": 0, "trench": 0},
 		&"GRADING": {"buffers": 2, "stake": 0, "brush": 0, "graded": 1,
 				"spoil": 3, "pave": 0, "trench": 0},
 		&"ROAD_INSTALL": {"buffers": 3, "stake": 0, "brush": 0, "graded": 1,
-				"spoil": 6, "pave": 18, "trench": 0},
+				"spoil": 6, "pave": 19, "trench": 0},
 		&"UTILITY_CORRIDOR": {"buffers": 4, "stake": 0, "brush": 0, "graded": 1,
-				"spoil": 5, "pave": 36, "trench": 6},
+				"spoil": 5, "pave": 36, "trench": 5},
 		&"FINAL_DEVELOPMENT": {"buffers": 3, "stake": 0, "brush": 0, "graded": 1,
-				"spoil": 3, "pave": 54, "trench": 0},
+				"spoil": 3, "pave": 55, "trench": 0},
 	}
 	for phase: StringName in PHASES:
 		_pose(view, block_id, phase, 0.5)
