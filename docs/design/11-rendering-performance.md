@@ -3930,9 +3930,9 @@ where every block writes into the same thirteen buffers:
 | 8, mixed phases | 6 | 6 | **12** | 15 |
 
 Frame cost of one motion `refresh`, best of 30 (`measure_land_motion --repeats=30`),
-worst phase (ROAD_INSTALL): **22 µs at 1 block, 49 µs at 3, 113 µs at 8** —
+worst phase (ROAD_INSTALL): **22 µs at 1 block, 48–49 µs at 3, 113 µs at 8** —
 0.68 % of a 16.7 ms frame at the flagship budget, with eight blocks in flight at
-once. Per block it FALLS with concurrency (22 → 16.3 → 14.1 µs) because the pose
+once. Per block it FALLS with concurrency (22 → ~16 → 14.1 µs) because the pose
 pools are already warm. The layout each phase fixes — the six run lengths and the
 trench line — is rebuilt on a phase change and never per frame, which is §2.16's
 RR-42 discipline applied to the one expensive derivation in the file.

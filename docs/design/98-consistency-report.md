@@ -10807,9 +10807,9 @@ many blocks are in flight. Measured, `tools/measure_land_motion.gd`, `balanced`:
 
 Eight blocks in one phase cost the same calls as one; the ceiling is MIXED phases
 at **12**, because every block writes into the same thirteen buffers. Frame cost
-of one motion `refresh`, best of 30, worst phase: **22 µs at 1 block, 49 at 3,
+of one motion `refresh`, best of 30, worst phase: **22 µs at 1 block, 48–49 at 3,
 113 at 8** — 0.68 % of the flagship's 16.7 ms with eight sites in flight, and it
-FALLS per block with concurrency (22 → 16.3 → 14.1) because the pools are warm.
+FALLS per block with concurrency (22 → ~16 → 14.1) because the pools are warm.
 
 **Nothing was added to the shader.** The three new bodies
 (`game/render/land_machine_mesh.gd`: dozer, paver, roller) ride
@@ -10829,6 +10829,23 @@ CREW first, the SECOND machine (haul tipper, following roller) next, and **never
 the machine doing the work** — a CLEARING with no dozer on it is the still this
 lane exists to close. `test_the_governor_takes_the_crew_before_the_machine` walks
 1.00 → 0.60 → 0.30 → 1.00 and asserts each rung.
+
+**And the crew knob had to become a SCALE, because a ceiling could not bind.**
+The first draft shipped per-preset ceilings of 2 / 4 / 5; `LandMotion.CREW_BY_PHASE`
+is 2/3/3/3/4/3, so no phase wants more than four men and `quality`'s five could
+never change any outcome — doc 93 §AZ2's own objection ("a bound must be
+reachable or it is decoration") in a render knob's clothes. Caught by MEASURING
+the three presets rather than by reading the constant: `measure_land_motion
+--preset=quality` printed `balanced`'s crew at every phase. `crew_scale` 0.60 /
+1.00 / 1.34 gives **1/2/2/2/2/2 · 2/3/3/3/4/3 · 3/4/4/4/5/4**, and
+`test_every_preset_moves_the_crew_and_none_of_them_is_decoration` requires each
+preset to move a number some phase actually draws. Total calls per phase:
+`performance` **3/4/4/5/6/5**, `balanced` and `quality` **3/4/5/6/6/5**.
+
+That test then found what the ceiling had been hiding: UTILITY_CORRIDOR splits
+its gang between the head of the cut and the open trench behind it, and both
+halves ran through `_crew_at`, so the preset scale was applied TWICE and
+`quality` put **six** men on a four-man phase.
 
 **And the instrument itself was showing a still.** `tools/land_works_preview.gd`
 bound `DevelopmentController`, so `LandWorksView._poll` — the only writer of a

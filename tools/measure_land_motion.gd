@@ -35,7 +35,6 @@ extends SceneTree
 ##   --phase-gm=M       game-minutes a whole phase takes, for the proof's
 ##                      progress advance                   (default 300)
 ##   --repeats=N        timing repeats, best run wins      (default 40)
-##   --quiet            the tables only
 ##
 ## `--phase-gm` is a HARNESS convention and not a game number: doc 09 §2.3 prices
 ## a phase in crew-hours and the clock it runs against is the queue's crewing, so
@@ -310,7 +309,7 @@ func _node_count(view: LandWorksView) -> int:
 func _parse(args: PackedStringArray) -> Dictionary:
 	var out := {"blocks": [1, 3, 8] as Array, "preset": "balanced",
 			"progress": 0.55, "frames": [0.0, 15.0, 45.0] as Array,
-			"repeats": 40, "gm": 480.0, "phase_gm": 300.0, "quiet": false}
+			"repeats": 40, "gm": 480.0, "phase_gm": 300.0}
 	for raw: Variant in args:
 		var arg := String(raw)
 		if arg.begins_with("--blocks="):
@@ -333,6 +332,4 @@ func _parse(args: PackedStringArray) -> Dictionary:
 			out["phase_gm"] = maxf(1.0, float(arg.substr(11)))
 		elif arg.begins_with("--repeats="):
 			out["repeats"] = maxi(1, int(arg.substr(10)))
-		elif arg == "--quiet":
-			out["quiet"] = true
 	return out
