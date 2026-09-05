@@ -11239,15 +11239,19 @@ passive arm:
 | --- | --- | --- |
 | `E_departments` | **$11.00/gh** | **absent — $0.00** |
 | total expense | $556.27/gh | $545.27/gh |
-| deferred liability at day 90 | $1,374,124 | $1,350,232 |
+| deferred liability at day 90 | $1,374,124 | $1,357,568 |
 
 $11.00/gh is doc 03's $20.00 `water_works` staffing through the city's own
 `m_exp × austerity_mult` of 0.55. The city has **no standing station of any
 kind** — the census's CIVIC column is one `power_facility` — and all three
 `water_facility` buildings are rubble, while 2 pump nodes are still in the water
 graph. $480 a game-day, for plants that do not exist. The delta on the deferred
-ladder is $23,892 over 90 game-days against the $23,760 the arithmetic predicts
-($11.00 × 24 × 90); the difference is the credit line compounding on it.
+ladder is $16,556 over 90 game-days — BELOW the $23,760 the arithmetic predicts
+($11.00 × 24 × 90), because §AV2 (§62.5) independently cut this arm's relief from
+$114,727 to $107,467 and less relief means more deferral. (Merge note, 2026-09-04:
+the wave's first draft of this row read $1,350,232 and $23,892 with a story about
+the credit line compounding; the verifier's two independent runs gave $1,357,568,
+and the draft figure had been taken before the §AV2 narrowing landed.)
 
 ### 62.5 §AV2 — the floor that multiplied an era
 
@@ -11444,3 +11448,12 @@ assertion's own failure string read *"measured game-hour 591 on seeds 1337 and
 quotes a single seed and a single hour it can be checked against. **The shape:
 a number written into a failure message is a second copy of a measurement, and
 nothing re-derives a failure message.**
+
+**Merge-verifier addendum (2026-09-04).** The compensating bound
+`treasury_end ≥ $500,000` is fitted to this tree. At the fork, seed 9001 ends with
+$202,039 and would FAIL it; it passes here only because §AV4 made that seed
+$423,875 richer, which leaves $125,914 of headroom against a demonstrated
+$423,875 swing from a single slope flip. The bound therefore sits on the same
+knife-edge as the count it replaced, and the next wave that perturbs doc 06's
+incident stream can fail it without any balance regression. A91-D-123's
+water-headroom planner is the fix; another re-fit is not.

@@ -5997,7 +5997,7 @@ is bit-identical under the ablation, and provably so — it has no coverage, so
   recorded here rather than in a defect row.
 * **The condemn floor still cannot be earned on a city whose roads are gone.**
   Doc 92 §62.6's second rig is the player's own terminal save, and there all
-  three arms tie at 65 buildings alive with the treasury pinned at the −$20,000
+  three arms land at 65 / 64 / 65 buildings alive (doc 92 §62.6's table) with the treasury pinned at the −$20,000
   credit floor: a city that has already fallen cannot answer "should I buy a fire
   station?", because neither number it would be answered on can move. That is a
   property of the rig, not of the ruling, and it is why §AV4 is measured on a

@@ -419,7 +419,12 @@ func _ruin_bill_line(sim: CitySim) -> String:
 			ruin_stations += 1
 		else:
 			standing_dept += upkeep
-	return ("billed to RUINS: building_maint $%.2f/gh of $%.2f, departments"
+	# A CATALOGUE COUNTERFACTUAL — what the pre-Wave-23 rules would bill for
+	# rubble — printed beside the settled ledger so the two can be compared. The
+	# settled `E_departments` line above is the authority (doc 93 §AV3 settles
+	# it at $0.00 for rubble); this line is deliberately NOT changed by §AV3.
+	return ("ruin bill IF RUBBLE WERE STILL STAFFED (catalogue counterfactual, not the"
+			+ " settled ledger): building_maint $%.2f/gh of $%.2f, departments"
 			+ " $%.2f/gh of $%.2f (%d ruined stations still staffed)"
 			+ " -> $%.2f/gh, $%d/game-day") % [
 			ruin_maint, ruin_maint + standing_maint,

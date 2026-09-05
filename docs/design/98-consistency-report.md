@@ -9459,7 +9459,7 @@ exactly as before.
 Measured on the player's slot 0 at game-day 90, passive arm: `E_departments`
 **$11.00/gh → $0.00** (that is doc 03's $20.00 through the city's own 0.55
 `m_exp × austerity_mult`), total expense $556.27 → $545.27/gh, deferred liability
-$1,374,124 → $1,350,232. **$480 a game-day of wages for three plants that do not
+$1,374,124 → $1,357,568. **$480 a game-day of wages for three plants that do not
 exist.**
 
 ### RR-195 — §AV4: a fire station buys prevention, not only response (docs 02 §2.9, 06 §2.6, 09 §2.11, 92 §62.6, 93 §AV4)
