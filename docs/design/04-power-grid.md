@@ -90,8 +90,10 @@ kW throughput and the **inventory quantities doc 03 bills against** (report 98 C
 > while this document stayed at five rungs of copper, and nobody asked the two
 > tables to agree: measured at each archetype's own doc 01 channel peak — the
 > hour §5.3 is judged at (RR-120) — **nine of doc 02's sixty-six published
-> `power_demand_kw` cells had no transformer at all**, plus doc 05's `pump` L5
-> and `tank` L5. Doc 92 §68.1 publishes the whole table; doc 93 §BC is the
+> `power_demand_kw` cells had no transformer at all**, and so did doc 05's
+> `pump` L5 — which is doc 02's `water_facility` L5 read through the variant
+> table, the same 2,160 kW twice. Doc 92 §68.1 publishes the whole table; doc 93
+> §BC is the
 > ruling; `test_gate_34_every_building_fits_the_transformer_envelope` is the gate.
 >
 > **What a top-rung transformer commits a city to**, stated here so the panel
@@ -108,6 +110,16 @@ kW throughput and the **inventory quantities doc 03 bills against** (report 98 C
 > there. The service radius extends the 3/4/5/6/8 ladder by its own last step
 > (+2 → 10) and the swap time the 18/18/26/38/55 ladder by its own last ratio
 > (×1.45 → 80 gm).
+>
+> **One honest note about that last cell: `swap_repair_gm` has no reader, and it
+> did not gain one here.** `CitySim.cmd_repair_grid_component` (Wave 25) times a
+> crew off doc 06's `transformer_failure.w_base`, not off this column, so all six
+> of these numbers are documentation and none of them is a tunable anything
+> loads. The sixth is published anyway because a per-rung column that is five
+> long beside five that are six long is a worse trap than an orphan that was
+> already orphaned — but it is an orphan, it is named as one, and reconciling
+> this column with doc 06's `w_base` (or deleting it) is filed as an open
+> question in doc 92 §68.5 rather than quietly extended a rung at a time.
 
 **Inventory definitions** (the contract doc 03's `E_grid` reads, report 98 C-12):
 ```

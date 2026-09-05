@@ -13284,10 +13284,10 @@ substation         none        x1.00  L1..L5 0
 water_facility     civic       x1.15  L1 60/69->2  L2 145/167->3  L3 360/414->4  L4 880/1012->5  L5 2160/2484->X
 construction_yard  industrial  x1.13  L1 12/14->1  L2 28/32->1  L3 66/75->2  L4 155/175->3  L5 365/412->4
 
-doc05 pump         civic       x1.15  L5 2160/2484->X
-doc05 tank         civic       x1.15  L5 2396/2755->X          (the other 28 rows all fit)
+doc05 pump         civic       x1.15  L5 2160/2484->X          (the other 29 rows all fit)
 
-cells with NO transformer rung: 9 in doc 02, 2 in doc 05
+cells with NO transformer rung: 9 in doc 02, 1 in doc 05 (and that one IS
+`water_facility` L5, read through the variant table — 2,160 kW counted twice)
 ```
 
 **Nine, not one.** The player found `data_center` L2 by hand — which is the cell
@@ -13357,6 +13357,18 @@ whose own six-rung ladder needs the same room: two `vertical` archetypes cannot
 both be aligned to a ladder that has only `2,250 / 45 = 50×` of span between its
 first ceiling and its last.
 
+**Which of the nine each half of the fix actually closes**, because "both doors"
+is only an honest answer if the split is stated:
+
+| closed by | cells |
+|---|---|
+| **the sixth rung alone** (ceiling 2,250 → 6,075) | `apartment` L6 (2,832), `office` L6 (4,666), `high_rise` L5 (5,563), `data_center` L3 (2,600), `water_facility` L5 (2,484) — **5 of 9**, and doc 05's `pump` L5 with them |
+| **the `data_center` seed** 400 → 100 | `data_center` L4 (6,630), L5 (16,900) — **2 of 9** |
+| **the clamp** (doc 93 §BC-4) | `high_rise` L6 (14,162), `data_center` L6 (43,150) — **2 of 9** |
+
+Five of the nine were never about the data centre at all, which is why the
+player's report was worth more than the building it named.
+
 **The pair works because each buys what the other cannot.** A sixth rung lifts
 the span to `6,075 / 45 = 135×` against the 107.9× the curve needs, which is
 enough for both towers; and a seed inside **(55.4, 135] kW** is what puts the
@@ -13384,18 +13396,29 @@ every number under it is the catalog's own stats row, the grid's own gate and th
 panel's own model.
 
 ```
-DC level  base kW  next kW   host  needs  panel row
-L1        100      255       L1    L3     ui_power_row_needs_rung to=2 rung=3 host=1 kw=400 kW
-L2        255      650       L1    L4     ui_power_row_needs_rung to=3 rung=4 host=1 kw=1 MW
-L3        650      1660      L1    L5     ui_power_row_needs_rung to=4 rung=5 host=1 kw=2.5 MW
-L4        1660     4230      L1    L6     ui_power_row_needs_rung to=5 rung=6 host=1 kw=6.75 MW
-L5        4230     6070      L1    L6     ui_power_row_needs_rung to=6 rung=6 host=1 kw=6.75 MW
-L6        6070     —         —     —      (the pad it has carries it)
+DC level  base kW  next kW   pad kW  host  needs  panel row
+L1        100      255       284     L1    L3     ui_power_row_needs_rung to=2 rung=3 host=1 kw=400 kW
+L2        255      650       685     L1    L4     ui_power_row_needs_rung to=3 rung=4 host=1 kw=1 MW
+L3        650      1660      1608    L1    L5     ui_power_row_needs_rung to=4 rung=5 host=1 kw=2.5 MW
+L4        1660     4230      3719    L1    L6     ui_power_row_needs_rung to=5 rung=6 host=1 kw=6.75 MW
+L5        4230     6070      3266    L1    L6     ui_power_row_needs_rung to=6 rung=6 host=1 kw=6.75 MW
+L6        6070     —         —       —     —      (top of the ladder — no next level to size a pad for)
 
 S18 on T-18: customers=1 need_rung=4 need_bigger=true for=WTR-2 cap=1 MW stranded=''
 router POWER: action=upgrade_transformer to_level=2 cost=1100 clears=false
               | needs rung 4 (1000 kW), host L1
 ```
+
+**`pad kW` is `rung_needed`'s own input, and it is not monotone — which is the
+column doing its job.** It is the LIVE peak of `T-18` plus the upgrade delta, and
+live demand is `base × state × channel × occ` with `occ ≤ 1.0`
+(`PopulationSystem.occ_of`), so a building whose occupancy is still settling asks
+its pad for less than its catalog row says. L5's 3,266 kW below L4's 3,719 is
+that, not a slip: the panel answers about the city as it is, while doc 93
+§BC-1's contract is checked at `occ = 1.0` and is therefore an upper bound on
+both. The rung beside it can be checked against the ladder by hand —
+`2,250 < 3,266 ≤ 6,075` is rung 6 — which is the whole reason the input is
+printed beside the answer.
 
 **The router line is the whole of doc 93 §BC-3's second half.** Before this wave
 it stopped after `clears=false` — the player was told, correctly, that the $1,100
@@ -13440,11 +13463,13 @@ The size of that delta is arithmetic anyone can check: `3 × (400 − 100) + 12 
 (1,020 − 255) = 900 + 9,180 = ` **10,080 kW** of base demand removed from a
 1,500-building city.
 
-**Filed to Lane B (water), not re-fitted here.** Two rows of doc 05's per-variant
-ladder — `pump` L5 (2,160 kW → 2,484 at the civic peak) and `tank` L5 (2,396 →
-2,755) — had **no transformer rung at the fork** and have one now, at no cost to
-doc 05: the sixth rung rescued them and not one number in `data/water.json`
-moved. The lane that owns the gate matrix should know that a top-level pump is
+**Filed to Lane B (water), not re-fitted here.** One row of doc 05's per-variant
+ladder — `pump` L5, 2,160 kW, **2,484 at the civic peak** — had **no transformer
+rung at the fork** and has one now, at no cost to doc 05: the sixth rung rescued
+it and not one number in `data/water.json` moved. It is the only doc 05 row that
+was ever over (`tank` L5 is 180 kW, `source_well` L5 1,800, `treatment` L5
+1,440), and it is doc 02's `water_facility` L5 read through the variant table, so
+it is the same physical cell as the ninth doc 02 breach rather than a tenth. The lane that owns the gate matrix should know that a top-level pump is
 now buyable where it was not, and that the purchase it needs is a $41,500
 transformer. No gate-matrix cell was re-fitted by this lane (`awaiting_consumer`:
 doc 92 §17's matrix and §18b's dark share are unmeasured against the new rung).
@@ -13457,3 +13482,39 @@ top-rung gas plant to 3.5 %. Doc 03's tax, jobs and capital columns for
 `tax_class: tech` are untouched, so the archetype is strictly more profitable
 than it was. That is a re-fit for the lane that owns doc 03's matrix; it is named
 here with its number so it cannot be discovered later as a surprise.
+
+### 68.5 Open questions this lane leaves, ranked
+
+1. **The gate matrix has not been re-measured against either half of this wave**
+   (highest, and it is a re-fit rather than a bug). §17's agent matrix, §18b's
+   50-game-day dark share and every gate fitted to them ran against a roster
+   whose data centres drew 400 / 1,020 kW at L1 / L2 and a ladder that stopped at
+   2,500 kW. Both moved. The direction is predictable and favourable — less
+   demand, one more purchase — but "predictable" is not "measured", and the lane
+   that owns the matrix should re-run `tools/measure_curriculum.gd` and gate 18b
+   before trusting any cell of it. `awaiting_consumer`.
+2. **`Curriculum` will now buy a level-6 transformer, and nothing has watched it
+   do so.** `Api.transformer_level_for` clamps to the ladder's top rung, which is
+   6 rather than 5 from this wave on, so an agent answering a power wall on a
+   full map can commit **$41,500** in one purchase where its ceiling used to be
+   $16,300. Doc 92 §17's spend rows are the reader that has not read it yet.
+3. **`swap_repair_gm` is an orphan column and now a six-cell one.** Doc 04 §2.2
+   publishes 18/18/26/38/55/80 game-minutes per rung and nothing loads it:
+   `cmd_repair_grid_component` times a crew off doc 06's
+   `transformer_failure.w_base`. Either doc 06's timing should be derived from
+   this column (it is the only place the project says a bigger transformer takes
+   longer to swap) or the column should be deleted. Filed, not fixed — this lane
+   would have been authoring a reader for a number it does not own.
+4. **A top-rung transformer needs a substation at L2 and nothing tells the player
+   so up front.** `0.90 × 6,000 = 5,400 < 6,750`, so a 6,750 kW unit under an L1
+   substation is refused by `can_upgrade_power` at the SUBSTATION hop — correctly,
+   with the right component named, but only after the transformer has been
+   bought. The placement quote (`can_serve_tile`) already walks the same path and
+   could say it at ghost time; that is doc 12's call, not this lane's.
+5. **The data centre's tax and jobs columns are unchanged while its power bill
+   fell by 12,670 kW at L5** (§68.4). Whether `tax_class: tech` should give some
+   of that back is doc 03's ruling; this lane published the number and changed no
+   dollar.
+6. **Doc 02 §2.3's `data_center` L5 row still prints `—` for `Upg gh`** while
+   §2.14 says that row gained `upgrade_time_hours 185`. Pre-existing, untouched
+   by this wave, and named here because the L5 row was edited beside it.

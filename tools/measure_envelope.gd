@@ -128,17 +128,21 @@ func _panel_walk() -> void:
 				else float(sim.catalog.stats("data_center", level + 1).get("power_demand_kw", 0.0))
 		# `pad kW` is `rung_needed`'s own input — the pad's peak plus the delta —
 		# so the rung beside it can be checked rather than believed.
-		print("L%-8d %-8s %-9s %-7s L%-4d %-6s %s" % [level,
-				_kw(float(b.stats.get("power_demand_kw", 0.0))), _kw(next_kw),
-				_kw(float(next.get("after_kw", 0.0))),
-				int(next.get("host_level", 0)),
-				("L%d" % int(next.get("needs_rung", 0))) if bool(next.get("available", false)) \
-						else "—",
+		var at_top: bool = not bool(next.get("available", false))
+		print("L%-8d %-8s %-9s %-7s %-5s %-6s %s" % [level,
+				_kw(float(b.stats.get("power_demand_kw", 0.0))),
+				"—" if at_top else _kw(next_kw),
+				"—" if at_top else _kw(float(next.get("after_kw", 0.0))),
+				"—" if at_top else "L%d" % int(next.get("host_level", 0)),
+				"—" if at_top else "L%d" % int(next.get("needs_rung", 0)),
 				("%s to=%d rung=%d host=%d kw=%s" % [String(needs.get("text_key", "")),
 						int(needs.get("to_level", 0)), int(needs.get("needs_rung", 0)),
 						int(needs.get("host_level", 0)),
 						String(needs.get("needs_capacity_text", ""))])
-						if not needs.is_empty() else "(the pad it has carries it)"])
+						if not needs.is_empty()
+						else ("(top of the ladder — no next level to size a pad for)"
+								if not bool(next.get("available", false))
+								else "(the pad it has carries it)")])
 	print("")
 	# S18's own line, and the fix router's, at the level the player reported.
 	b.level = 2

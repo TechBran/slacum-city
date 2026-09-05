@@ -6771,8 +6771,9 @@ of demand while doc 04 stayed at **five** rungs of copper, and nobody asked the
 two tables to agree. Measured at each archetype's own doc 01 channel peak — the
 hour §5.3's gate is actually judged at (`CitySim.peak_component_loads`, RR-120) —
 **nine of doc 02's sixty-six published `power_demand_kw` cells had no transformer
-at all**, plus two of doc 05's thirty per-variant rows. Doc 92 §68.1 publishes the
-whole table.
+at all** — and one of doc 05's thirty per-variant rows, `pump` L5, which is doc
+02's `water_facility` L5 read through the variant table and therefore the same
+2,160 kW counted a second way. Doc 92 §68.1 publishes the whole table.
 
 **The tell was already on this page.** §G5 rider 1 ruled, of the coverage columns
 of that same sixth rung, that *"those columns are a demand ON the service stock;

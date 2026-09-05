@@ -3512,8 +3512,9 @@ func test_gate_33_the_director_does_not_stall() -> void:
 ## copper, and nobody asked the two tables to agree. At the fork, measured at
 ## each archetype's own doc 01 channel peak — the hour §5.3's gate is judged at
 ## (`CitySim.peak_component_loads`, RR-120) — **nine of the sixty-six published
-## `power_demand_kw` cells had no transformer at all**, plus two of doc 05's
-## thirty per-variant water rows:
+## `power_demand_kw` cells had no transformer at all** — and so did one of doc
+## 05's thirty per-variant water rows, `pump` L5, which is the same 2,160 kW as
+## `water_facility` L5 read through the variant table rather than a tenth cell:
 ##
 ## | archetype | cells with NO rung at the fork |
 ## |---|---|
@@ -3521,7 +3522,7 @@ func test_gate_33_the_director_does_not_stall() -> void:
 ## | `office` | L6 (3,090 → 4,666 at 10:00) |
 ## | `high_rise` | L5 (3,810 → 5,563), L6 (9,700 → 14,162) |
 ## | `data_center` | L3 (2,600), L4 (6,630), L5 (16,900), L6 (43,150) — flat channel |
-## | `water_facility` | L5 (2,160 → 2,484) — and doc 05's `pump` L5, `tank` L5 |
+## | `water_facility` | L5 (2,160 → 2,484) — doc 05's `pump` L5 is the same cell |
 ##
 ## Doc 92 §68.1 publishes the whole table. This gate is the four clauses of doc
 ## 93 §BC, and it fails the moment a data edit breaks any of them.
@@ -3573,6 +3574,7 @@ func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
 	# is the same function the panel and the fix router quote, so a gate green
 	# here and a panel that says something else is not reachable.
 	var checked := 0
+	var clamped_cells := 0
 	for archetype: Variant in sim.catalog.archetypes():
 		var id := String(archetype)
 		var class_id := String(demand_class.get(id, "none"))
@@ -3615,8 +3617,16 @@ func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
 								+ "clamp has flattened a step and that upgrade is free "
 								+ "to power")
 								% [id, level, base, level - 1, previous_kw])
-			if at_peak >= PowerGrid.service_ceiling_kw() - 1e-6:
+			# **A clamped cell sits AT the class ceiling, not at the envelope.**
+			# Doc 93 §BC-4 floors the quotient onto the §8 `kw` grid, so
+			# `high_rise` L6 is 4,160 and asks for 6,073.6 kW — 1.4 kW under the
+			# 6,075 envelope. Comparing `at_peak` to the envelope would therefore
+			# have found NO clamped cell anywhere and passed vacuously, which is
+			# the shape this whole gate exists to refuse. The comparison is
+			# against `_demand_ceiling`, which is the generator's own arithmetic.
+			if base >= _demand_ceiling(envelope, class_id) - 1e-6:
 				clamped.append(level)
+				clamped_cells += 1
 			previous_rung = rung
 			previous_kw = base
 		assert_true(clamped.is_empty() or (clamped.size() == 1 and clamped[0] == top),
@@ -3627,12 +3637,23 @@ func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
 			("checked %d authored demand cells; doc 02 publishes 66, of which the ten "
 					+ "`power_facility` / `substation` rows draw nothing at any level")
 					% checked)
+	# **And the clamp is PRESENT, not merely permitted.** Two cells sit on their
+	# class ceiling — `high_rise` L6 at 4,160 (residential, ×1.46) and
+	# `data_center` L6 at 6,070 (flat) — and asserting that keeps the four checks
+	# above from passing vacuously on a table where the clamp had been quietly
+	# removed and the seeds shrunk instead.
+	assert_eq(clamped_cells, 2,
+			("%d cells sit at their class ceiling; doc 93 §BC-4 clamps exactly two — "
+					+ "`high_rise` L6 and `data_center` L6") % clamped_cells)
 
 	# (5) Doc 05's per-variant ladders are the reading the SIM uses for a water
 	# facility (`CitySim._water_kw_by_building` overrides doc 02's shell cell),
-	# so the envelope has to hold for them too. `pump` L5 and `tank` L5 are the
-	# two rows the sixth rung rescued — 2,484 kW and 2,755 kW at the civic peak,
-	# both over the old 2,250 kW ceiling and both under the new one.
+	# so the envelope has to hold for them too. `pump` L5 is the one row the sixth
+	# rung rescued — 2,160 kW is 2,484 at the civic peak, over the old 2,250 kW
+	# ceiling and under the new one. Every other variant row already fitted (`tank`
+	# L5 is 180 kW, `source_well` L5 1,800, `treatment` L5 1,440), which is why the
+	# 30 rows are asserted rather than assumed: the pump was the only one over, and
+	# nothing had ever checked which.
 	var civic_peak := float(channel_peak.get("civic", 1.0))
 	var water_checked := 0
 	for variant: Variant in [&"source", &"treatment", &"pump", &"tank", &"booster"]:
@@ -3668,6 +3689,27 @@ func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
 	assert_eq(radii.size(), PowerGrid.TRANSFORMER_SERVICE_RADIUS.size(),
 			"the placement roster's radius column must span the whole ladder")
 	sim.dispose()
+
+
+## Doc 93 §BC-4's ceiling on ONE authored `power_demand_kw` cell, as an oracle
+## for gate 34 (Wave 28): `ceiling_peak_kw` is a PEAK budget and a cell is a
+## BASE, so the budget is divided by the archetype's own doc 01 channel peak and
+## **floored** onto doc 02 §8's `kw` grid. Floored, never half-up — a clamp
+## rounded up would put the clamped cell one grid step past the capacity it
+## clamps to, which is the wall §BC-1 forbids. Reads the rounding ladder from
+## `building_rules.json` rather than re-stating it, so a change to doc 02's grid
+## moves the oracle with the generator.
+static func _demand_ceiling(envelope: Dictionary, class_id: String) -> float:
+	var peak := float((envelope["channel_peak"] as Dictionary).get(class_id, 1.0))
+	var raw := float(envelope["ceiling_peak_kw"]) / maxf(0.0001, peak)
+	var ladder: Array = (StarterCityLoader.read_json("res://data/building_rules.json")
+			.get("rounding", {}) as Dictionary).get("kw", [])
+	for rung: Variant in ladder:
+		var bound: Variant = (rung as Array)[0]
+		var step := float((rung as Array)[1])
+		if bound == null or raw < float(bound):
+			return floorf(raw / step) * step
+	return raw
 
 
 ## `data/economy.json`'s `city_services` block, read live so a gate cannot

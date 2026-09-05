@@ -10679,8 +10679,9 @@ asked the two tables to agree. Measured at each archetype's own doc 01 channel
 peak — the hour §5.3's gate is judged at (RR-120) — **nine of doc 02's 66
 published `power_demand_kw` cells had no transformer at any price**
 (`apartment` L6, `office` L6, `high_rise` L5–L6, `data_center` L3–L6,
-`water_facility` L5), plus doc 05's `pump` L5 and `tank` L5. Doc 92 §68.1
-publishes the table both ways round.
+`water_facility` L5) — and doc 05's `pump` L5, which is that same
+`water_facility` L5 read through the variant table rather than a tenth cell. Doc
+92 §68.1 publishes the table both ways round.
 
 ### RR-221 — doc 04 §2.2's transformer ladder gains its sixth and LAST rung (binding)
 
@@ -10794,11 +10795,13 @@ verb cannot charge.
 * **No gate-matrix cell was re-fitted.** Doc 92 §17's agent matrix and §18b's
   50-game-day dark share have not been re-measured against the sixth rung or the
   cheaper data centre. Published to the water lane as `awaiting_consumer`.
-* **Doc 05 gained a rung it did not pay for.** `pump` L5 (2,484 kW at the civic
-  peak) and `tank` L5 (2,755) had no transformer at the fork and have one now, at
-  the cost of zero edits to `data/water.json`. The lane that owns the water gates
-  should know a top-level pump is buyable where it was not, and that the purchase
-  it needs is a $41,500 transformer.
+* **Doc 05 gained a rung it did not pay for.** `pump` L5 draws 2,160 kW, which
+  is **2,484 kW at the civic peak** and had no transformer at the fork; it has
+  one now, at the cost of zero edits to `data/water.json`. It is the only doc 05
+  row that was over — `tank` L5 is 180 kW, `source_well` L5 1,800, `treatment`
+  L5 1,440, all comfortably inside the old ceiling. The lane that owns the water
+  gates should know a top-level pump is buyable where it was not, and that the
+  purchase it needs is a $41,500 transformer.
 * **The data centre is strictly more profitable than it was.** Its revenue,
   jobs and capital columns are untouched and its power bill fell by 12,670 kW at
   L5. That is a doc 03 re-fit for the lane that owns the money matrix; doc 92
