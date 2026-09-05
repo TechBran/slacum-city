@@ -11247,8 +11247,16 @@ chip the player is looking at, `CitySim.build_director_inputs`,
 `goal_state_view()` at the end of the restore itself, and doc 07's
 `storm_ready_earned`, whose budget is `outage_cm_per_1k_pop × pop / 1000` and is
 therefore **exactly zero** for a zero population, so a storm report published in
-that window can never earn its relief. Fixed as RR-202; after the fix the same
-arm prints **0 ticks = 0 REAL SECONDS**.
+that window can never earn its relief.
+
+**A/B, isolated to one cause.** The delta is the two sim files and nothing else
+(`git diff <fork> HEAD -- sim/city_sim.gd sim/population/population_system.gd`
+reverted with `git apply -R`, the same instrument run, then re-applied):
+
+| arm | `--boot`, mid-hour save at tick 741 | fresh boot, before tick 0 |
+| --- | --- | --- |
+| A — the fork | **0 for 220 ticks = 55 REAL SECONDS** | 0 |
+| B — this wave | **0 for 0 ticks = 0 REAL SECONDS** | 144 |
 
 ### 64.4 What did NOT move
 
@@ -11263,6 +11271,12 @@ arm prints **0 ticks = 0 REAL SECONDS**.
 threshold; `data/economy.json` is untouched. The one authored number added is
 `data/ui.json.layout.population_flash_s` (1.2 s), which is a presentation
 duration and buys nothing.
+
+**The suite**: `tools/run_suite.sh` — **153 files, 2,796 tests, 582,354
+asserts, failed 0, silent 0.** The preview deck, `--screen=all --size=412x915
+--audit --strict`, exits **0** over **84** states.
+`python3 tools/check_doc_refs.py` prints *all resolving; no id assigned twice*
+over 5,332 references.
 
 ### 64.5 The plural in the report: "as I'm building up houses"
 

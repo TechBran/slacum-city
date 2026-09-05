@@ -9459,6 +9459,12 @@ asks the lead to rule, and recommends deleting the ramp — doc 09 §2.10's
 aggregate has no per-arrival channel to show a fill through, and a `static func`
 whose every call site passes a literal is not a rule the game has.
 
+**The suite**: `tools/run_suite.sh` — **153 files, 2,796 tests, 582,354
+asserts, failed 0, silent 0.** `python3 tools/check_doc_refs.py` prints *all
+resolving; no id assigned twice* over 5,332 references. All four
+`profile_sim --hash-only` baselines are **byte-identical to the fork**, on both
+cities, and not one balance constant moves.
+
 **The instrument is the deliverable as much as the fixes are.**
 `tools/measure_population_lag.gd` boots a real `CitySim`, places a real
 building, steps the real fine path one SimTick at a time and prints the journey
