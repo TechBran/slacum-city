@@ -199,3 +199,18 @@ func serialize() -> Dictionary:
 func deserialize(data: Dictionary) -> void:
 	attractiveness = float(data.get("attractiveness", 1.0))
 	occupancy = data.get("occupancy", {})
+	# **The aggregates are not in the body, so they must not survive it**
+	# (RR-202). Doc 08 persists `attractiveness` and a sparse `occupancy` and
+	# nothing else — everything below is derived — so a system that has just
+	# been handed ANOTHER city's two saved values is still holding the totals of
+	# the city this process booted. `CitySim._restore_finish` calls
+	# `settle_aggregates` once the whole roster is in; between here and there the
+	# honest answer is "not computed yet", and it is also the answer every build
+	# before this one gave, which is what keeps a restored city's curriculum
+	# reconcile reading exactly what it has always read (doc 93 §AX1).
+	occupied_population = 0.0
+	city_population = 0
+	workforce = 0.0
+	jobs_capacity = 0
+	jobs_market = 0
+	job_fill_city = 1.0

@@ -9377,8 +9377,9 @@ contradicting it, and one published curve that turns out not to run.
 ### RR-202 — a city may not report a population it does not have (docs 08 §2.8, 09 §2.10, 92 §64.3, 93 §AX1, 91 A91-D-127)
 
 `PopulationSystem.settle_aggregates(buildings)` — pass 1 of `advance` and
-nothing else — called at the end of `CitySim.boot()` and at the **top** of
-`_restore_finish`, before `_restore_goals`.
+nothing else — called at the end of `CitySim.boot()` and at the **end** of
+`_restore_finish`, plus a `deserialize` that no longer lets the previous city's
+totals survive into the new one.
 
 The aggregates are derived and doc 08 does not persist them, and `advance` runs
 once per game-HOUR, so both doors into a city opened on `city_population == 0`.
@@ -9399,6 +9400,16 @@ against through `occ_of`. A derived number may be recomputed; state may not.
 `tests/test_city_sim.gd` asserts both halves — the loaded city reports its
 population before its first tick, **and** its `state_hash` after six further
 game-hours still equals the uninterrupted run's.
+
+**And a third, which only the whole suite could find.** Placed at the TOP of
+`_restore_finish`, the settle handed `_restore_goals`' reconcile a population
+the save does not record; `GoalSystem.serialize` writes `done`, `progress` and
+`earned_level`, all three of them in `state_hash`, and on the 1,500-building
+benchmark city that completed objectives the booted-and-saved city had not —
+`tests/test_save_migration.gd::test_37_…` failed on it, and on nothing smaller.
+The settle is therefore the LAST line of `_restore_finish`, and §AX1 states the
+rule it broke: **a restore may not teach the curriculum something the boot it is
+restoring into does not know.**
 
 ### RR-203 — two surfaces were telling the player different things (docs 12 §2.25 D-100, 92 §64.1, 93 §AX3)
 

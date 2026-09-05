@@ -5846,9 +5846,29 @@ money is not a display bug.
   (constitution §5). The aggregate may be recomputed because it is derived; the
   map may not, because it is state.
 
-The two callers are `CitySim.boot()`'s last line and the first line of
-`_restore_finish` — the latter **before** `_restore_goals`, because reconciling
-the curriculum against a zero population is the same lie one layer down.
+**And the aggregates may not survive a `deserialize` either**, which is the
+same rule read from the other end: a `PopulationSystem` handed another city's
+`attractiveness` and `occupancy` is still holding the totals of the city this
+process booted, so `deserialize` zeroes them and the restore recomputes them
+once the whole roster is in.
+
+**The ordering inside `_restore_finish` is itself a ruling: the settle runs
+AFTER `_restore_goals`, not before.** `goal_state_view()` reads
+`city_population`, and `GoalSystem.serialize` writes `done`, `progress` and
+`earned_level` — all three in `state_hash`. Settling first hands the
+curriculum's restore-time reconcile a population **the save does not record**,
+which on the 1,500-building benchmark city completes objectives the
+booted-and-saved city had not completed and breaks doc 08's boot → save → load
+identity (`tests/test_save_migration.gd::test_37_…`, which is exactly how this
+was caught — it failed on the first whole-suite run of this wave and on nothing
+smaller). **A restore may not teach the curriculum something the boot it is
+restoring into does not know.** The next hourly reconcile tells both of them,
+together, and the restore-time reconcile therefore stays the no-op it has always
+been — which is an open question for a doc 09 lane, not a thing to fix from
+here.
+
+The two callers are `CitySim.boot()`'s last line and the last line of
+`_restore_finish`.
 
 ### AX2. A ramp that clamps to 1.0 for every building in the game is not a rule the code has
 

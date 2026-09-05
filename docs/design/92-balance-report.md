@@ -11257,6 +11257,7 @@ arm prints **0 ticks = 0 REAL SECONDS**.
 | determinism, founding city | `tools/profile_sim.gd -- --hash-only` | `34ba7d972f3a78e2…` / `dde437bc234fc2c2…` — **byte-identical to the fork** |
 | determinism, benchmark city | `… --hash-only --city=res://tests/fixtures/bench_city.json` | `db934239d6d84c04…` / `bf57bbac708c35b7…` — **byte-identical to the fork** |
 | save → load → advance | `tests/test_city_sim.gd::test_a_booted_and_a_loaded_city_report_their_population_before_the_first_tick` | the restored city's `state_hash` after 6 game-hours **equals** the uninterrupted run's |
+| boot → save → load, 1,500 buildings | `tests/test_save_migration.gd::test_37_bench_city_is_a_boot_file_that_round_trips_the_save_path` | **bit-identical** — and the one test in 2,795 that caught the first ordering of the fix (doc 93 §AX1) |
 
 **Not one balance constant moves in this wave.** No price, no grant, no
 threshold; `data/economy.json` is untouched. The one authored number added is

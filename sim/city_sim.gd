@@ -2059,17 +2059,26 @@ func _restore_finish(body: Dictionary) -> void:
 	director.deserialize(body.get("director", {}))
 	_restore_difficulty(body)
 	_refresh_road_density()
+	_restore_goals(body)
 	# **A loaded city knows its own population before its first tick** (report 98
 	# RR-202, and the half of it a player can actually be hurt by). The
 	# aggregates are DERIVED and doc 08 does not persist them, so a restore left
 	# `city_population` at the 0 `PopulationSystem.new()` starts on until the
 	# next hour boundary — measured at 55 real seconds on a save taken 21 ticks
-	# past the hour (`tools/measure_population_lag.gd --boot`). BEFORE
-	# `_restore_goals`, because `goal_state_view()` reads `city_population` and
-	# reconciling the curriculum against a zero population is the same lie one
-	# layer down.
+	# past the hour (`tools/measure_population_lag.gd --boot`).
+	#
+	# **AFTER `_restore_goals`, and that ordering is a ruling** (doc 93 §AX1).
+	# `goal_state_view()` reads `city_population`, so settling first would hand
+	# the curriculum's restore-time reconcile a population the SAVE does not
+	# record — and `GoalSystem.serialize` writes `done`, `progress` and
+	# `earned_level`, all three of which are in `state_hash`. On the 1,500-
+	# building benchmark city that is enough to complete objectives the booted-
+	# and-saved city had not completed, and doc 08's identity contract —
+	# boot → save → load is bit-identical — is what
+	# `tests/test_save_migration.gd::test_37_…` measures. A restore may not
+	# teach the curriculum something the boot it is restoring into does not
+	# know; the next hourly reconcile tells both of them, together.
 	population.settle_aggregates(_population_inputs())
-	_restore_goals(body)
 
 
 ## Doc 03 §2.9 + doc 08 §2.8 city section v6: the preset is part of the city, so

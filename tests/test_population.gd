@@ -72,6 +72,30 @@ func test_settle_aggregates_does_not_rewrite_a_restored_map() -> void:
 	assert_eq(pop.occupancy, was, "and not one entry of the saved map moved")
 
 
+## RR-202's other half, and the one a whole-suite run found: the aggregates are
+## not in the save body, so they may not survive a `deserialize` either. A
+## system handed another city's two saved values while still holding this
+## process's totals would let a restore reconcile doc 09 §2.14's curriculum
+## against a population the save never recorded — which on the 1,500-building
+## benchmark city completes objectives, writes `done`/`earned_level`, and breaks
+## doc 08's boot → save → load identity (`tests/test_save_migration.gd`
+## `::test_37_…`).
+func test_deserialize_does_not_carry_the_previous_city_s_totals() -> void:
+	var pop := PopulationSystem.new()
+	pop.advance(starter_buildings(), 1.0, 0.9475)
+	assert_eq(pop.city_population, 144, "this process's city")
+	pop.deserialize({"attractiveness": 0.75, "occupancy": {"H-000": 0.5}})
+	assert_eq(pop.city_population, 0, "not computed yet is the honest answer")
+	assert_almost_eq(pop.occupied_population, 0.0, 1e-9)
+	assert_almost_eq(pop.workforce, 0.0, 1e-9)
+	assert_eq(pop.jobs_market, 0)
+	assert_eq(pop.jobs_capacity, 0)
+	assert_almost_eq(pop.job_fill_city, 1.0, 1e-9, "back to the class's own default")
+	# The two values that ARE persisted come back untouched.
+	assert_almost_eq(pop.attractiveness, 0.75, 1e-9)
+	assert_almost_eq(pop.occ_of("H-000"), 0.5, 1e-9)
+
+
 func test_ramp() -> void:
 	assert_almost_eq(PopulationSystem.ramp(0.0), 0.35, 1e-9)
 	assert_almost_eq(PopulationSystem.ramp(18.0), 0.675, 1e-9)
