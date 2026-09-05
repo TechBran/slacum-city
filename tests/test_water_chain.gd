@@ -652,7 +652,7 @@ func test_every_water_signal_this_wave_added_carries_the_payload_the_shell_needs
 	# `water_customer_selected` were emitted by S19 and consumed by NOTHING in
 	# the shipped tree — the customer row in particular was a control that did
 	# nothing at all on a screen listing 89 buildings. `game/main.gd` binds all
-	# three now (report 98 RR-229); this pins the EMISSION and its payload,
+	# three now (report 98 RR-235); this pins the EMISSION and its payload,
 	# which is the half a shell snippet cannot test.
 	var sim := _sim()
 	var root := _mount()

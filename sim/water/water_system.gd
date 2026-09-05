@@ -1068,8 +1068,15 @@ func stage_node_ids(z: PressureZone, stage: StringName) -> Array:
 	return out
 
 
-## Every live zone's chain, in `zone_key` order. The instrument's row source and
-## the overlay's "which zone is short of what" read.
+## Every live zone's chain, in `zone_key` order.
+##
+## **Its consumer is `tools/measure_water_chain.gd` and nothing else**, and that
+## is stated rather than implied: the first cut of this docstring claimed *"the
+## overlay's `which zone is short of what` read"*, and no overlay reader exists —
+## `game/main.gd::_feed_water_overlay` bands `pressure_at` per BUILDING, which is
+## the right number for a map and a different question from this one. A committed
+## instrument is a consumer; a docstring that names a second one that does not
+## exist is the A91-D-19 shape written in a comment.
 func supply_chains() -> Array:
 	var out: Array = []
 	for z: PressureZone in topology.zones:

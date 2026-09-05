@@ -10953,3 +10953,56 @@ with the building path's own code and `Fix this →`, and `placement_sites` sort
 clean sites ahead of warned ones. The site stays placeable; it is just no longer
 the one the bar recommends. Measured: `pump DELIVERING 73.5 → 113.5 m³/h` on the
 player's save, because the pump is now sited where the grid can run it.
+
+### RR-235 — the shell wire for S19's trio, and the ruling the lead owes
+
+**The snippet (REQUIRED, not optional — this is the verifier's second blocker).**
+`game/main.gd`, in `bring_up_screens()`'s `if ui_root != null:` block, immediately
+after the `ui_root.grid_action.connect(…)` that ends with
+`power_infra.note_topology_changed())` (line 1050 on `main` at 60794dc), at the
+same three-tab indentation:
+
+```gdscript
+			ui_root.water_action.connect(
+				func(_action: StringName, _asset_id: String, _result: Dictionary) -> void:
+					_refresh_hud()
+					_feed_water_overlay())
+			ui_root.water_customer_selected.connect(
+				func(sim_id: String, world_pos: Vector3) -> void:
+					camera_state.focus_on(world_pos)
+					if building_panel != null:
+						building_panel.show_building(sim_id)
+					ui_root.selected_entity_id = sim_id)
+			ui_root.water_node_selected.connect(func(node_id: String) -> void:
+				ui_root.selected_entity_id = node_id)
+```
+
+It is the transformer trio one utility over, with one difference: the water arm
+calls `_feed_water_overlay()` where the power arm calls
+`power_infra.note_topology_changed()`, because there is no `WaterInfraView` — the
+water map is per-building tile pressure, re-banded by that function, which
+`root.water_main_action` already wires for the valve verb. **Without the snippet
+nothing crashes and S19 still works**; what is lost is that S19's served-building
+rows and S5's new WATER row do nothing at all, and `selected_entity_id` goes
+stale after a `Fix this →` into S19. `tests/test_water_chain.gd` §9 pins the
+EMISSION and its payload, which is the half a shell snippet cannot test.
+
+A second, optional snippet makes `_handle_tap`'s `PICK_COMPONENT` branch try S18
+then S19 explicitly instead of relying on `UIRoot.show_transformer`'s
+fall-through; the fall-through is verified working and the snippet only stops
+`power_infra.set_selected()` being handed a water node id.
+
+**THE RULING THE LEAD OWES, restated because silence would decide it.** Lane B
+takes no save rung: `CitySim.SAVE_SECTION_VERSION` stays 11 and the `water`
+section stays 3. But `_reconcile_water_incident_holds()` runs on every load and
+changes what an existing v3 body restores to — measured on the committed fixture,
+zone pressure **0.50 → 0.64**, `water_health_pct` **83 % → 100 %**, buildings
+under the upgrade gate **89 of 89 → 46 of 89**. Doc 08 §2.8's own test for
+whether a rung is owed is *"a v6 city body written by the pre-RR-60 binary
+restores under the post-RR-60 binary to exactly the city it restored to before"*,
+and that test answers NO here. The lane's position is that the reconciliation
+INVENTS nothing — it drops a reference no roster can resolve and leaves the
+break, the severity and the leak exactly as the save wrote them, which is the
+same class of act as reading a field that was always meant to be read — but doc
+08 §2.8 is the strongest statement in the project that a version records RULES
+and not only shape, and this should be ruled on out loud rather than passed by.

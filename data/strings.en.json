@@ -720,7 +720,7 @@
 	"ui_site_found_one": "{count} spot for this within {radius} tiles — it is {tiles} tiles away, {cost}.",
 	"ui_site_found_plural": "count",
 	"ui_site_austerity": "{count} spots {tiles} tiles away would take this — spending is frozen under austerity and lifts at the next hourly settlement. Unpause and try again.",
-	"ui_site_austerity_one": "A spot {tiles} tiles away would take this — spending is frozen under austerity and lifts at the next hourly settlement. Unpause and try again.",
+	"ui_site_austerity_one": "{count} spot {tiles} tiles away would take this — spending is frozen under austerity and lifts at the next hourly settlement. Unpause and try again.",
 	"ui_site_austerity_plural": "count",
 	"ui_site_funds": "A spot {tiles} tiles away would take this and it costs {cost}; the treasury holds {have}.",
 	"ui_site_buy_block": "Nowhere within {radius} tiles is yours to build on. Block {at}, {tiles} tiles away, would take one — buy it for {cost}.",
