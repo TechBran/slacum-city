@@ -662,7 +662,13 @@ func _bind_water_treatment() -> String:
 		for id_value: Variant in zone.treatment_ids:
 			(_sim.water.nodes[id_value] as WaterNode).condition = 0.30
 		_sim.water.rebuild_zones()
-		_sim.advance_hours(0.25)
+		# A WHOLE game-hour, not a quarter of one. This harness mounts ONE
+		# `CitySim` for all 97 states, and `TickScheduler.advance_coarse_n`
+		# asserts an hour-aligned `tick_index` — so a state that leaves the clock
+		# off the hour breaks a LATER state's coarse advance (`economy_upkeep`
+		# does one). One hour is also what the zone needs: §2.8 smooths pressure
+		# over `pressure_tau_h` and the panel photographs the settled reading.
+		_sim.advance_hours(1.0)
 	return subject
 
 
@@ -677,7 +683,7 @@ func _break_water_main() -> String:
 		ids.sort()
 		_sim.water.set_segment_broken(String(ids[0]), 0.8, "preview", -0.60)
 		_sim.water.rebuild_zones()
-		_sim.advance_hours(0.25)
+		_sim.advance_hours(1.0)   # hour-aligned — see `_bind_water_treatment`
 	return subject
 
 
