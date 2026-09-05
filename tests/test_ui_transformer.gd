@@ -911,6 +911,27 @@ func test_the_router_carries_the_rung_without_a_quote_and_s18_draws_it() -> void
 	assert_true(line != null, "S18 draws the customers line")
 	assert_true(line.text.contains(sim_id),
 			"…about the building the player came from: '%s'" % line.text)
+
+	# **And the sentence does not go stale under the button that fixes it.** The
+	# likeliest next thing a player does on this panel is buy the rung; `refresh`
+	# keeps the QUESTION (which building) and re-asks the sim for the ANSWER, so
+	# a snapshot taken at route time cannot outlive the purchase.
+	sim.treasury.credit(1_000_000, &"test_grant")
+	for _step in (PowerGrid.CAPACITY[&"transformer"] as Array).size():
+		if not bool(PowerActions.rung_needed_for_next_level(sim, sim_id)
+				.get("needs_bigger", false)):
+			break
+		var bought := sim.cmd_upgrade_grid_component(host)
+		assert_true(bool(bought["ok"]), "buy the next rung: %s" % str(bought))
+	assert_false(bool(PowerActions.rung_needed_for_next_level(sim, sim_id)
+			.get("needs_bigger", false)), "the pad now carries the next level")
+	root.transformer_panel.refresh()
+	for child in root.transformer_panel.get_node(
+			root.transformer_panel.body_path() + "/Customers").get_children():
+		if child is Label and String((child as Label).name) == "CustomersNeedRung":
+			assert_false((child as Label).text.contains(sim_id),
+					"the pad now carries it, so the line stops naming it: '%s'"
+							% (child as Label).text)
 	_unmount(root)
 	sim.dispose()
 

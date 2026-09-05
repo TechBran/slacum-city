@@ -278,7 +278,19 @@ func show_component(component_id: String, asked_about: Dictionary = {}) -> void:
 ## row per customer.
 func refresh() -> void:
 	if _component_id != "" and is_open():
-		show_component(_component_id)
+		# **The question survives a refresh; the ANSWER is re-asked** (Wave 28 fix
+		# pass). `_asked_about` is `FixRouter`'s reading for the building whose
+		# checklist row sent the player here, taken at route time — and the most
+		# likely thing to happen next is that the player buys the transformer on
+		# this very panel, which changes it. Carrying the snapshot forward would
+		# leave a stale sentence under the button that had just fixed it, and
+		# dropping it would make the line vanish for no reason the player can
+		# see. So the id is kept and the block is re-derived from the sim.
+		var asked := _asked_about
+		var sim_id := str(asked.get("sim_id", ""))
+		if sim_id != "" and model != null and model.sim != null:
+			asked = PowerActions.rung_needed_for_next_level(model.sim, sim_id)
+		show_component(_component_id, asked)
 
 
 func close() -> void:
