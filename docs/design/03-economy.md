@@ -1468,6 +1468,7 @@ Plants keep a shallower factor because a plant is a *strategic* purchase — at 
 | `plant_wind` L1–L5 | 260k / 560k / 1.05M / 1.9M / 3.3M | 1/3 | **86,700 / 187,000 / 350,000 / 633,000 / 1,100,000** |
 | `substation` L1–L5 | 120k / 260k / 520k / 1.05M / 2.1M | 1/8 | **15,000 / 32,500 / 65,000 / 131,000 / 263,000** |
 | `transformer` L1–L5 | 4,000 / 9,000 / 22,000 / 55,000 / 130,000 | 1/8 | **500 / 1,100 / 2,800 / 6,900 / 16,300** |
+| `transformer` **L6** *(Wave 28)* | — (doc 04's table predates the rung) | — | **41,500** — see below |
 | `feeder` class 1–3, **per tile**, overhead | 900 / 1,700 / 3,200 | 1/8 | **110 / 210 / 400** |
 | `transmission` class 1–3, **per tile** | 5,800 / 9,400 / 16,000 | 1/8 | **730 / 1,200 / 2,000** |
 | `battery` L1–L5 *(post-MVP)* | 140k / 320k / 700k / 1.5M / 3.2M | 1/8 | **17,500 / 40,000 / 87,500 / 188,000 / 400,000** |
@@ -1477,6 +1478,42 @@ Plants keep a shallower factor because a plant is a *strategic* purchase — at 
 | `surge_arrester`, per level (0–3) | `0.09 × build_cost` | — | **`0.09 × build_cost`** (a fraction, unaffected by rescale) |
 
 Underground feeder still costs `× UNDERGROUND_COST_MULT (2.6)` per tile — that multiplier is doc 04's topology decision, not a price.
+
+> **The transformer's sixth rung — $41,500** (Wave 28; doc 04 §2.2's 6,750 kW
+> rung, doc 93 §BC-2, doc 92 §68.2, report 98 §72 RR-221). **It has no
+> `× GRID_COST_SCALE` row above because doc 04's deleted table never had a sixth
+> rung to rescale**, so it is derived from the five cells this doc already owns
+> rather than back-fitted through a scale that no longer has an input.
+>
+> **The ladder's own $/kW curve, continued.** The five shipped rungs price copper
+> at
+>
+> | rung | kW | build_cost | $/kW |
+> |---|---|---|---|
+> | 1 | 50 | 500 | 10.00 |
+> | 2 | 150 | 1,100 | 7.33 |
+> | 3 | 400 | 2,800 | 7.00 |
+> | 4 | 1,000 | 6,900 | 6.90 |
+> | 5 | 2,500 | 16,300 | 6.52 |
+> | **6** | **6,750** | **41,500** | **6.15** |
+>
+> — a monotone decline whose last step is `6.52 / 6.90 = ×0.945`. One more step
+> gives `6.52 × 0.945 = 6.15 $/kW`, and `6.15 × 6,750 = $41,512.50`, half-up on
+> this column's own $100 grid = **$41,500**. Nothing here is a new magnitude: it
+> is the same economy-of-scale curve the first five rungs already publish, read
+> one step further, which is report 98 RR-19's principle applied forward.
+>
+> **Where it sits in the roster.** It is the most expensive single grid purchase
+> short of a substation ($15,000 at L1, $32,500 at L2), and that ordering is the
+> right one rather than an accident: doc 04 §2.2's sixth rung needs a class-3
+> feeder and a substation at L2 or better underneath it, so $41,500 is the
+> *smaller* half of what a top-rung transformer actually commits a city to. Every
+> reader is already wired — `CostCurves.grid_build_cost` reads the array,
+> `grid_upgrade_cost` prices an L5 → L6 re-rating at the target rung's full build
+> cost per §2.13(f), `capital_value_grid` prices its repair and
+> `grid_demolition_refund` its 25 % — so this cell needs no new accessor and
+> `test_gate_34_…` asserts every rung of the ladder is both placeable and priced
+> above $0.
 
 **What a placed transformer actually costs (Wave 1.5).** Doc 04's `cmd_place_grid_component` charges the `transformer` row at the chosen level **plus the feeder lateral it takes to reach the grid**, at this table's per-tile feeder price for the tapped feeder's conductor class (and its underground multiplier where it applies). An L1 transformer two tiles off a class-1 overhead feeder is therefore `500 + 2 × 110 = $720`, and one eight tiles out is `500 + 8 × 110 = $1,380` — the copper is the interesting half of the decision, which is the point. Those lateral tiles join the feeder's `route`, so §2.4's `E_grid` bills their `line_km` from the next game-hour: **extending the grid raises the standing bill**, with no separate per-component upkeep (C-08 still holds). The `road_install` / `utility_corridor` no-double-billing rule below applies unchanged — a development phase's trunk is charged once, by §2.8, and never again per tile.
 
@@ -1969,7 +2006,7 @@ Two files, both owned by this doc: `data/economy.json` (everything except diffic
       "plant_solar":   { "build_cost": [73300, 167000, 317000, 600000, 1033000] },
       "plant_wind":    { "build_cost": [86700, 187000, 350000, 633000, 1100000] },
       "substation":    { "build_cost": [15000, 32500, 65000, 131000, 263000] },
-      "transformer":   { "build_cost": [500, 1100, 2800, 6900, 16300] },
+      "transformer":   { "build_cost": [500, 1100, 2800, 6900, 16300, 41500] },
       "feeder":        { "cost_per_tile_overhead": [110, 210, 400], "underground_cost_mult": 2.6 },
       "transmission":  { "cost_per_tile": [730, 1200, 2000] },
       "battery":       { "build_cost": [17500, 40000, 87500, 188000, 400000], "_status": "post_mvp" },

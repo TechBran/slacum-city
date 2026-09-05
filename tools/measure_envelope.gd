@@ -112,7 +112,7 @@ func _panel_walk() -> void:
 			% [SUBJECT, host, int(sim.grid.component(host)["level"]),
 			float(sim.grid.component(host)["capacity_kw"])])
 	print("")
-	print("DC level  base kW  next kW   host  needs  panel row")
+	print("DC level  base kW  next kW   pad kW  host  needs  panel row")
 	var b: Building = sim.buildings[SUBJECT]
 	var top: int = sim.catalog.max_level_of("data_center")
 	for level in range(1, top + 1):
@@ -126,8 +126,11 @@ func _panel_walk() -> void:
 		var needs: Dictionary = row.get("needs_upgrade", {})
 		var next_kw := 0.0 if level >= top \
 				else float(sim.catalog.stats("data_center", level + 1).get("power_demand_kw", 0.0))
-		print("L%-8d %-8s %-9s L%-4d %-6s %s" % [level,
+		# `pad kW` is `rung_needed`'s own input — the pad's peak plus the delta —
+		# so the rung beside it can be checked rather than believed.
+		print("L%-8d %-8s %-9s %-7s L%-4d %-6s %s" % [level,
 				_kw(float(b.stats.get("power_demand_kw", 0.0))), _kw(next_kw),
+				_kw(float(next.get("after_kw", 0.0))),
 				int(next.get("host_level", 0)),
 				("L%d" % int(next.get("needs_rung", 0))) if bool(next.get("available", false)) \
 						else "—",

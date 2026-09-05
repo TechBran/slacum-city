@@ -394,7 +394,10 @@ func _next_level_block(sim_id: String, b: Building, top: int) -> Dictionary:
 ## because that is what the gate is actually judged on.
 ##
 ## `{host_transformer, host_level, host_capacity_kw, after_kw, needs_rung,
-## needs_capacity_kw, needs_bigger, no_rung_carries}`.
+## needs_capacity_kw, needs_bigger, no_rung_carries}`. `after_kw` is the reading
+## the rung is CHOSEN from — the pad's peak plus the delta — and it is published
+## so `tools/measure_envelope.gd` can print the input beside the answer; a rung
+## nobody can check the arithmetic of is a number to be believed rather than read.
 ##
 ##   * `needs_rung` **0 means no rung on the ladder carries it** — the wall doc
 ##     93 §BC-1 forbids, kept as a distinguishable answer rather than clamped to
