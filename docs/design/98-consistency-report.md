@@ -10876,6 +10876,26 @@ preview lays a run through the real `cmd_place_road` and shoots it at progress
 the gang, 18,042 and 11,622 px between consecutive frames. It is laid on the
 FIRST of those shots, so it cannot appear in the six per-phase census lines.
 
+### §71's whole-suite reading, and the shape of what this wave shipped
+
+`tools/run_suite.sh` on the lane branch: **files 158, tests 2,911, asserts
+591,216, failed 0, silent 0** — 23 tests and 828 asserts of that are the new
+`tests/test_land_motion.gd`, and 13 / 216 are `test_land_works_view.gd` with the
+re-taken table. `tools/ui_preview.tscn --screen=all --audit --strict` exits 0
+with 93 screens clean. **The four `profile_sim --hash-only` baselines are
+byte-identical to main at `a581948`** — starter `9004573d…` / `d5c6678d…`, bench
+`9695f766…` / `b8548805…` — which is the whole of the constitution §3 claim: this
+lane touched no file under `sim/` and could not have.
+
+**What changed, and where.** Three new files under `game/render/`
+(`land_motion.gd`, `land_motion_view.gd`, `land_machine_mesh.gd`), a fourth body
+in `street_life_mesh.gd`, two public statics extracted in
+`construction_vehicle_view.gd`, `land_works_view.gd` rewired to read the pass
+rules and to own the motion layer, one new section in `data/render.json`, a new
+`tools/measure_land_motion.gd`, three-frame shooting plus a road run in
+`tools/land_works_preview.gd`, and `tests/test_land_motion.gd`. **`game/main.gd`
+is untouched** — the lead owns it; the four-line snippet is open question 1.
+
 ### §71's open questions, ranked by what breaks if nobody takes them
 
 1. **`game/main.gd` has not been wired** (the lead owns it). Until the four-line

@@ -47,8 +47,8 @@ extends RefCounted
 ## |---|---|---|
 ## | SURVEY | none — two figures on the boundary | nothing; the block is untouched |
 ## | CLEARING | two dozers, each sweeping its own half of the block in `DOZER_STRIPS` strips, outside in | **the brush in the strip they have covered is gone** — `sweep_of()` is the order, and `LandWorksView` keeps a clump iff its own sweep coordinate is still ahead of the dozers |
-## | GRADING | an excavator working the spoil heaps with a dig cycle; a tipper shuttling heap → frontage → back | the heaps grow with the cut |
-## | ROAD_INSTALL | a paver crawling the six template runs, a roller two segments behind it | **the base appears BEHIND the screed** — `pave_state()` returns the machine's pose and the number of segments laid from one walk, so the strip cannot disagree with the machine that laid it |
+## | GRADING | an excavator with a dig cycle, parked beside the heap that is currently growing and tracking across to the next one; a tipper shuttling heap → frontage → back | the heaps grow with the cut |
+## | ROAD_INSTALL | a paver crawling the six template runs, a roller `ROLLER_LAG_M` behind it | **the base appears BEHIND the screed** — `pave_state()` returns the machine's pose and the number of segments laid from one walk, so the strip cannot disagree with the machine that laid it |
 ## | UTILITY_CORRIDOR | a trencher cutting down the collector line | the trench opens behind it and **the staged pipe is consumed as it passes** |
 ## | FINAL_DEVELOPMENT | a slipform kerb machine on the same runs | the kerbs |
 ##

@@ -50,10 +50,11 @@ const RESYNC_GM := 2.0
 ## MultiMesh growth quantum.
 const GROW := 16
 
-## Per-preset ceilings. `crew` is figures per site; `secondary` is whether the
-## phase's SECOND machine — the haul tipper, the following roller — is drawn at
-## all. The primary machine is on no knob: a CLEARING with no dozer is a phase
-## with nothing happening in it, which is the defect this layer exists to close.
+## Per-preset knobs. `secondary` is whether the phase's SECOND machine — the
+## haul tipper, the following roller — is drawn at all. The primary machine is on
+## no knob: a CLEARING with no dozer is a phase with nothing happening in it,
+## which is the defect this layer exists to close.
+##
 ## `crew` is a SCALE on `LandMotion.CREW_BY_PHASE` — how many men each phase
 ## takes, times how generous the device is being — and not a ceiling. The first
 ## draft made it a ceiling and `quality`'s could never bind: no phase wants more
