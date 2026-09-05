@@ -2806,6 +2806,27 @@ func _population_inputs() -> Array:
 func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "") -> Dictionary:
 	if not catalog.has(archetype):
 		return CommandQueue.fail(&"E_UNKNOWN_ARCHETYPE")
+	# **A water works is its NODE, and this door used to build the shell alone**
+	# (Wave 26, doc 93 §BA, doc 91 A91-D-138). `cmd_place_water_component`'s own
+	# docstring says of the shell, the node and the lateral that they *"always go
+	# together and have never been separable in this project"* — and they were
+	# separable from here: `cmd_place_building("water_facility", …)` stamped a
+	# 3×3 building that decays, is billed doc 03's `water_works` staffing, draws
+	# doc 02's 60 kW at L1 and supplies **nothing**, because
+	# `water.cmd_place_water_node` is called from exactly one place and this was
+	# not it. Measured at the fork: `api.place("water_facility")` returns `ok`
+	# and `sim.water.nodes.size()` goes 22 → 22.
+	#
+	# The asymmetry is the whole argument. Doc 04's two node-shells go through
+	# `cmd_place_building` and `_commission_grid_node` gives them their
+	# component; doc 05's shell had no such seam. So this delegates to the door
+	# that has always built all three, and the doc-05 siting rules a water works
+	# actually has — `E_NO_MAIN`, `E_NO_WATER`, `E_FOOTPRINT` — start applying to
+	# it instead of being skipped.
+	if archetype == WATER_SHELL_ARCHETYPE:
+		var wanted := variant if catalog.is_water_variant(variant) \
+				else catalog.reference_water_variant()
+		return cmd_place_water_component(wanted, origin, 1, false)
 	var block := world.block_of_tile(origin.x, origin.y)
 	if block == null or not block.is_owned():
 		return CommandQueue.fail(&"E_NOT_OWNED")
@@ -2885,6 +2906,15 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 	# the civic and utility shells, six for the growth stock. A literal 5 here
 	# would refuse the tower tier the whole of doc 92 §24 exists to unlock.
 	var top_level: int = catalog.max_level_of(String(b.archetype))
+	# **A water works may not climb past the doc-05 nodes it IS** (Wave 26, doc
+	# 93 §BA). Doc 02 §2.14 already says this archetype's ladder *"is doc 05's
+	# per-variant component table"*; nothing enforced it, so the shell could
+	# reach L5 while `data/water.json` ships an intake at two rungs, a treatment
+	# train at two and a pump at three, with `levels_4_5_enabled` off. A shell
+	# above its nodes is the same lie one rung up: a plant the player paid to
+	# enlarge that treats and pumps exactly what it did before.
+	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
+		top_level = mini(top_level, water_shell_top_level(sim_id))
 	if b.level >= top_level:
 		blockers.append(&"E_MAX_LEVEL")
 	if b.condition < b.min_condition_to_upgrade():
@@ -2898,6 +2928,12 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 		blockers.append(&"E_FUNDS")
 	var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
 			- float(b.stats.get("power_demand_kw", 0.0))
+	# The shell's own `power_demand_kw` column is doc 05's PUMP row (report 98
+	# RR-8), so it is the right delta for a one-node site and understates a plant
+	# that hosts three. `_water_kw_by_building` is what the demand tick actually
+	# bills this building, so it is what the gate has to be asked about.
+	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
+		delta_kw = water_shell_node_delta_kw(sim_id, next_level)
 	var headroom := power_headroom(sim_id, delta_kw * UPGRADE_HEADROOM_MARGIN)
 	if not bool(headroom["ok"]):
 		blockers.append(&"E_POWER_HEADROOM")
@@ -7347,12 +7383,96 @@ func _commission_water_nodes(sim_id: String) -> void:
 			continue
 		n.state = &"ok"
 		commissioned.append(String(node_id))
-	if commissioned.is_empty():
+	var rerated := _rerate_water_nodes(sim_id)
+	if commissioned.is_empty() and rerated.is_empty():
 		return
 	water.topology_dirty = true
 	water.rebuild_zones()
+	_refresh_water_kw()
 	bus.emit(&"water_component_commissioned", {"sim_id": sim_id,
-			"nodes": commissioned})
+			"nodes": commissioned, "rerated": rerated})
+
+
+## **The half `_commission_grid_node` has had since Wave 6 and this seam never
+## grew** (Wave 26, doc 93 §BA, doc 91 A91-D-138). That method's own docstring
+## reads *"Called for an UPGRADE too, where the component is re-rated rather
+## than added: doc 02's L1→L2 job on a substation is what buys 6,000 → 14,000 kW
+## and the third feeder slot"* — and the identical job on `WTR-1`, written from
+## the same paragraph one document over, bought a taller building and not one
+## extra cubic metre of water. Doc 09 §2.14.2's level 7 asks the player for that
+## exact purchase (`l7_water_facility`), so the capstone was teaching a step that
+## does nothing.
+##
+## A shell and the nodes hosted on it are ONE asset at ONE level: the shell takes
+## the construction time and the bill, the nodes are what pump. So when a shell
+## finishes a job standing above them, they come up with it — capped by doc 05's
+## own MVP ladder, which `water_shell_top_level` is now also the building gate's
+## ceiling, so in practice the cap never binds here. Returns the ids raised.
+func _rerate_water_nodes(sim_id: String) -> Array:
+	var b: Building = buildings.get(sim_id)
+	if b == null or b.archetype != StringName(WATER_SHELL_ARCHETYPE):
+		return []
+	var raised: Array = []
+	for node_id in _sorted(water.nodes):
+		var n: WaterNode = water.nodes[node_id]
+		if n.power_ref != sim_id or n.variant == &"junction":
+			continue
+		var want := mini(b.level, _water_node_top_level(n))
+		while n.level < want:
+			if not bool(water.cmd_upgrade_water_node(String(node_id))["ok"]):
+				break
+			if not raised.has(String(node_id)):
+				raised.append(String(node_id))
+	return raised
+
+
+## The top rung doc 05 ships for one node — its `placeable_levels`, under the
+## `levels_4_5_enabled` gate `cmd_upgrade_water_component` applies. This is the
+## authority doc 02 §2.14 names for the `water_facility` ladder; it is read here
+## rather than restated, so a data file that lifts the flag lifts both.
+func _water_node_top_level(node: WaterNode) -> int:
+	var rules := water.data.placeable_rules(String(node.variant))
+	var top := 0
+	for entry in (rules.get("placeable_levels", []) as Array):
+		top = maxi(top, int(entry))
+	if top <= 0:
+		top = node.level
+	return mini(top, 5 if water.data.flag("levels_4_5_enabled") else 3)
+
+
+## The tallest rung a `water_facility` shell may reach: the SMALLEST of its
+## nodes' own doc-05 caps, because the shell is all of them at once. A shell
+## hosting no node cannot be upgraded at all — after doc 93 §BA there is no way
+## to build one.
+func water_shell_top_level(sim_id: String) -> int:
+	var top := 0
+	var seen := false
+	for node_id in _sorted(water.nodes):
+		var n: WaterNode = water.nodes[node_id]
+		if n.power_ref != sim_id or n.variant == &"junction":
+			continue
+		var cap := _water_node_top_level(n)
+		top = cap if not seen else mini(top, cap)
+		seen = true
+	return top if seen else 1
+
+
+## What a `water_facility` shell's next rung actually asks doc 04 for: the sum
+## over the nodes it hosts of their own `kw_required` step, which is the number
+## `_refresh_water_kw` bills and therefore the number the headroom gate has to
+## be asked about.
+func water_shell_node_delta_kw(sim_id: String, next_level: int) -> float:
+	var delta := 0.0
+	for node_id in _sorted(water.nodes):
+		var n: WaterNode = water.nodes[node_id]
+		if n.power_ref != sim_id or n.variant == &"junction":
+			continue
+		var want := mini(next_level, _water_node_top_level(n))
+		if want <= n.level:
+			continue
+		delta += water.data.kw_required(n.variant, want, n.subtype) \
+				- water.data.kw_required(n.variant, n.level, n.subtype)
+	return delta
 
 
 ## A station shell just finished (a new build, or an upgrade to level L+1), so

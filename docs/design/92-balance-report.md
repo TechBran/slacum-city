@@ -12834,3 +12834,170 @@ have moved one are the `FAILURE_DAMAGE` hoist (identical values at all three cal
 sites, RR-205) and the `repair_component` target parameter (defaulted to the
 0.85 the one existing caller always got, RR-206); everything else is a new
 command nothing calls unless the player taps it, and two read-only accessors.
+
+## 67. Wave 26 — the utility planner: a door nobody could open, and the term that binds (2026-09-05)
+
+*(Rulings doc 93 §BA. Resolutions report 98 §70 RR-213..RR-216. Defect rows doc
+91 A91-D-137..A91-D-139, and A91-D-123's closing row. Surfaces doc 12 §2.7
+D-120.)*
+
+**The fork is `2cf4907`** — main after Waves 23, 24 and 25, whose composed
+baselines are §66.7 — and it carries **one red test in 2,880**: gate 21's
+capstone cell, *"0 of 3 seeds reached curriculum level 7 inside 45 game-days; the
+ruled floor is 1"*. Every lane passed that gate alone. §62.9's merge addendum
+predicted the composition would fail it and ruled that **A91-D-123's planner is
+the fix and another re-fit is not**, so nothing in this section moves a bound
+until §67.7, and that one moves UP.
+
+### 67.1 The fork, reproduced — and it is not money
+
+`tools/measure_curriculum.gd --days=45`, three seeds, on `2cf4907`:
+
+| level | 1337 | 4242 | 9001 |
+|---|---|---|---|
+| 1 | 14 | 13 | 17 |
+| 2 | 46 | 43 | 50 |
+| 3 | 76 | 78 | 57 |
+| 4 | 100 | 102 | 85 |
+| 5 | 164 | 168 | 156 |
+| 6 | 234 | 184 | 223 |
+| **7** | **—** | **—** | **—** |
+| treasury at 45 game-days | $18,557,136 | $22,084,602 | $22,173,578 |
+| population | 9,137 | 9,068 | 8,629 |
+| `water_placed` | 2 | 1 | 1 |
+
+Bit-identical to §63.6's table on levels 1–6, which is what says the composition
+broke the capstone and nothing underneath it. **Eighteen to twenty-two million
+dollars in the bank and the level does not finish**, so the wall is not money and
+the horizon is not the horizon: it is a UTILITY wall, which is the right lesson
+for the last level and the wrong thing for the agent to be unable to answer.
+
+**Where it stops, measured** (`tools/_probe_l7e.gd`, seed 1337, game-day 25 —
+eleven of level 7's twelve `upgrade_archetype` rows are done and the twelfth is
+the high-rise):
+
+    blocked_upgrade(high_rise) = {sim_id P-071, tile (56,51), blocker E_POWER_HEADROOM,
+                                  cost 29900, power_at PT-053}
+    grid.capacity_summary() load_ratio 0.19  — 29,291 kW of pool headroom, unused
+    zone P-058-PMP: supply 77.8  demand 127.3  pressure 0.21  headroom 0.0
+
+### 67.2 The cause: a door that had been dead since the day it shipped
+
+**`Api.upgrade_grid_component` returned `E_NO_VERB` on its first line, always,
+and never logged it.** `Playtest.KNOWN_VERBS` is the only source of `Api.verbs`
+and `has_verb` answers false for anything absent from it; Wave 22 wrote the door
+and did not list `cmd_upgrade_grid_component`. Measured at the fork:
+
+    KNOWN_VERBS has cmd_upgrade_grid_component  false ; api.has_verb -> false ; sim has method -> true
+    _relieve -> false ; the action log grew by 0 entries ; _relief_hour 430 at hour 599
+    sim.cmd_upgrade_grid_component("PT-053", true) -> ok, $6,900, L3 -> L4, 400 -> 1,000 kW,
+                                                     service radius 5 -> 6
+
+So the agent stood in front of a **$6,900** purchase that clears a **$29,900**
+upgrade, with **$19,541,802** in the bank, and its own log showed an idle hour.
+Both of the door's early returns bypassed `_log`, and the third overwrote the
+command's reason code with a bare `E_BLOCKED` — three separate ways for a
+refusal to be invisible, in eleven lines of code. Doc 91 A91-D-137.
+
+**The other half of the same paragraph.** `_relieve`'s power arm opened with
+`relief_spot_near(tile, level, HOTSPOT_RADIUS)` — a 7×7 ring — which answers
+`(-1, -1)` on a full map, and only then reached for the dead door. Both halves
+are now the other way round: the component doc 04 NAMES is bought first
+(`can_upgrade_power` returns `at` and `kind` for exactly this reason, Wave 17
+A91-D-55), and the parallel transformer is the fallback, searched out to doc 09's
+land block (`RELIEF_RADIUS = 16`) through `Api.relief_spot_ring`, which walks the
+old 7×7 square in the old row-major order first so no arc that was already
+finding a site can move, and returns the preview count it paid.
+
+### 67.3 The water wall: doc 05 §2.5's supply is a CHAIN, and "pumps first" buys nothing
+
+The zone the high-rise drinks from, at the fork, game-day 25 — 9,000 residents:
+
+| term | m³/h |
+|---|---|
+| Σ source yield (`WTR-1-SRC`, L1 river) | 105.1 |
+| Σ treatment throughput (`WTR-1-TRT`, L1) | **78.1** |
+| Σ pump rated (`P-058-PMP` + `WTR-1-PMP`, both L1) | 80.0 |
+| `feed_capacity` (mains at the supply nodes) | 214.0 |
+| `upstream_cap = min(source, treatment)` | 78.2 |
+| **supply** | **77.8** against demand **127.3** |
+
+**Treatment binds.** `Api.upgrade_water_node` tried pumps, then sources, then
+treatment, in that fixed order — so its first two choices were purchases that
+raise this zone's supply by exactly zero, and every one of them was refused
+anyway:
+
+    P-058-PMP pump L1 ref P-058 -> E_POWER_HEADROOM $51,750  | binder PT-095 r_after 0.984 | its rung: OK $6,900
+    WTR-1-PMP pump L1 ref WTR-1 -> E_POWER_HEADROOM $51,750  | binder T-15   r_after 1.063 | its rung: OK $6,900
+    WTR-1-SRC source L1 ref WTR-1 -> E_POWER_HEADROOM $43,470 | binder T-15  r_after 0.944 | its rung: OK $6,900
+    WTR-1-TRT treatment L1 ref WTR-1 -> E_POWER_HEADROOM $138,173 | binder T-15 r_after 0.979 | its rung: OK $6,900
+    WTR-2     tank   L1 ref WTR-2  -> OK $68,828  (and a tank stores water the zone never had)
+
+Every water refusal is a POWER refusal, at the node's own transformer, with the
+bulk pool at 19 %. The door returned `E_NO_SITE` and never asked why. It now
+walks `supply_chain_order` — smallest term first, lowest rung inside a term, id
+as the tie-break, tanks never — and when the whole chain is refused for power it
+buys the component doc 04 names behind the first of them and comes back for the
+node on the next game-day through the one-purchase-per-day cooldown §61.4 set.
+
+### 67.4 The measurement that overturned §61.4's own sentence: 39 pumps for $1.8M
+
+Doc 92 §61.4 wrote the water arm as *"build beside it, and if the map has no room
+left, build it taller"*, and the first draft of this wave's proactive rule
+(§67.5) opened the same way — `place_water_component("pump")`. Measured over 45
+game-days on the three matrix seeds, against the fork's own row:
+
+| | 1337 | 4242 | 9001 |
+|---|---|---|---|
+| `water_placed`, fork | 2 | 1 | 1 |
+| `water_placed`, pump-first draft | **39** | **39** | **40** |
+| `water_spend`, pump-first draft | $1,803,048 | $1,803,620 | $1,852,052 |
+| capstone | 7 at h307 | **level 5** (was 6) | 7 at h355 |
+| population | 8,393 (−744) | 8,419 (−649) | 6,851 (−1,778) |
+
+**A hundred and eighteen pumps, five and a half million dollars, and the zone's
+supply did not move**, because the zone was treatment-bound the whole time.
+Worse: each pump is a 3×3 `water_facility` shell drawing doc 05's 60 kW, so the
+draft bought roughly **2.3 MW of new load** and 39 sites on a map that was
+already full — and seed 4242 lost a whole curriculum rung to it. So §61.4's
+sentence is corrected here rather than repeated: **taller before wider, and only
+the term that binds.** The upgrade door goes first in both the proactive rule and
+in `_relieve`; a new component is what answers a chain whose every node is already
+at doc 05's MVP cap.
+
+### 67.5 The band: why doc 04's number and not doc 05's
+
+`Balanced._lead_water` sits beside `_lead_generation` in `_grow` — the same
+sentence one utility over — and triggers on
+`Api.water_pinch_zone(WATER_RELIEF_RATIO)`: a zone at or past
+`PowerGrid.OVERLAY_WARNING_R` = **0.75** of `demand / supply`, or already under
+doc 05's own `upgrade_min_pressure` = 0.55.
+
+**Doc 05 publishes overlay bands of its own (0.60 / 0.35 / 0.10, §5.8) and they
+cannot be used here**, and the reason is arithmetic rather than taste. Those
+bands are on PRESSURE, and pressure is `clamp(ratio^1.3 · head − breaks)` where
+`ratio = delivered / demand` — which is 1.0 for every zone whose supply is at or
+above its demand. A band on pressure therefore reads perfectly green until the
+zone is *already* short, which is the refusal this rule exists to get ahead of:
+it is the alarm, not the gauge. The only reading a zone publishes that moves
+BEFORE the wall is its utilization, and the number this project already publishes
+for *"a utility is going amber"* is doc 04 §5.10's `OVERLAY_WARNING_R`. One
+constant, two utilities, no third invented number — the same derivation
+`GENERATION_RELIEF_RATIO` was given in §63.3.
+
+**The cooldown is one game-day and its clock starts on the ATTEMPT**, which is
+the opposite of `_relieve`'s rule and is a cost argument rather than a doctrinal
+one. `_relieve` starts on the purchase because a failed relief buys nothing and
+there is nothing to wait for (§61.4's own measurement). `_lead_water`'s failed
+attempt is not free: the site scan prices every free footprint on every READY
+block, and a scan that found nothing this game-hour finds nothing the next one —
+the map cannot change until a construction job completes. Retrying it hourly took
+the 45-game-day three-seed run past twice its wall-clock and changed no purchase.
+
+**`WATER_SITE_PREVIEWS` 96 → 4,096**, for the other half of the same problem: 96
+was fitted to a young city where the first free footprint in the first READY block
+is usually legal, and on a full one it is a cap that stops the scan before it has
+looked at a second block. A 16-block city has at most `16 × (16 − 3 + 1)² = 3,136`
+candidate origins for a 3×3 pump. The `E_NO_SITE` log row now carries `previews`,
+`blocks` and whether the cap was hit, so the constant is checkable rather than
+trusted.

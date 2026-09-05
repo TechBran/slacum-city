@@ -85,7 +85,50 @@ static func run(strategy_id: String, seed_value: int, days: int,
 		"summary": Playtest.Runner._summarise(sim, api, samples, opts),
 		"state_hash": sim.state_hash(),
 		"director": _director_facts(sim),
+		## Doc 05's pressure zones as the run left them (Wave 26, doc 92 §67.3).
+		## ADDITIVE, read-only and computed once — `_director_facts`' shape and
+		## for its reason: a tool that measures the water planner has to be able
+		## to say what the planner was planning FOR, and the alternative was
+		## `tools/measure_utility_plan.gd` driving its own loop, which would make
+		## it a second harness measuring a different city.
+		"zones": _zone_facts(sim),
 	}
+
+
+## The §2.5 supply chain of every live zone, in `zone_key` order: what it
+## supplies, what it is asked for, and the three terms whose MINIMUM is the
+## first of those two numbers.
+static func _zone_facts(sim: CitySim) -> Array:
+	var out: Array = []
+	for raw: Variant in sim.water.topology.zones:
+		var z: PressureZone = raw
+		if z.dead:
+			continue
+		var source_yield := 0.0
+		for id: Variant in z.source_ids:
+			var n: WaterNode = sim.water.nodes[String(id)]
+			if n.is_live():
+				source_yield += float(sim.water.data.component(n.variant, n.level,
+						n.subtype).get("yield_m3h", 0.0)) * n.cond_factor()
+		var treatment := 0.0
+		for id: Variant in z.treatment_ids:
+			var n: WaterNode = sim.water.nodes[String(id)]
+			if n.is_live():
+				treatment += float(sim.water.data.component(n.variant, n.level)
+						.get("throughput_m3h", 0.0)) * n.cond_factor()
+		var pump := 0.0
+		for id: Variant in z.pump_ids:
+			var n: WaterNode = sim.water.nodes[String(id)]
+			if n.is_live():
+				pump += float(sim.water.data.component(n.variant, n.level)
+						.get("rated_flow_m3h", 0.0))
+		out.append({"key": z.zone_key, "supply": z.supply_m3h, "demand": z.demand_m3h,
+				"pressure": z.pressure, "headroom": z.headroom_m3h(),
+				"source": source_yield, "treatment": treatment, "pump": pump,
+				"nodes": z.node_ids.size()})
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return String(a["key"]) < String(b["key"]))
+	return out
 
 
 ## The same run on the FINE path, cut into game-minutes (RR-86).

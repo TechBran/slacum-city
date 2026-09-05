@@ -6602,3 +6602,140 @@ the transformer's id and its load band, so the row is worth looking at even when
 the player never opens the panel behind it — and `NOT SERVED` is drawn in the
 critical state, because "nothing feeds this" is the most useful thing the row can
 ever say and must not be one tap away.
+
+## BA. Wave-26 rulings — a water works that supplies nothing, and which door a plant is bought through (2026-09-05)
+
+*Lane: A91-D-123, the utility planner. Resolutions report 98 §70 RR-213..RR-216.
+Measured doc 92 §67. Defect rows doc 91 A91-D-137..A91-D-139. Surfaces doc 12
+§2.7 D-120.*
+
+### BA1. Is doc 02's `water_facility` a plant, or a shell that happens to sit near one?
+
+**Q.** `data/buildings.json` ships `water_facility` with `"produces":
+["water_node_shell"]`, a `reference_variant` of `pump`, a five-rung
+`power_demand_kw` column of 60 / 145 / 360 / 880 / 2,160 — which is doc 05's
+`components.pump` `base_kw` column, exactly — and a footprint column report 98
+RR-8 requires to equal doc 05's `components.pump` footprints. Doc 05's own
+`cmd_place_water_component` says of the shell, the node and the lateral that they
+*"always go together and have never been separable in this project"*. And yet
+`cmd_place_building("water_facility", origin)` built the shell alone.
+
+**Ruling: a `water_facility` IS the doc-05 nodes hosted on it, at their level.**
+Not a civic shell. Every column doc 02 authors for this archetype is read out of
+doc 05's component table; a building whose entire stat block is another
+document's supply table is that supply, and an instance of it that hosts no node
+is a data error the command layer was manufacturing on demand.
+
+**The evidence that this is a defect and not a design.** Doc 04's two node-shells
+— `substation` and `power_facility` — go through `cmd_place_building` and get
+their grid component from `CitySim._commission_grid_node`, whose own docstring
+records why: *"`cmd_place_building` sold a $15,000 substation and a $60,000 plant
+that added no capacity and no generation at all"* (doc 92 §17.3 fix 2, Wave 6).
+`_commission_water_nodes` was written from the same paragraph, on the same seam,
+one document over — and only ever brought a node ONLINE. So doc 05 got half of
+doc 04's fix and nobody noticed, because the authored city hands you `WTR-1` and
+`WTR-2` with their nodes already attached and no agent in this project had ever
+called the building door on this archetype.
+
+**Measured at the fork**: `api.place("water_facility")` returns `ok` and
+`sim.water.nodes.size()` goes 22 → 22. The shell it stamps decays, is billed doc
+03's `water_works` staffing, draws 60 kW through `_water_kw_by_building`'s
+fallback to `b.stats`, occupies 3×3 of a full map — and supplies nothing.
+
+**What follows, and all three are the same sentence:**
+
+1. **Placement.** `cmd_place_building("water_facility", …)` delegates to
+   `cmd_place_water_component(reference_variant, …)`, the door that has always
+   built the shell, the node and the lateral together. An empty shell is no
+   longer constructible from anywhere. The doc-05 siting rules a water works
+   actually has — `E_NO_MAIN`, `E_NO_WATER`, `E_FOOTPRINT` — start applying to
+   it instead of being skipped, which is the whole reason the delegation is to
+   the command rather than a second copy of its body.
+2. **Upgrade.** A completed `water_facility` job re-rates every node hosted on
+   that shell to the shell's level (`CitySim._rerate_water_nodes`), exactly as
+   `_commission_grid_node` re-rates a substation's component. Doc 09 §2.14.2's
+   `l7_water_facility` asks the player for that purchase; before this it bought
+   a taller building and not one extra cubic metre of water.
+3. **Ceiling.** The shell may not climb past the nodes it is.
+   `water_shell_top_level` is the SMALLEST of its nodes' own
+   `data/water.json` `placeable_levels` caps under the `levels_4_5_enabled` gate
+   — 2 for an intake, 2 for a treatment train, 3 for a pump — and
+   `cmd_upgrade_building` takes it as `top_level`. Doc 02 §2.14 already said this
+   archetype's ladder *"is doc 05's per-variant component table"*; nothing
+   enforced it.
+
+**Price: unchanged, and that is a measurement rather than a convenience.**
+`econ_curves.upgrade_cost("water_facility", 1)` and
+`econ_curves.water_component_upgrade_cost(variant_cost_ratio("pump"), 1)` are the
+same **$51,750**, and `build_cost("water_facility")` and
+`water_component_build_cost(pump ratio, 1)` are the same **$45,000** — both ride
+doc 03's `water_plant` row at ratio 1.00, because doc 02's ladder for this
+archetype IS the pump reference column. A one-node site is therefore billed
+identically either way, and the only case where anything moves is the authored
+`WTR-1`, which hosts three nodes and now raises all three for one bill.
+
+**That last case is the ruling and not an exception.** `WTR-1` is ONE PLANT: doc
+09 authored it as a single building with an intake, a treatment train and a pump
+under one id, `ui/water_actions.gd` draws all three as one block on that
+building's own panel, and doc 03 bills its staffing once. A player who upgrades
+the water works upgrades the water works. Charging them three times for one
+building, or raising one third of it, would be the model leaking its own
+bookkeeping into the fiction.
+
+### BA2. May the shell's power gate keep reading doc 02's column?
+
+**Q.** `cmd_upgrade_building` computes `delta_kw` from `catalog.stats`. For a
+`water_facility` that is doc 05's PUMP row. Now that the shell's rung moves its
+nodes, is that still the right number to ask doc 04 about?
+
+**Ruling: no — the gate asks about the nodes.** `_refresh_water_kw` has always
+billed this archetype the SUM of its hosted variants' `kw_required` (the demand
+tick reads `_water_kw_by_building` and falls back to `b.stats` only for a shell
+with no nodes, which after BA1 cannot exist). A gate that checked one column
+while the tick billed another was already approximate; with three nodes moving
+at once it would be wrong by more than a factor of two — `WTR-1` L1 → L2 asks doc
+04 for 32→79 plus 40→98 plus 60→145 = **+190 kW**, against the shell column's
++85. `CitySim.water_shell_node_delta_kw` is that sum, and the E_POWER_HEADROOM
+check is asked with it.
+
+### BA3. Which card does the player tap?
+
+**Q.** The build sheet lists `water_facility` as a plain building card AND five
+`water_facility_<variant>` component cards. After BA1 the plain card's confirm
+runs doc 05's twelve checks. Its GHOST ran doc 02's five.
+
+**Ruling: the plain card is the pump card.**
+`BuildController.enter("water_facility")` with no variant now enters
+`enter_water_component(reference_variant)`, so ghost and command are one code
+path again and `E_NO_MAIN` is drawn before the player pays rather than after. The
+card keeps its place, its name key and its price — doc 03 quotes both doors at
+the same $45,000 — and the tab it sits on does not move, so nothing about the
+sheet's layout or doc 12 §2.7's card ordering changes. **The alternative that was
+rejected** was deleting the plain card: it would have made the roster shorter
+than `BuildingCatalog.ARCHETYPE_COUNT` for one archetype only, which is a special
+case in a table whose whole value is that it has none.
+
+### BA4. Where does a "plan the utilities" rule belong — in the agent, or in every agent?
+
+**Q.** `Balanced._grow` is the ladder every strategy in `tools/playtest.gd`
+walks. A water rule written there is a rule for `balanced`, `greedy_growth`,
+`infrastructure_first`, `tax_squeezer`, `disaster_neglect`, `storm_ready`,
+`curriculum` and `collector` at once.
+
+**Ruling: written in `_grow`, beside `_lead_generation`, and switched on by a
+knob that only `curriculum` sets.** The rule belongs there — it is
+`_lead_generation`'s own sentence one utility over, and splitting it into a
+`Curriculum`-only method would be two copies of one idea in one file. But doc 92
+has published seven matrix rows, a 50-game-day dark share and nine balance gates
+fitted to what that ladder buys, and doc 92 §62.9's merge addendum ruled that
+this wave ships the planner **rather than another re-fit**. Turning a new
+purchase on for eight agents would have moved every one of those numbers at once
+and made the planner's own measurement unreadable underneath them.
+
+So `plans_water` joins `maintains` and `tax_target` as KNOB 3, on the same
+controlled-pair discipline `disaster_neglect` and `tax_squeezer` are built on:
+one agent differs from `balanced` in exactly one field, and any difference
+between their rows is that field and nothing else. **What this defers**, filed
+rather than hidden: `balanced` still has no water planner, so doc 92's matrix
+still measures a city that answers water refusals instead of preventing them —
+doc 91 A91-D-139.
