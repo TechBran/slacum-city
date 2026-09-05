@@ -358,6 +358,44 @@ func test_verb_probe_reports_the_live_command_layer() -> void:
 			"cmd_upgrade_building(sim_id, preview = false)")
 
 
+## **The regression that hid for three waves, made structural** (Wave 26, doc 92
+## §67.1, report 98 RR-213, doc 91 A91-D-137).
+##
+## `KNOWN_VERBS` is the ONLY source of `Api.verbs`, and `has_verb` answers false
+## for anything absent from it — so a door that calls `sim.cmd_X()` while `X` is
+## not on the list is dead on its first line, silently, forever.
+## `Api.upgrade_grid_component` shipped in Wave 22 in exactly that state:
+## `cmd_upgrade_grid_component` was never listed, the door returned `E_NO_VERB`
+## without logging, and gate 21's capstone went red on main three waves later
+## with an action log that showed an idle agent.
+##
+## The verb-probe test above cannot catch it — it walks the list and asks whether
+## each entry is live, which says nothing about a call site the list has never
+## heard of. So this walks the OTHER way: every `sim.cmd_*` this harness reaches
+## for, read out of its own source, must be on the roster it degrades against.
+func test_every_command_the_harness_drives_is_on_the_verb_roster() -> void:
+	var source := FileAccess.get_file_as_string("res://tools/playtest.gd")
+	assert_true(source.length() > 0, "the harness source is readable")
+	var expression := RegEx.new()
+	# `sim` is the Api's own field and `api.sim` is how a strategy reaches it.
+	assert_eq(expression.compile("\\bsim\\.(cmd_[a-z_]+)\\s*\\("), OK)
+	var driven: Dictionary = {}
+	for match: RegExMatch in expression.search_all(source):
+		driven[match.get_string(1)] = true
+	assert_true(driven.size() >= 12,
+			"the scan found %d commands, which is too few to be reading the file"
+					% driven.size())
+	var missing: Array[String] = []
+	for verb: String in driven:
+		if not Playtest.KNOWN_VERBS.has(verb):
+			missing.append(verb)
+	missing.sort()
+	assert_eq(missing.size(), 0,
+			("tools/playtest.gd calls %s but does not list %s in KNOWN_VERBS, so "
+					+ "`has_verb` answers false and every door that reaches for "
+					+ "it is dead on its first line") % [str(missing), str(missing)])
+
+
 func test_optional_verbs_degrade_instead_of_crashing() -> void:
 	# A harness that dies on a missing or reshaped verb is useless mid-wave.
 	# Every wrapped call answers with a reason code either way, so this test
@@ -594,3 +632,136 @@ func test_the_reserve_floor_is_a_fraction_of_the_founding_purse() -> void:
 	assert_true(int(expected["crisis"]) < crisis_purse,
 			"a reserve floor a city cannot afford on its founding hour is a lock, "
 					+ "not a reserve")
+
+
+# =================== Wave 26 — the utility planner (doc 92 §67, report 98 §70)
+
+## **Every exit from the copper door is in the action log, with the command's own
+## reason on it** (RR-213). Both early returns used to leave through a bare
+## `CommandQueue.fail` that never reached `_log`, and the third overwrote the
+## preview's reason with `E_BLOCKED` — so the log could not tell "the agent never
+## tried" from "the agent tried and the grid said no", which is exactly the
+## reading that hid `E_NO_VERB` for three waves.
+func test_the_grid_upgrade_door_logs_every_refusal() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	assert_true(api.has_verb("cmd_upgrade_grid_component"),
+			"the verb Wave 22 forgot to register")
+	var before: int = api.actions.size()
+	var nothing := api.upgrade_grid_component("")
+	assert_false(bool(nothing["ok"]))
+	assert_eq(api.actions.size(), before + 1, "an empty target is still a log row")
+	assert_eq(String((api.actions[before] as Dictionary)["reason"]), "E_UNKNOWN_COMPONENT")
+	var unknown := api.upgrade_grid_component("NOPE-999")
+	assert_false(bool(unknown["ok"]))
+	assert_eq(api.actions.size(), before + 2)
+	assert_eq(String((api.actions[before + 1] as Dictionary)["reason"]),
+			"E_UNKNOWN_COMPONENT",
+			"the COMMAND's reason code, not a word the harness made up")
+	# A real component the city cannot pay for: the reason is doc 03's, and it is
+	# `E_FUNDS` rather than `E_BLOCKED`.
+	var transformer := ""
+	for id: Variant in sim.grid.component_ids_of_kind(&"transformer"):
+		transformer = String(id)
+		break
+	assert_ne(transformer, "", "the founding city has a transformer")
+	sim.treasury.balance = 1
+	var broke := api.upgrade_grid_component(transformer)
+	assert_false(bool(broke["ok"]))
+	assert_eq(String((api.actions[api.actions.size() - 1] as Dictionary)["reason"]),
+			"E_FUNDS", "the price is why, and the log says the price is why")
+
+
+## **Doc 05 §2.5's supply term is a CHAIN, not a roster** (RR-215). `upstream_cap
+## = min(Σ source yield, Σ treatment throughput)` and each pump's share is its
+## slice of THAT, so a pump upgrade raises a treatment-bound zone's supply by
+## exactly zero. The old door tried pumps, then sources, then treatment, in that
+## fixed order; this one walks the chain and puts the smallest term first.
+func test_the_water_door_raises_the_term_that_binds() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	var zone: PressureZone = null
+	for raw: Variant in sim.water.topology.zones:
+		var candidate: PressureZone = raw
+		if not candidate.dead and not candidate.treatment_ids.is_empty() \
+				and not candidate.pump_ids.is_empty():
+			zone = candidate
+			break
+	assert_ne(zone, null, "the founding city has a zone with a treatment train and a pump")
+	var order := api.supply_chain_order(zone)
+	assert_true(order.size() >= 2, "the chain has more than one node in it")
+	var kind_of := func(id: String) -> String:
+		return String((sim.water.nodes[id] as WaterNode).variant)
+	# Whatever the founding numbers are, the FIRST id must belong to the term
+	# whose total is smallest — the assertion is the rule, not the seed's answer.
+	var totals := {
+		"source": api._zone_source_yield(zone),
+		"treatment": api._zone_treatment(zone),
+		"pump": api._zone_pump_rated(zone),
+	}
+	var smallest := ""
+	for key: String in ["pump", "source", "treatment"]:
+		if smallest == "" or float(totals[key]) < float(totals[smallest]):
+			smallest = key
+	assert_eq(kind_of.call(order[0]), smallest,
+			("the chain order opens on the term that binds (source %.1f / "
+					+ "treatment %.1f / pump %.1f)") % [float(totals["source"]),
+					float(totals["treatment"]), float(totals["pump"])])
+	assert_eq(api.binding_supply_kind(zone.zone_key), smallest,
+			"and the placement door agrees with the upgrade door about which it is")
+	for id: String in order:
+		assert_ne(kind_of.call(id), "tank",
+				"a tank stores water the zone never had and is never in the chain")
+
+
+## **The relief reads the refusal** (RR-213). `Api.blocked_upgrade` asks the grid
+## with the SAME ×1.15 margin `CitySim.cmd_upgrade_building` used, so the
+## component it names is the one that actually refused, and it forwards doc 04's
+## own word for what that component IS — because the answer to a transformer at
+## 1.009 is a bigger transformer and the answer to a feeder at 0.93 is copper.
+func test_blocked_upgrade_names_the_component_that_bound_and_its_kind() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	# Drive the founding city into a power refusal on one archetype by starving
+	# the grid rather than by waiting 25 game-days for one.
+	for id: Variant in sim.grid.component_ids_of_kind(&"transformer"):
+		sim.grid.set_level(String(id), 1)
+	sim.treasury.balance = 50_000_000
+	var rows: Array[Dictionary] = []
+	var power_rows := 0
+	# Doc 09 §2.14.2's level-7 roster, which is every archetype doc 02 ships.
+	for archetype: String in ["house", "store", "apartment", "office", "high_rise",
+			"data_center", "police_station", "fire_station", "power_facility",
+			"substation", "water_facility", "construction_yard"]:
+		var row := api.blocked_upgrade(archetype)
+		if row.is_empty():
+			continue
+		rows.append(row)
+		# **The contract, both halves.** A power refusal names the component doc
+		# 04 says binds AND doc 04's own word for what it is; anything else names
+		# neither, because a `power_at` on an `E_CONDITION` row would send the
+		# next reader to buy copper for a building that needs a paint job.
+		assert_true(row.has("power_at") and row.has("power_kind"),
+				"%s: the row carries both fields either way" % archetype)
+		if String(row["blocker"]) == "E_POWER_HEADROOM":
+			power_rows += 1
+			assert_ne(String(row["power_at"]), "",
+					"%s: a power refusal names its component" % archetype)
+			assert_true(["transformer", "feeder", "substation"].has(
+					String(row["power_kind"])),
+					"%s: doc 04's own kind for it, got '%s'"
+							% [archetype, String(row["power_kind"])])
+			assert_true(sim.grid.has_component(String(row["power_at"]))
+							or sim.buildings.has(String(row["power_at"])),
+					"%s: the named component exists on one side of C-30's split"
+							% archetype)
+		else:
+			assert_eq(String(row["power_at"]), "",
+					"%s: %s is not a power refusal and must name no component"
+							% [archetype, String(row["blocker"])])
+			assert_eq(String(row["power_kind"]), "",
+					"%s: nor a kind" % archetype)
+	assert_true(rows.size() > 0,
+			("a founding city with every transformer at doc 04's 50 kW rung has at "
+					+ "least one archetype whose next rung the gate refuses "
+					+ "(%d rows, %d of them for power)") % [rows.size(), power_rows])

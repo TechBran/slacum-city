@@ -108,6 +108,19 @@ const KNOWN_VERBS: Array[String] = [
 	"cmd_place_road", "cmd_upgrade_road", "cmd_demolish_road",
 	"cmd_place_water_component", "cmd_place_water_main",
 	"cmd_upgrade_water_component",
+	# **Wave 26, and it is why gate 21 went red on main** (doc 92 §67.1, doc 91
+	# A91-D-137). Wave 22 wrote `Api.upgrade_grid_component` as the second door
+	# for copper — *"upgrade the transformer that is short rather than parallel
+	# it"* — and never listed the verb here. `verbs` is built from this array
+	# alone, so `has_verb("cmd_upgrade_grid_component")` answered **false** for
+	# three waves and the door returned `E_NO_VERB` on its first line, unlogged,
+	# every time it was called. Measured at the fork (`tools/probe_utility_wall.gd`,
+	# seed 1337, game-day 25): `_relieve` returns false, the action log grows by
+	# **0 entries**, and `sim.cmd_upgrade_grid_component("PT-053", true)` — the
+	# purchase it was refusing to make — previews **OK at $6,900** for doc 04's
+	# 400 → 1,000 kW rung. A door nobody can open is worse than no door: the
+	# refusal it hides looks like an idle agent.
+	"cmd_upgrade_grid_component",
 	# Wave 6's doc 04 §4 `route_feeder`. `Balanced` drives it through the one-tap
 	# `cmd_place_grid_component("feeder", …)` door; Wave 11 gave the verb a real
 	# card on doc 12 §2.7's drag-path tool (doc 93 §J2) and `InfrastructureFirst`
@@ -1037,7 +1050,18 @@ class Api extends RefCounted:
 	## Bounded for the same reason `TRANSFORMER_CANDIDATES` is: the tiles it does
 	## not reach are the tail of the same row-major order, so the cap costs
 	## coverage, never determinism.
-	const WATER_SITE_PREVIEWS := 96
+	##
+	## **96 → 4,096, Wave 26** (doc 92 §67.4, report 98 RR-215). 96 was fitted to
+	## a young city, where the first free footprint in the first READY block is
+	## usually legal; on a full one it is a cap that stops the scan before it has
+	## looked at a second block. The level-7 city doc 92 §67.4 measured has 16 READY
+	## blocks, i.e. at most `16 × (16 − 3 + 1)² = 3,136` candidate origins for a
+	## 3×3 pump, so 4,096 is the smallest round bound above the whole search on the
+	## city that exposed the problem. **It is not a proof for a fully-developed
+	## 49-block map**, and that is why the `E_NO_SITE` log line now carries
+	## `previews`, `blocks` and `capped`: a city that outgrows this number says so
+	## on the line instead of stopping silently, which is what 96 did.
+	const WATER_SITE_PREVIEWS := 4096
 
 	## Doc 05's `cmd_place_water_component(kind, tile, level = 1, preview =
 	## false)`, with the site search the build sheet's ghost does for the player.
@@ -1067,7 +1091,9 @@ class Api extends RefCounted:
 						continue
 					previews += 1
 					if previews > WATER_SITE_PREVIEWS:
-						return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"), {})
+						return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"),
+								{"previews": previews, "blocks": _ready_blocks().size(),
+								"capped": true})
 					if not bool(sim.cmd_place_water_component(
 							kind, origin, level, true)["ok"]):
 						continue
@@ -1077,7 +1103,13 @@ class Api extends RefCounted:
 						water_placed += 1
 						water_spend += int((result["payload"] as Dictionary).get("cost", 0))
 					return _log("water", kind, result, {"origin": [origin.x, origin.y]})
-		return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"), {})
+		# **"There is no site" has to say how hard it looked** (Wave 26, doc 92
+		# §67.4). This used to be one word on a line that looked exactly like a
+		# refusal from a scan that never ran, and the next person's only way to
+		# tell a full map from a broken search was to reimplement the search.
+		return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"),
+				{"previews": previews, "blocks": _ready_blocks().size(),
+				"capped": false})
 
 	## Doc 93 §B's headline verb ("THE game"). `cmd_place_grid_component(kind,
 	## tile, level = 1, preview = false)`.
@@ -1223,23 +1255,193 @@ class Api extends RefCounted:
 	## because the map was full. A city that cannot build outwards has to build
 	## upwards, which is the same sentence doc 09 §2.14.2's level 6 teaches about
 	## housing.
-	func upgrade_water_node() -> Dictionary:
+	## **"Pumps first" was measured and it buys NOTHING** (Wave 26, doc 92 §67.3,
+	## report 98 RR-215). Doc 05 §2.5's supply term is a CHAIN, not a roster:
+	## `upstream_cap = min(Σ source yield, Σ treatment throughput)`, each pump's
+	## `share` is its rated slice of that cap, and the zone's supply is the sum
+	## of the shares. So a pump upgrade raises supply by exactly zero whenever
+	## the intake or the treatment train is the smaller number. Measured at the
+	## fork, seed 1337 game-day 25, the zone the level-7 high-rise stands in
+	## (`tools/probe_utility_wall.gd`):
+	##
+	##     source_yield 105.1 | treatment 78.1 | pump rated 80.0 | feed_cap 214.0
+	##     upstream_cap 78.2  → supply 77.8 against demand 127.3, pressure 0.21
+	##
+	## **Treatment binds.** Doubling both pumps would have left supply at 78.
+	## So this walks the chain and upgrades the term that is SMALLEST, then the
+	## next one the chain hands it, which is the order a plant engineer takes and
+	## the only order that turns money into water.
+	##
+	## `zone_key` empty means "the zone that needs it most" (worst
+	## demand/supply); `budget` below 0 means unbounded, which is what a refusal
+	## that has already happened deserves.
+	func upgrade_water_node(zone_key: String = "", budget: int = -1) -> Dictionary:
 		if not has_verb("cmd_upgrade_water_component"):
-			return CommandQueue.fail(&"E_NO_VERB")
-		for wanted: StringName in [&"pump", &"source", &"treatment"]:
-			var ids: Array = sim.water.nodes.keys()
-			ids.sort()
-			for id: Variant in ids:
-				var node: WaterNode = sim.water.nodes[id]
-				if node.variant != wanted:
+			return _log("water_upgrade", "(no verb)", CommandQueue.fail(&"E_NO_VERB"), {})
+		var zones := _zones_by_need(zone_key)
+		if zones.is_empty():
+			return _log("water_upgrade", "(no zone)", CommandQueue.fail(&"E_NO_SITE"), {})
+		# Remembered across the whole walk, so a power wall anywhere in the chain
+		# still gets an answer when no node's own gate opens.
+		var power_blocked_at := ""
+		var power_blocked_node := ""
+		for z: PressureZone in zones:
+			for id: String in supply_chain_order(z):
+				var quote: Dictionary = sim.cmd_upgrade_water_component(id, true)
+				if not bool(quote["ok"]):
+					if String(quote.get("reason_code", "")) == "E_POWER_HEADROOM" \
+							and power_blocked_at == "":
+						power_blocked_at = water_power_binder(id)
+						power_blocked_node = id
 					continue
-				if not bool(sim.cmd_upgrade_water_component(String(id), true)["ok"]):
+				var cost := int((quote["payload"] as Dictionary).get("cost", 0))
+				if budget >= 0 and cost > budget:
 					continue
-				var result: Dictionary = sim.cmd_upgrade_water_component(String(id), false)
+				var result: Dictionary = sim.cmd_upgrade_water_component(id, false)
 				if bool(result["ok"]):
 					water_spend += int((result["payload"] as Dictionary).get("cost", 0))
-				return _log("water_upgrade", String(id), result, {})
-		return CommandQueue.fail(&"E_NO_SITE")
+				return _log("water_upgrade", id, result, {})
+		# **The door that answers its own refusal** (doc 92 §67.3). Every node in
+		# the chain was refused for POWER at its own transformer — not at the
+		# pool, which sat at 19 % — and doc 04 NAMES the component that binds. So
+		# buy that, and come back for the node on the next game-day through the
+		# same one-purchase cooldown `Curriculum._relieve` runs. Measured at the
+		# fork: all four upgradeable nodes refused `E_POWER_HEADROOM`, at `T-15`
+		# (three of them) and `PT-095`, and BOTH previewed an OK $6,900 rung.
+		if power_blocked_at != "":
+			return upgrade_grid_component(power_blocked_at)
+		return _log("water_upgrade", power_blocked_node if power_blocked_node != ""
+				else "(chain full)", CommandQueue.fail(&"E_NO_SITE"), {})
+
+	## The doc-05 nodes of `z` in the order that raises its supply: the term of
+	## §2.5's chain that is SMALLEST first, and inside a term the lowest rung
+	## first (the cheapest step and the biggest relative gain), id as the
+	## tie-break. Tanks are never here — a tank stores water the zone never had.
+	func supply_chain_order(z: PressureZone) -> Array[String]:
+		var terms: Array[Dictionary] = [
+			{"kind": "source", "ids": z.source_ids, "value": _zone_source_yield(z)},
+			{"kind": "treatment", "ids": z.treatment_ids, "value": _zone_treatment(z)},
+			{"kind": "pump", "ids": z.pump_ids, "value": _zone_pump_rated(z)},
+		]
+		terms.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if not is_equal_approx(float(a["value"]), float(b["value"])):
+				return float(a["value"]) < float(b["value"])
+			return String(a["kind"]) < String(b["kind"]))
+		var out: Array[String] = []
+		for term: Dictionary in terms:
+			var rows: Array[Dictionary] = []
+			for raw: Variant in (term["ids"] as Array):
+				var node: WaterNode = sim.water.nodes[String(raw)]
+				rows.append({"id": String(raw), "level": node.level})
+			rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				if int(a["level"]) != int(b["level"]):
+					return int(a["level"]) < int(b["level"])
+				return String(a["id"]) < String(b["id"]))
+			for row: Dictionary in rows:
+				out.append(String(row["id"]))
+		return out
+
+	## Which doc-05 variant is the SMALLEST term of a zone's §2.5 supply chain —
+	## `source`, `treatment` or `pump`. The kind a new component would have to be
+	## for the zone to end up with more water in it than it started with, and the
+	## kind [supply_chain_order] puts first. `""` for a zone that has none of the
+	## three (a tank-only island).
+	func binding_supply_kind(zone_key: String) -> String:
+		var zones := _zones_by_need(zone_key)
+		if zones.is_empty():
+			return ""
+		var z: PressureZone = zones[0]
+		var best := ""
+		var best_value := 0.0
+		for row: Array in [["source", _zone_source_yield(z)],
+				["treatment", _zone_treatment(z)], ["pump", _zone_pump_rated(z)]]:
+			if best == "" or float(row[1]) < best_value:
+				best = String(row[0])
+				best_value = float(row[1])
+		return best
+
+	## The grid component doc 04 says binds a water node's next rung — the `at`
+	## of `power_headroom(node.power_ref, Δkw × margin)`, asked with the same
+	## ×1.15 `CitySim.cmd_upgrade_water_component` asks with. `""` when power is
+	## not what refused it.
+	func water_power_binder(node_id: String) -> String:
+		var node: WaterNode = sim.water.nodes.get(node_id)
+		if node == null or node.power_ref == "":
+			return ""
+		var delta_kw := sim.water.data.kw_required(node.variant, node.level + 1, node.subtype) \
+				- sim.water.data.kw_required(node.variant, node.level, node.subtype)
+		if delta_kw <= 0.0:
+			return ""
+		return String(sim.power_headroom(node.power_ref,
+				delta_kw * CitySim.UPGRADE_HEADROOM_MARGIN).get("at", ""))
+
+	func _zone_source_yield(z: PressureZone) -> float:
+		var total := 0.0
+		for id: Variant in z.source_ids:
+			var node: WaterNode = sim.water.nodes[String(id)]
+			if node.is_live():
+				total += float(sim.water.data.component(node.variant, node.level,
+						node.subtype).get("yield_m3h", 0.0)) * node.cond_factor()
+		return total
+
+	func _zone_treatment(z: PressureZone) -> float:
+		var total := 0.0
+		for id: Variant in z.treatment_ids:
+			var node: WaterNode = sim.water.nodes[String(id)]
+			if node.is_live():
+				total += float(sim.water.data.component(node.variant, node.level)
+						.get("throughput_m3h", 0.0)) * node.cond_factor()
+		return total
+
+	func _zone_pump_rated(z: PressureZone) -> float:
+		var total := 0.0
+		for id: Variant in z.pump_ids:
+			var node: WaterNode = sim.water.nodes[String(id)]
+			if node.is_live():
+				total += float(sim.water.data.component(node.variant, node.level)
+						.get("rated_flow_m3h", 0.0))
+		return total
+
+	## Live pressure zones, the one that needs supply most first. `zone_key`
+	## picks exactly one. Ranked by doc 05's own utilization — `demand / supply`
+	## — with `zone_key` as the tie-break so two identical zones never swap.
+	func _zones_by_need(zone_key: String) -> Array[PressureZone]:
+		var out: Array[PressureZone] = []
+		for raw: Variant in sim.water.topology.zones:
+			var z: PressureZone = raw
+			if z.dead:
+				continue
+			if zone_key != "" and z.zone_key != zone_key:
+				continue
+			out.append(z)
+		out.sort_custom(func(a: PressureZone, b: PressureZone) -> bool:
+			var ra := a.demand_m3h / maxf(a.supply_m3h, 0.001)
+			var rb := b.demand_m3h / maxf(b.supply_m3h, 0.001)
+			if not is_equal_approx(ra, rb):
+				return ra > rb
+			return a.zone_key < b.zone_key)
+		return out
+
+	## The pressure zone a building drinks from, or `""` — doc 05's access tile
+	## resolved through its own topology, never guessed from the origin.
+	func zone_key_of(sim_id: String) -> String:
+		if sim_id == "":
+			return ""
+		var z: PressureZone = sim.water.zone_at(sim.water.demand.access_tile(sim_id))
+		return "" if z == null else z.zone_key
+
+	## The zone that is going amber, or `""`. Two readings, both doc-published:
+	## `demand / supply` at or past `ratio` — the utilization band — or a
+	## pressure already under doc 05's own `upgrade_min_pressure`, which is the
+	## number `WaterSystem.can_upgrade_water` refuses on.
+	func water_pinch_zone(ratio: float) -> String:
+		var gate := float(sim.water.data.effect("upgrade_min_pressure", 0.55))
+		for z: PressureZone in _zones_by_need(""):
+			if z.demand_m3h <= 0.0:
+				continue
+			if z.demand_m3h / maxf(z.supply_m3h, 0.001) >= ratio or z.pressure < gate:
+				return z.zone_key
+		return ""
 
 
 	## The same second door for copper: upgrade the transformer that is short
@@ -1247,14 +1449,30 @@ class Api extends RefCounted:
 	## `relief_spot_near` needs a free tile within [Curriculum.HOTSPOT_RADIUS]
 	## and a full map has none. `component_id` is the feeder of the building that
 	## was refused, so the copper lands where the refusal happened.
+	## **Every exit through here is LOGGED, including the refusals** (Wave 26,
+	## doc 92 §67.1, report 98 RR-213). Both early returns used to leave through
+	## a bare `CommandQueue.fail` that never reached [_log], so an agent that
+	## called this door and was refused produced an action log identical to an
+	## agent that never called it — which is exactly the reading that hid
+	## `E_NO_VERB` for three waves (see `KNOWN_VERBS`). `E_BLOCKED` is gone with
+	## them: the command's own preview already names the reason
+	## (`E_MAX_LEVEL`, `E_STATE`, `E_FUNDS`, `E_UNKNOWN_COMPONENT`) and a harness
+	## that overwrites it with one word of its own is throwing away the only
+	## thing the next person has to go on.
 	func upgrade_grid_component(component_id: String) -> Dictionary:
-		if not has_verb("cmd_upgrade_grid_component") or component_id == "":
-			return CommandQueue.fail(&"E_NO_VERB")
-		if not bool(sim.cmd_upgrade_grid_component(component_id, true)["ok"]):
-			return CommandQueue.fail(&"E_BLOCKED")
-		# No counter of its own: `_log` already records the verb, the subject and
-		# the verdict, and the summary's `substations_built` counts SHELLS. An
-		# upgraded transformer is neither a new shell nor a new component.
+		if component_id == "":
+			return _log("grid_upgrade", "(none named)",
+					CommandQueue.fail(&"E_UNKNOWN_COMPONENT"), {})
+		if not has_verb("cmd_upgrade_grid_component"):
+			return _log("grid_upgrade", component_id, CommandQueue.fail(&"E_NO_VERB"), {})
+		var quote: Dictionary = sim.cmd_upgrade_grid_component(component_id, true)
+		if not bool(quote["ok"]):
+			return _log("grid_upgrade", component_id, quote, {})
+		# No counter of its own: `_log` already records the verb, the subject,
+		# the verdict AND the price (it copies `payload.cost`), and the summary's
+		# `substations_built` counts SHELLS. An upgraded transformer is neither a
+		# new shell nor a new component, and folding its bill into `grid_spend`
+		# would silently redefine a column doc 92 has published seven tables of.
 		return _log("grid_upgrade", component_id,
 				sim.cmd_upgrade_grid_component(component_id, false), {})
 
@@ -1302,15 +1520,35 @@ class Api extends RefCounted:
 			# WHICH component is short, asked of the grid rather than guessed:
 			# `can_upgrade_power` already names it (`at`) and the building
 			# preview does not forward it. Empty when power is not the blocker.
+			#
+			# **Asked with the margin the GATE used** (Wave 26, doc 92 §67.1).
+			# `CitySim.cmd_upgrade_building` runs `power_headroom(delta ×
+			# UPGRADE_HEADROOM_MARGIN)`; this used to ask with the raw delta, so
+			# on a marginal path the two questions could disagree — the gate
+			# refuses at `r_after` 1.009 while the unscaled ask passes at 0.951
+			# and `can_upgrade_power`'s ok-branch names the ATTACHED transformer
+			# rather than the BINDER. On seed 1337 both answers happen to be
+			# `PT-053`, so this fixes no measured number; it removes a way for
+			# the agent to be told about a component that is not the one that
+			# refused it, and it is what makes `power_kind` trustworthy.
 			var at := ""
+			var kind := ""
 			var delta_kw := float(next_stats.get("power_demand_kw", 0.0)) \
 					- float(b.stats.get("power_demand_kw", 0.0))
 			if String(blockers[0]) == "E_POWER_HEADROOM":
-				at = String(sim.power_headroom(sim_id, delta_kw).get("at", ""))
+				var headroom: Dictionary = sim.power_headroom(sim_id,
+						delta_kw * CitySim.UPGRADE_HEADROOM_MARGIN)
+				at = String(headroom.get("at", ""))
+				kind = String(headroom.get("kind", ""))
 			return {"sim_id": sim_id, "tile": b.origin,
 					"blocker": String(blockers[0]),
 					"cost": int((preview.get("payload", {}) as Dictionary).get("cost", 0)),
 					"power_at": at,
+					# doc 04 §5.3's own word for what `power_at` IS — the answer
+					# to a transformer at 1.009 is a bigger transformer and the
+					# answer to a feeder at 0.93 is more copper, and `_relieve`
+					# may not tell them apart by guessing (Wave 17, A91-D-55).
+					"power_kind": kind,
 					"transformer_level": Api.transformer_level_for(
 							float(next_stats.get("power_demand_kw", 0.0)))}
 		return {}
@@ -1341,6 +1579,58 @@ class Api extends RefCounted:
 					continue
 				return tile
 		return Vector2i(-1, -1)
+
+	## [relief_spot_near], widened past the 7×7 ring for a FULL MAP (Wave 26,
+	## doc 92 §67.2, report 98 RR-214). Returns `{tile, previews}` — the tile, or
+	## `(-1, -1)`, and how many placement previews it cost to say so, because the
+	## whole reason the old radius was 3 is that this search is a preview PER
+	## TILE and nobody had measured what a wider one costs.
+	##
+	## **The inner square is scanned exactly as [relief_spot_near] scans it**, in
+	## the same row-major order over the same full square, so whenever an answer
+	## exists inside `inner` this returns the identical tile and no arc that was
+	## already finding a spot can move. Only the rings BEYOND it are new, and
+	## they are walked one Chebyshev ring at a time so the nearest legal tap
+	## still wins.
+	##
+	## **`outer` is doc 09's land block and not a swept number.** A block is 16
+	## tiles on a side — the unit the player buys, develops and pays tax on — so
+	## a tap inside that radius is copper on ground the city already owns, and a
+	## radius that reached past it would be the agent buying a transformer on
+	## somebody else's block to relieve a building on its own. Measured at the
+	## fork on seed 1337: the high-rise P-071 at (56, 51) has NO legal relief
+	## tile inside `HOTSPOT_RADIUS` (49 previews, `(-1, -1)`), and the first one
+	## the widened scan reaches is (46, 40).
+	func relief_spot_ring(centre: Vector2i, level: int, inner: int,
+			outer: int) -> Dictionary:
+		var previews := 0
+		for dz in range(-inner, inner + 1):
+			for dx in range(-inner, inner + 1):
+				var tile := centre + Vector2i(dx, dz)
+				previews += 1
+				var quote: Dictionary = sim.cmd_place_grid_component(
+						"transformer", tile, level, true)
+				if not bool(quote["ok"]):
+					continue
+				if float((quote["payload"] as Dictionary).get("relieved_kw", 0.0)) <= 0.0:
+					continue
+				return {"tile": tile, "previews": previews}
+		for r in range(inner + 1, outer + 1):
+			for dz in range(-r, r + 1):
+				for dx in range(-r, r + 1):
+					# The ring only — the square inside it is already walked.
+					if absi(dx) != r and absi(dz) != r:
+						continue
+					var tile := centre + Vector2i(dx, dz)
+					previews += 1
+					var quote: Dictionary = sim.cmd_place_grid_component(
+							"transformer", tile, level, true)
+					if not bool(quote["ok"]):
+						continue
+					if float((quote["payload"] as Dictionary).get("relieved_kw", 0.0)) <= 0.0:
+						continue
+					return {"tile": tile, "previews": previews}
+		return {"tile": Vector2i(-1, -1), "previews": previews}
 
 	## Is there a substation with a free feeder slot (doc 04 §2.2's 2/3/4/6/8
 	## ladder)? When there is not, more copper is not buyable at any price and
@@ -1460,6 +1750,13 @@ class Api extends RefCounted:
 			storm_preps += 1
 			storm_prep_spend += int((result["payload"] as Dictionary).get("cost", 0))
 		return _log("cmd_storm_prep_action", action_id, result, {})
+
+	## The relief ring found no tile: one log row carrying how many previews the
+	## search spent and the radius it reached, so a run that bought nothing says
+	## whether the map was full or the search was short (Wave 26 merge).
+	func note_no_relief_spot(previews: int, radius: int) -> void:
+		_log("relief_spot", "transformer", CommandQueue.fail(&"E_NO_SITE"),
+				{"previews": previews, "radius": radius})
 
 	func _log(verb: String, subject: String, result: Dictionary, extra: Dictionary) -> Dictionary:
 		var reason := String(result.get("reason_code", ""))
@@ -2183,6 +2480,28 @@ class Balanced extends Strategy:
 	const HOTSPOT_RADIUS := 3
 	const HOTSPOT_COOLDOWN := 2
 
+	## **The water rule, and it is `GENERATION_RELIEF_RATIO`'s sentence one
+	## utility over** (Wave 26, doc 92 §67.5). A zone whose demand has reached
+	## `WATER_RELIEF_RATIO` of its supply is a zone about to refuse an upgrade,
+	## and the purchase that answers it takes a construction job to land — so the
+	## reading has to be acted on BEFORE the refusal, exactly as the pool's does.
+	##
+	## **Why doc 04's band and not doc 05's own.** Doc 05 §5.8 publishes overlay
+	## bands at 0.60 / 0.35 / 0.10 and they are on PRESSURE, which is
+	## `ratio^1.3` of DELIVERED over demand — so it reads 1.0 for every zone with
+	## supply at or above demand and only moves once the zone is already short.
+	## A band on pressure cannot be a lead indicator; it is the alarm, not the
+	## gauge. The only reading a zone publishes that moves before the wall is its
+	## utilization, and the number this project has always published for *"a
+	## utility is going amber"* is doc 04 §5.10's `OVERLAY_WARNING_R`. One
+	## constant, two utilities, no third invented number.
+	const WATER_RELIEF_RATIO := PowerGrid.OVERLAY_WARNING_R
+	## One game-day between water purchases, for doc 92 §61.4's own reason: a
+	## bought pump is not a *supplying* pump until its crew is done, and an agent
+	## that re-reads the same short zone every game-hour bought **64 pumps for
+	## $2,946,924** on seed 9001 and still did not finish the level.
+	const WATER_COOLDOWN := 24
+
 	## KNOB 1 — maintenance. `disaster_neglect` sets this false and changes
 	## nothing else: no repair, no priority class, no transformer. Everything it
 	## builds, it builds exactly as `balanced` would.
@@ -2191,6 +2510,21 @@ class Balanced extends Strategy:
 	## `TAX_RATE_BASE` 0.09. `tax_squeezer` sets the top detent and changes
 	## nothing else.
 	var tax_target: int = -1
+	## KNOB 3 — the water planner (Wave 26, doc 92 §67.5). `curriculum` sets it
+	## true; every other strategy in this file leaves it false.
+	##
+	## **Why it is a knob and not simply the rule.** `_lead_water` belongs beside
+	## `_lead_generation` — it is the same sentence one utility over, *buy the
+	## capacity before the refusal* — and it is written there. But `_grow` is the
+	## ladder EVERY `Balanced` descendant walks, and doc 92 has published seven
+	## matrix rows, a 50-game-day dark share and nine balance gates fitted to
+	## what that ladder buys. Turning a new purchase on for all of them would
+	## move every one of those numbers at once, and doc 92 §62.9's merge addendum
+	## ruled that this wave ships the planner rather than another re-fit. So the
+	## rule is written once, in the right place, and switched on for the ONE arc
+	## gate 21 measures — which is the same controlled-pair discipline
+	## `disaster_neglect` and `tax_squeezer` are built on.
+	var plans_water: bool = false
 
 	var _residential_streak: int = 0
 	var _civic_at_level: int = -1
@@ -2199,6 +2533,7 @@ class Balanced extends Strategy:
 	var _grid_hour: int = -1000
 	var _feeder_hour: int = -1000
 	var _hotspot_hour: int = -1000
+	var _water_hour: int = -1000
 	## Set while the trunk is past `FEEDER_RELIEF_RATIO` and every feeder slot in
 	## the city is full — i.e. while the ONE purchase that would fix it is a
 	## substation the agent cannot yet afford. It stands the land fund down (see
@@ -2411,6 +2746,13 @@ class Balanced extends Strategy:
 		#      doc 92 §63.3). See `GENERATION_RELIEF_RATIO` for the measurement.
 		if maintains and _lead_generation(api, spare):
 			return
+		# 0a1. WATER, on the same argument and the same band (Wave 26, doc 92
+		#      §67.5): a zone whose demand has reached `WATER_RELIEF_RATIO` of
+		#      its supply refuses every upgrade in it, and the fix is a
+		#      construction job. Gated on KNOB 3 — see `plans_water` for why the
+		#      rule is written here and switched on for one arc.
+		if plans_water and maintains and _lead_water(api, hour, spare):
+			return
 		# 0a. The TRUNK, before the tap: a saturated feeder takes its whole
 		#     subtree dark, and no number of transformers under it helps.
 		if maintains and _relieve_feeders(api, hour, spare):
@@ -2557,6 +2899,66 @@ class Balanced extends Strategy:
 		if spare < api.build_cost(GENERATION_ARCHETYPE):
 			return false
 		return bool(api.place(GENERATION_ARCHETYPE)["ok"])
+
+	## **Water ahead of the refusal** — `_lead_generation`'s sentence one utility
+	## over (Wave 26, doc 92 §67.5, report 98 RR-216). One reading in, three
+	## purchases out, in the order a competent player takes them:
+	##
+	## 1. **A new component beside the short zone**, when the map still has a
+	##    3×3 with a main in reach. This is the cheap answer and the one doc 09
+	##    §2.14.2's level 5 teaches.
+	## 2. **The node that BINDS the zone's supply chain**, when it does not —
+	##    `Api.upgrade_water_node` walks doc 05 §2.5's `min(source, treatment,
+	##    pumps)` and raises the smallest term, which is the only order that
+	##    turns money into water (see that method for the measurement).
+	## 3. **The transformer behind that node**, when doc 04 is what refused it.
+	##    That is inside `upgrade_water_node`, because the refusal is what names
+	##    the component and nothing above it can see the name.
+	##
+	## Budget-gated out of the same surplus everything else comes from, on the
+	## same one-a-day spacing every capacity rule in this file uses, and
+	## `E_NO_VERB`-safe: a harness whose command layer has no water verbs still
+	## walks the rest of the ladder.
+	func _lead_water(api: Api, hour: int, spare: int) -> bool:
+		if not api.has_verb("cmd_upgrade_water_component"):
+			return false
+		if hour - _water_hour < WATER_COOLDOWN or spare <= 0:
+			return false
+		var zone_key := api.water_pinch_zone(WATER_RELIEF_RATIO)
+		if zone_key == "":
+			return false
+		# **Raise the term that BINDS, and never a pump for its own sake.** The
+		# first draft of this rule opened with `place_water_component("pump")`,
+		# because that is the sentence doc 92 §61.4 wrote and doc 09 §2.14.2's
+		# level 5 teaches. Measured over 45 game-days on the three matrix seeds
+		# it bought **39 / 39 / 40 pumps for $1,803,048 / $1,803,620 /
+		# $1,852,052** and moved the zone's supply by nothing at all — the zone
+		# was TREATMENT-bound, so every one of those pumps was a 3×3 shell, a
+		# lateral main and 60 kW of new load buying zero cubic metres. It cost
+		# seed 4242 a whole rung (level 6 → 5) and every seed 700–1,800
+		# residents. So the upgrade door — which walks the chain and raises the
+		# smallest term — goes FIRST, and a new component is what answers a chain
+		# whose every node is already at doc 05's MVP cap.
+		var bought := bool(api.upgrade_water_node(zone_key, spare)["ok"])
+		if not bought:
+			var kind := api.binding_supply_kind(zone_key)
+			if kind != "" and spare >= api.water_quote(kind, 1):
+				bought = bool(api.place_water_component(kind, 1).get("ok", false))
+		# **Here the clock starts on the ATTEMPT, and the difference from
+		# [Curriculum._relieve] is COST rather than doctrine.** `_relieve` starts
+		# its cooldown on the purchase because a failed relief buys nothing and
+		# there is nothing to wait for; that argument still holds, and it is
+		# about opportunity. This rule's failed attempt is not free: the site
+		# scan prices every free footprint on every READY block
+		# (`WATER_SITE_PREVIEWS`), and a scan that found nothing this game-hour
+		# finds nothing the next one — the map cannot change until a
+		# construction job completes, which takes doc 02's hours. So a whole
+		# game-day between site searches is the same wait a player takes, and it
+		# is what keeps a 45-game-day run inside the same wall-clock the
+		# unplanned arc took. Returning `false` still lets the hour fall through
+		# to the rest of the ladder; only the water rule stands down.
+		_water_hour = hour
+		return bought
 
 	## True while any generating shell is building or upgrading. `Building.state`
 	## is `under_construction` for both jobs (doc 02 §2.2), and a plant that is
@@ -2742,6 +3144,12 @@ class DisasterNeglect extends Balanced:
 ##     taught route take?*
 class Curriculum extends Balanced:
 
+	## KNOB 3, on (Wave 26, doc 92 §67.5). The taught route is the one arc whose
+	## capstone is a UTILITY wall, so it is the one arc that plans its water.
+	## Nothing else about this agent changes with it.
+	func _init() -> void:
+		plans_water = true
+
 	## Objectives no verb can advance. Population and happiness are consequences,
 	## an endurance streak is time, a resolved incident is doc 06's to create, and
 	## a block finishes developing on doc 09's six-phase clock. The agent plays on
@@ -2790,6 +3198,16 @@ class Curriculum extends Balanced:
 	## One game-day between capacity purchases — see [_relieve] for the
 	## measurement that set it.
 	const RELIEF_COOLDOWN_H := 24
+
+	## How far a parallel transformer may be sited from the building that was
+	## refused, when the component doc 04 named is already at the top of its
+	## ladder (Wave 26, doc 92 §67.2). **Doc 09's land block, 16 tiles on a
+	## side** — the unit the player buys, develops and pays tax on, so a tap
+	## inside it is copper on ground the city already owns. `HOTSPOT_RADIUS`'s
+	## 7×7 is the inner square this widens, and `Api.relief_spot_ring` scans that
+	## square in exactly the old order first, so nothing that already found a
+	## site can move.
+	const RELIEF_RADIUS := Api.BLOCK_TILES
 	## The game-hour the last capacity purchase landed on. `-RELIEF_COOLDOWN_H`
 	## so the first one is free.
 	var _relief_hour: int = -RELIEF_COOLDOWN_H
@@ -3057,26 +3475,74 @@ class Curriculum extends Balanced:
 		# map is momentarily full gets one try a game-day and spends the level
 		# waiting. A failed relief buys nothing, so there is nothing to wait for.
 		var bought := false
-		# Both arms try the SAME two doors in the same order — build beside it,
-		# and if the map has no room left, build it taller. A full map is not a
-		# hypothetical here: seed 9001 reaches level 7 with 328 apartments and
-		# 164 offices standing (doc 92 §61.4).
+		# **Buy the thing doc 04 NAMES, then the thing beside it** (Wave 26,
+		# doc 92 §67.2, report 98 RR-213). This used to try the parallel
+		# transformer FIRST and fall back to the named component, and both halves
+		# were wrong on a full map. `PowerGrid.can_upgrade_power` returns the
+		# component whose post-upgrade ratio binds (`at`) and its `kind`, because
+		# doc 04 §5.3 says the answer to a transformer at 1.009 is a bigger
+		# transformer and the answer to a feeder at 0.93 is more copper; an agent
+		# that opens with a $2,800 tap it has to find a site for, when the
+		# refusal has already told it $6,900 re-rates the exact component that
+		# refused, is not reading. Measured at the fork (seed 1337, game-day 25):
+		# the ring found no site at all, and PT-053's own rung previewed OK.
 		match String(blocked["blocker"]):
 			"E_POWER_HEADROOM":
-				var level := int(blocked["transformer_level"])
-				var tile := api.relief_spot_near(blocked["tile"], level, HOTSPOT_RADIUS)
-				bought = tile.x >= 0 and bool(api.place_grid_component(
-						"transformer", tile, level)["ok"])
-				if not bought:
-					bought = bool(api.upgrade_grid_component(
-							String(blocked.get("power_at", "")))["ok"])
+				bought = _relieve_power(api, blocked)
 			"E_WATER_HEADROOM":
-				bought = bool(api.place_water_component("pump", 1).get("ok", false))
+				# **Taller before wider, and taller IN THE ZONE THAT REFUSED**
+				# (Wave 26, doc 92 §67.3). Doc 92 §61.4 wrote this arm the other
+				# way round — build beside it, and only build it taller when the
+				# map is full — and `_lead_water`'s own measurement is what
+				# overturns it: a new pump in a treatment-bound zone is a 3×3
+				# shell and 60 kW of load for zero cubic metres. The upgrade door
+				# walks doc 05 §2.5's chain and raises its smallest term, which
+				# is the only purchase that can answer this refusal at all.
+				var zone_key := api.zone_key_of(String(blocked["sim_id"]))
+				bought = bool(api.upgrade_water_node(zone_key)["ok"])
 				if not bought:
-					bought = bool(api.upgrade_water_node()["ok"])
+					var kind := api.binding_supply_kind(zone_key)
+					bought = kind != "" and bool(api.place_water_component(
+							kind, 1).get("ok", false))
 		if bought:
 			_relief_hour = api.hour
 		return bought
+
+	## The power half, in doc 04 §5.3's own order (Wave 26, doc 92 §67.2).
+	##
+	##   1. **The component that BINDS.** `blocked.power_kind` is doc 04's word
+	##      for what it is. A `transformer` and a `feeder` both re-rate one rung
+	##      through `cmd_upgrade_grid_component`; a `substation` is a BUILDING
+	##      (report 98 C-30) and that command refuses it, so it goes up doc 02's
+	##      ladder like any other shell.
+	##   2. **A parallel transformer**, out to doc 09's land block rather than
+	##      the old 7×7 ring — the fallback for the case the named component is
+	##      already at the top of its ladder.
+	##
+	## Every exit is in the action log now, so a run that bought nothing says
+	## which door refused it and why.
+	func _relieve_power(api: Api, blocked: Dictionary) -> bool:
+		var at := String(blocked.get("power_at", ""))
+		var kind := String(blocked.get("power_kind", ""))
+		if at != "":
+			if kind == "substation":
+				# Doc 04 §2.2's 6,000 → 14,000 kW rung and the third feeder
+				# slot, bought where every other shell upgrade is bought.
+				if bool(api.upgrade(at)["ok"]):
+					return true
+			elif bool(api.upgrade_grid_component(at)["ok"]):
+				return true
+		var level := int(blocked["transformer_level"])
+		var spot := api.relief_spot_ring(blocked["tile"], level, HOTSPOT_RADIUS,
+				RELIEF_RADIUS)
+		var tile: Vector2i = spot["tile"]
+		if tile.x < 0:
+			# The ring's cost is its `previews`, and "no spot" has to say how hard
+			# it looked — the same rule `place_water_component` follows for its
+			# E_NO_SITE (Wave 26 merge; `tools/measure_utility_plan.gd` reads it).
+			api.note_no_relief_spot(int(spot["previews"]), RELIEF_RADIUS)
+			return false
+		return bool(api.place_grid_component("transformer", tile, level)["ok"])
 
 	## How much of a road objective is left to lay, floored at one tile. The
 	## agent lays the REMAINDER in one run rather than the whole target, so a

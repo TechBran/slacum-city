@@ -38,6 +38,7 @@ extends SimTest
 
 const Rig := preload("res://tests/balance_gate_rig.gd")
 const ECONOMY_DATA := "res://data/economy.json"
+const WATER_DATA := "res://data/water.json"
 
 const GATE_SEED := 1337
 ## The three seeds doc 92's strategy matrix is run on. A gate whose RULING was
@@ -224,6 +225,15 @@ func _matrix_mean(strategy: String, key: String, days: int = LONG_DAYS) -> float
 static func _pacing() -> Dictionary:
 	return (StarterCityLoader.read_json(ECONOMY_DATA).get("pacing_guardrails", {})
 			as Dictionary)
+
+
+## Doc 05 §5.8's overlay bands: a zone under `warn` is in the CRITICAL band, and
+## that is the floor gate 21's water assertion reads (Wave 26, doc 92 §67.7).
+## Read from doc 05's own file rather than restated, so a retune moves both.
+static func _water_critical_band() -> float:
+	var bands: Dictionary = (StarterCityLoader.read_json(WATER_DATA)
+			.get("effects", {}) as Dictionary).get("bands", {})
+	return float(bands.get("warn", 0.35))
 
 
 # =============================================== 1–2 the founding anchors (§4)
@@ -2478,13 +2488,52 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 	# would have passed the old one. Both are `>=`, so the wave that teaches the
 	# agent doc 05's mains gets a failing gate telling it to raise the floor
 	# rather than a silent pass.
+	# **WAVE 26 — the planner landed, the count went 0 → 2 of 3, and the bound
+	# stays at 1** (doc 92 §67.6, §67.7). A91-D-123's utility planner is built:
+	# `tools/measure_curriculum.gd --days=45` reads level 7 at game-hour **593**
+	# on seed 1337 and **301** on seed 4242, against `—` on all three at the fork
+	# (`2cf4907`, doc 92 §66.7's own composed table).
+	#
+	# **Why 1 and not 2, when 2 is what was measured.** The COUNT is 2; the SET
+	# is seed-chaotic, and this wave measured that directly rather than inferring
+	# it. Two versions of the same planner, differing only in whether the water
+	# arm opens on a pump placement or on the term that binds (doc 92 §67.4),
+	# finish {1337, 9001} and {1337, 4242} respectively — the count is 2 both
+	# times and only ONE seed is in both sets. Doc 92 §62.9's merge addendum said
+	# of the bound it replaced that it *"sits on the same knife-edge as the count
+	# it replaced"*, and a floor of 2 would put this cell straight back on it.
+	# So the count keeps the coarsest bound it has ever had, and the STRENGTH
+	# lives in the two per-seed assertions below, neither of which a re-roll of
+	# doc 06's incident stream can flip.
 	assert_true(reached_top >= 1,
 			("%d of %d seeds reached curriculum level %d inside %d game-days; "
-					+ "the ruled floor is 1 (measured game-hour 361 on seed "
-					+ "4242 — doc 92 §62.9). A capstone no seed can "
-					+ "finish is a $5,000,000 promise the game cannot keep")
+					+ "the ruled floor is 1 (measured game-hour 593 on seed 1337 "
+					+ "and 301 on seed 4242 — doc 92 §67.6). A capstone no seed "
+					+ "can finish is a $7,000,000 promise the taught route cannot keep — the HARNESS, not the game: doc 92 §67.1 drove the player's own doors through the same wall and cleared it")
 					% [reached_top, MATRIX_SEEDS.size(), GoalSystem.top_level(),
 					CURRICULUM_DAYS])
+	# **The assertion the planner is FOR** (Wave 26, doc 92 §67.7). A seed that
+	# stops short must not be stopped by a pressure zone the agent was supposed
+	# to keep supplied. Doc 05 §5.8's own bands say what "short" means — CRITICAL
+	# is under `bands.warn` — and the two sides of this wave separate on it
+	# exactly: at the fork the zone the level-7 high-rise drinks from sat at
+	# **0.21**, and on this tree every live zone on every seed ends at **1.00**.
+	# It is read from the doc-05 tables through `WaterData.effects`, so a retune
+	# of the bands retunes the gate; and unlike the count it is a statement about
+	# the CITY rather than about which seed got lucky.
+	var critical := _water_critical_band()
+	for seed_value in MATRIX_SEEDS:
+		var doc_for_zones := _run("curriculum", CURRICULUM_DAYS, int(seed_value))
+		for raw_zone: Variant in (doc_for_zones.get("zones", []) as Array):
+			var zone: Dictionary = raw_zone
+			assert_true(float(zone["pressure"]) >= critical,
+					("seed %d left pressure zone %s at %.2f — doc 05 §5.8's "
+							+ "CRITICAL band. The utility planner's whole job is "
+							+ "that no zone ends there (measured 0.21 at the "
+							+ "Wave-26 fork and 1.00 on every seed after it, "
+							+ "doc 92 §67.7)")
+							% [int(seed_value), String(zone["key"]),
+							float(zone["pressure"])])
 	for seed_value in MATRIX_SEEDS:
 		var stopped: Dictionary = (_run("curriculum", CURRICULUM_DAYS,
 				int(seed_value)))["summary"]

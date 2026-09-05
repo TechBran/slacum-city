@@ -621,3 +621,125 @@ func test_an_edited_graph_matches_a_rebuild_from_tiles() -> void:
 		if not incremental.has(key):
 			missing += 1
 	assert_eq(missing, 0, "and the same edges, tile for tile")
+
+
+# ============================ doc 93 §BA — a water works IS its doc-05 nodes
+
+## **The hole doc 04 closed in Wave 6 and doc 05 kept for twenty waves.**
+## `cmd_place_building("water_facility", …)` stamped a shell that decayed, was
+## billed doc 03's `water_works` staffing, drew 60 kW and hosted no node at all —
+## measured on the fork as `water.nodes.size()` 22 → 22 across a successful
+## placement. It now goes through the door that has always built all three parts
+## (§BA1), so this asserts the JOIN rather than the command: whatever the shell
+## is, there is a node on it.
+func test_the_building_door_cannot_build_an_empty_water_works() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.treasury.balance = 500_000
+	var site := _water_site(sim, Vector2i(3, 3))
+	assert_true(site.x >= 0, "the core has a serviceable pump site near a main")
+	var nodes_before := sim.water.nodes.size()
+	var placed := sim.cmd_place_building("water_facility", site)
+	assert_true(bool(placed["ok"]), str(placed))
+	assert_eq(sim.water.nodes.size(), nodes_before + 1,
+			"the building door built a doc-05 node, not a shell on its own")
+	var sim_id := String(placed["payload"]["sim_id"])
+	var shell: Building = sim.buildings[sim_id]
+	assert_eq(String(shell.archetype), "water_facility")
+	assert_eq(String(shell.variant), sim.catalog.reference_water_variant(),
+			"with no variant asked for, doc 02's own reference variant is built")
+	assert_true(sim.water.nodes.has(String(placed["payload"]["node"])))
+	assert_almost_eq(float(sim._water_kw_by_building[sim_id]), 60.0, 0.001,
+			"and its power draw is the node's, not the shell column's fallback")
+
+
+## §BA1's siting half: the building door now answers doc 05's refusals instead of
+## skipping them, which is the whole reason it delegates to the command rather
+## than copying its body.
+func test_the_building_door_answers_doc05s_siting_rules() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.treasury.balance = 500_000
+	# The unconditional half: doc 05 §6's check ORDER now answers this door.
+	# `cmd_place_building` used to open on its own `E_NOT_OWNED`, so an
+	# off-world tile came back owned-by-nobody rather than out of bounds.
+	assert_eq(sim.cmd_place_building("water_facility", Vector2i(-1, 0))["reason_code"],
+			&"E_OUT_OF_BOUNDS", "doc 05's order, not doc 02's")
+	assert_eq(sim.cmd_place_building("water_facility", Vector2i(20, 20))["reason_code"],
+			&"E_NOT_OWNED", "and its ownership check still comes before the money")
+	var far := Vector2i(-1, -1)
+	for z in range(CORE_LO, CORE_HI):
+		for x in range(CORE_LO, CORE_HI):
+			var t := Vector2i(x, z)
+			if sim.world.grid.can_place(t, Vector2i(3, 3)) \
+					and sim.water.nearest_main_tile(t, 8).is_empty():
+				far = t
+				break
+		if far.x >= 0:
+			break
+	if far.x < 0:
+		return  # every free footprint in the core is in tap range; nothing to assert
+	var refused := sim.cmd_place_building("water_facility", far)
+	assert_false(bool(refused["ok"]))
+	assert_eq(refused["reason_code"], &"E_NO_MAIN",
+			"a water works with no main in reach is refused before it is paid for")
+
+
+## **§BA1(2): `l7_water_facility` buys water now.** `_commission_grid_node` has
+## re-rated a substation's component on the shell's own upgrade since doc 92
+## §17.3 fix 2; `_commission_water_nodes` never did, so doc 09 §2.14.2's capstone
+## row asked the player for a purchase that bought a taller building and nothing
+## else. `WTR-1` hosts an intake, a treatment train and a pump, and all three
+## move on the one job (§BA1's "one plant, one bill").
+func test_upgrading_a_water_works_raises_the_nodes_it_hosts() -> void:
+	var sim := CitySim.boot_from_files()
+	sim.treasury.balance = 5_000_000
+	var hosted: Array[String] = []
+	for key: Variant in sim.water.nodes:
+		var node: WaterNode = sim.water.nodes[key]
+		if node.power_ref == "WTR-1" and node.variant != &"junction":
+			hosted.append(String(key))
+	hosted.sort()
+	assert_true(hosted.size() >= 3, "doc 09 authors WTR-1 with three nodes")
+	for id: String in hosted:
+		assert_eq((sim.water.nodes[id] as WaterNode).level, 1)
+	var supply_before := float(sim.water.inventory()["pump_capacity_m3h"])
+	# Doc 04 has to be able to carry it; the gate is asked about the NODES' own
+	# kW step (§BA2), which for this plant is +190 kW rather than the shell
+	# column's +85.
+	assert_true(sim.water_shell_node_delta_kw("WTR-1", 2) > 100.0,
+			"the gate is asked about three nodes, not one column")
+	var preview := sim.cmd_upgrade_building("WTR-1", true)
+	if not bool(preview["ok"]):
+		# A founding city that cannot carry the step is a legitimate answer; the
+		# ruling being tested is what happens when the job LANDS.
+		assert_true((preview["payload"]["blockers"] as Array).size() > 0)
+		return
+	assert_true(bool(sim.cmd_upgrade_building("WTR-1")["ok"]))
+	for h in 60:
+		sim.advance_coarse_hours(1, false)
+	assert_eq((sim.buildings["WTR-1"] as Building).level, 2)
+	for id: String in hosted:
+		assert_eq((sim.water.nodes[id] as WaterNode).level, 2,
+				"%s came up with the shell it is hosted on" % id)
+	assert_true(float(sim.water.inventory()["pump_capacity_m3h"]) > supply_before,
+			"and the city's supply actually grew")
+
+
+## **§BA1(3): the shell may not out-climb the nodes it is.** `data/water.json`
+## ships an intake and a treatment train at two rungs and a pump at three, with
+## `levels_4_5_enabled` off, so a `WTR-1` that reached doc 02's fifth rung would
+## be a plant the player paid to enlarge four times that treats and pumps what it
+## always did. Doc 02 §2.14 already named doc 05 as this ladder's authority.
+func test_a_water_shell_stops_where_doc05s_ladder_does() -> void:
+	var sim := CitySim.boot_from_files()
+	assert_eq(sim.water_shell_top_level("WTR-1"), 2,
+			"min(source 2, treatment 2, pump 3) under levels_4_5_enabled = false")
+	assert_true(sim.catalog.max_level_of("water_facility") > 2,
+			"doc 02's own column is taller, which is what makes the cap a rule")
+	var shell: Building = sim.buildings["WTR-1"]
+	shell.level = 2
+	shell.stats = sim.catalog.stats("water_facility", 2)
+	sim.treasury.balance = 5_000_000
+	var refused := sim.cmd_upgrade_building("WTR-1", true)
+	assert_false(bool(refused["ok"]))
+	assert_true((refused["payload"]["blockers"] as Array).has(&"E_MAX_LEVEL"),
+			"the shell stops at the smallest of its nodes' doc-05 caps")

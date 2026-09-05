@@ -10513,3 +10513,144 @@ S5 (doc 12 D-116).
 	if ui_root != null:
 		ui_root.close_transformer_panel()
 ```
+
+## 70. WAVE 26 — the utility planner: the door nobody could open, and the term that binds (binding)
+
+*Forked off `2cf4907` (main after Waves 23, 24 and 25, whose merge record is doc
+92 §66.7). The lane exists for one red test: `tools/run_suite.sh` on main was
+2,880 tests with ONE failure —*
+`test_balance_gates.gd::test_gate_21_the_curriculum_is_completable_and_paced`,
+*"0 of 3 seeds reached curriculum level 7 inside 45 game-days; the ruled floor is
+1". Every merged lane passed that gate alone; the COMPOSITION failed it. Doc 92
+§62.9's merge addendum predicted exactly this and ruled: "A91-D-123's
+water-headroom planner is the fix; another re-fit is not."*
+
+*Rulings doc 93 §BA. Measured doc 92 §67. Defect rows doc 91 A91-D-137..A91-D-139
+(and A91-D-123's closing row). Surfaces doc 12 §2.7 D-120.*
+
+**What was there before this lane.** The agent could see the wall and had no
+hands. `Curriculum._relieve` answered a power refusal by looking for a site for a
+parallel transformer inside a 7×7 ring and, failing that, by calling
+`Api.upgrade_grid_component` — a door that had been returning `E_NO_VERB` on its
+first line since the day it shipped, without logging, because
+`cmd_upgrade_grid_component` was never added to `KNOWN_VERBS`. It answered a
+water refusal by buying a pump in a zone whose intake and treatment train were
+the binding terms, so the pump added nothing. And it had no rule at all for
+buying supply BEFORE a refusal. Meanwhile `cmd_place_building("water_facility")`
+would sell the player a water works that hosted no doc-05 node and supplied
+nothing at all.
+
+### RR-213 — the relief reads the refusal, and every door logs (§67.1, §67.2)
+
+**The root cause, and it is one line of data.** `Playtest.KNOWN_VERBS` is the
+only source of `Api.verbs`; `has_verb` answers false for anything absent from it.
+`cmd_upgrade_grid_component` was absent. Measured at the fork with
+`tools/probe_utility_wall.gd` on seed 1337 at game-day 25:
+
+    KNOWN_VERBS has cmd_upgrade_grid_component  false ; api.has_verb -> false ; sim has method -> true
+    blocked_upgrade(high_rise) = {sim_id P-071, blocker E_POWER_HEADROOM, cost 29900, power_at PT-053}
+    _relieve -> false ; log grew by 0 ; _relief_hour still 430  (at hour 599, cooldown 24)
+    sim.cmd_upgrade_grid_component("PT-053", true) -> ok, $6,900, L3 -> L4, 400 -> 1000 kW
+
+**Three changes, and the third is the one that keeps the first two honest.**
+
+1. **The verb is registered**, and `Api.upgrade_grid_component` now logs *every*
+   exit — the empty target, the missing verb and the refused preview — carrying
+   the command's own reason code instead of overwriting it with `E_BLOCKED`.
+2. **`_relieve` buys the component doc 04 NAMES.** `PowerGrid.can_upgrade_power`
+   returns `at` and `kind` because doc 04 §5.3 says the answer to a transformer
+   at 1.009 is a bigger transformer and the answer to a feeder at 0.93 is more
+   copper (Wave 17, A91-D-55). `Curriculum._relieve_power` re-rates that
+   component first — a transformer or a feeder through
+   `cmd_upgrade_grid_component`, a substation through doc 02's building ladder,
+   because report 98 C-30 makes a substation a BUILDING — and only falls back to
+   a parallel transformer. `Api.blocked_upgrade` asks the headroom with the same
+   `×UPGRADE_HEADROOM_MARGIN` the gate used, so the component it names is the one
+   that actually refused.
+3. **`test_every_command_the_harness_drives_is_on_the_verb_roster`** reads
+   `tools/playtest.gd`'s own source for `sim.cmd_*` call sites and asserts each is
+   on the roster. The existing verb-probe test walks the list and asks whether
+   each entry is live, which can never see a call site the list has not heard of.
+
+### RR-214 — the parallel-transformer search, widened to doc 09's land block (§67.2)
+
+`Api.relief_spot_ring(centre, level, inner, outer)` scans the `inner` square in
+**exactly** `relief_spot_near`'s row-major order first — so wherever an answer
+existed before, the identical tile is returned and no arc that was already
+finding a site can move — and then walks Chebyshev rings out to `outer`,
+returning `{tile, previews}` so the cost of the widening is a measurement rather
+than a guess. `Curriculum.RELIEF_RADIUS` is `Api.BLOCK_TILES` (16), doc 09's land
+block: the unit the player buys, develops and pays tax on, so a tap inside it is
+copper on ground the city already owns.
+
+### RR-215 — the water door answers its own power refusal, and buys the term that binds (§67.3, §67.4)
+
+**Doc 05 §2.5's supply term is a chain.** `upstream_cap = min(Σ source yield, Σ
+treatment throughput)`; each pump's `share` is its rated slice of that cap; the
+zone's supply is the sum of the shares, capped by `feed_capacity`. So a pump
+upgrade raises a treatment-bound zone's supply by **exactly zero**. Measured at
+the fork on the zone the level-7 high-rise stands in:
+
+    source_yield 105.1 | treatment 78.1 | pump rated 80.0 | feed_cap 214.0
+    upstream_cap 78.2 -> supply 77.8 against demand 127.3, pressure 0.21, headroom 0.0
+
+`Api.upgrade_water_node(zone_key, budget)` now walks `supply_chain_order` — the
+smallest term first, lowest rung inside a term, id as the tie-break, tanks never
+— and when every node in the chain is refused `E_POWER_HEADROOM` it buys the grid
+component doc 04 names behind the first of them and comes back for the node on
+the next game-day through the existing one-purchase cooldown. At the fork all
+four upgradeable nodes were refused for power at their OWN transformers (`T-15`
+three times, `PT-095` once) with the bulk pool at 19 % load, and both of those
+transformers previewed an OK $6,900 rung.
+
+**And the site scan says how hard it looked.** `WATER_SITE_PREVIEWS` goes 96 →
+4,096: the level-7 city this wave measured has **16 READY blocks**, i.e. at most
+`16 × 14² = 3,136` candidate origins for a 3×3 pump, so the cap now sits above
+the whole search on the city that exposed the problem rather than below its first
+block. It is not a proof for a fully-developed 49-block map, which is why the
+`E_NO_SITE` log row carries `previews`, `blocks` and `capped` — a city that
+outgrows it says so on the line, instead of stopping silently the way 96 did.
+
+### RR-216 — `_lead_water`: the purchase before the refusal (§67.5)
+
+`Balanced._lead_water`, filed beside `_lead_generation` in `_grow` because it is
+the same sentence one utility over, gated on KNOB 3 `plans_water` which only
+`curriculum` sets (ruling 93 §BA4, deferral doc 91 A91-D-139). Trigger:
+`Api.water_pinch_zone(WATER_RELIEF_RATIO)` — a zone at or past
+`PowerGrid.OVERLAY_WARNING_R` (0.75) of `demand / supply`, or already under doc
+05's own `upgrade_min_pressure` (0.55). Doc 05's overlay bands are on PRESSURE,
+which reads 1.0 for every zone with supply at or above demand, so they are the
+alarm and not the gauge; the only reading a zone publishes that moves before the
+wall is its utilization, and 0.75 is the band this project already publishes for
+*"a utility is going amber"*.
+
+`tools/measure_utility_plan.gd` is the instrument: every water and grid purchase
+on the arc with its game-hour, its verdict and its price, plus the doc-05 zone
+table the run ended on (`BalanceGateRig.run` gains an additive `zones` block for
+it).
+
+### What this lane shipped, and what it did not
+
+**Files.** `tools/playtest.gd` (the roster entry, the logged door,
+`relief_spot_ring`, `supply_chain_order`, `binding_supply_kind`,
+`water_power_binder`, `water_pinch_zone`, `zone_key_of`, `_relieve_power`,
+`_lead_water` and KNOB 3 `plans_water`), `sim/city_sim.gd` (doc 93 §BA's
+placement delegation, `_rerate_water_nodes`, `water_shell_top_level`,
+`water_shell_node_delta_kw`), `ui/build_controller.gd` (§BA3's one-line route),
+`tests/balance_gate_rig.gd` (additive `zones` and `blocked` blocks),
+`tests/test_balance_gates.gd` (gate 21's new per-seed water assertion),
+`tests/test_playtest_harness.gd`, `tests/test_infra_verbs.gd`,
+`tests/test_power_operations.gd` (doc 92 §67.12), and the new
+`tools/measure_utility_plan.gd`.
+
+**The bound was NOT moved** — doc 92 §62.9's addendum asked for the planner
+rather than another re-fit, and it got one. `reached_top >= 1` reads 2 of 3 with
+margin instead of 0 of 3 in failure, and the cell gained an assertion about the
+CITY rather than about which seed got lucky (doc 92 §67.7).
+
+**What is deferred, and both are named rather than hidden.** `balanced` still has
+no water planner (doc 93 §BA4), and a zero-water-delta upgrade is still refused
+for a building in no pressure zone (doc 91 A91-D-139). And the wall this wave
+uncovered — doc 05's MAINS, both as `feed_capacity` and as the tile factor under
+`pressure_at` — is the next lane's, with `cmd_place_water_main` sitting probed,
+listed and undriven (doc 92 §67.8).

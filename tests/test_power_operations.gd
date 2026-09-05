@@ -161,9 +161,26 @@ func test_a_a_second_power_station_adds_to_the_pool_and_clears_no_transformer_bl
 	# improvement". Measured on three cities, every POWER_CAPACITY blocker bound
 	# at a transformer while the pool had headroom (doc 92 §48.1). The model is
 	# right — supply rises by exactly the rating — and the transformer is the wall.
+	#
+	# **The demonstration is now made against `can_upgrade_power` directly, and
+	# the reason is doc 93 §BA2** (Wave 26). It used to read
+	# `cmd_upgrade_building("WTR-2", true)`'s blocker list, and that reading was
+	# standing on an OVERSTATED delta: `WTR-2` is a `tank` shell hosting one
+	# doc-05 tank node, which `_refresh_water_kw` bills the city at **5 kW**, and
+	# the gate was charging it doc 02's `water_facility` column — the PUMP
+	# reference row — at 60 → 145 kW, i.e. **97.75 kW after the margin, nineteen
+	# times what the building draws** (97.75 / 5.0 = 19.55; doc 92 §67.12). §BA2 makes the gate ask about the nodes
+	# the tick bills, so `WTR-2`'s own upgrade is no longer transformer-bound and
+	# doc 92 §48.1's example needed a truer one. **The finding this test exists
+	# for does not move at all**: the delta the audit measured is still refused
+	# at the same transformer, at the same ratio, with the pool 15,000 kW clear.
 	var sim := _starter(1.0)
-	var blocked_before := _blockers(sim.cmd_upgrade_building("WTR-2", true)).has(&"E_POWER_HEADROOM")
-	assert_true(blocked_before, "WTR-2 is the starter city's one transformer-bound upgrade")
+	var audit_delta := _next_delta_kw(sim, "WTR-2")
+	assert_almost_eq(audit_delta, 97.75, 0.05, "the audit's own +97.7 kW")
+	var before_gate := sim.grid.can_upgrade_power("WTR-2", audit_delta, 25.0)
+	assert_false(bool(before_gate["ok"]),
+			"the audit's delta is refused on the starter city's grid")
+	assert_eq(String(before_gate["at"]), "T-18", "and a transformer is what binds")
 	var supply_before := sim.grid.system_supply_kw
 	assert_almost_eq(supply_before, 8000.0, 1e-9)
 	sim.treasury.credit(900_000, &"test_grant")
@@ -182,8 +199,19 @@ func test_a_a_second_power_station_adds_to_the_pool_and_clears_no_transformer_bl
 	sim.advance_hours(1.0)
 	assert_almost_eq(sim.grid.system_supply_kw, supply_before + 8000.0, 1e-9,
 			"the pool grew by the plant's rating, exactly")
-	assert_true(_blockers(sim.cmd_upgrade_building("WTR-2", true)).has(&"E_POWER_HEADROOM"),
+	var after_gate := sim.grid.can_upgrade_power("WTR-2", audit_delta, 25.0)
+	assert_false(bool(after_gate["ok"]),
 			"and T-18 still binds — a plant is not the fix for a transformer")
+	assert_eq(String(after_gate["at"]), "T-18")
+	# The pool grew by 8,000 kW and the binding ratio did not come DOWN: it is
+	# still the 2.08 band `test_a_the_upgrade_gate_names_the_component_that_binds`
+	# publishes. (It drifts a little between the two readings because an hour of
+	# city passes between them, which is the city living, not the plant helping.)
+	assert_true(float(after_gate["r_after"]) >= float(before_gate["r_after"]) - 0.01,
+			"the plant took nothing off T-18 (%.3f -> %.3f)"
+					% [float(before_gate["r_after"]), float(after_gate["r_after"])])
+	assert_true(float(after_gate["r_after"]) > 2.0,
+			"and it is still past twice its rating")
 	var summary := sim.grid.capacity_summary(25.0)
 	assert_true(float(summary["headroom_kw"]) > 15000.0, "the pool has room to spare")
 	assert_eq(int(summary["transformers"]), 18, "band counts: the roster")

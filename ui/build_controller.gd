@@ -547,8 +547,19 @@ func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 	# reaches the same place, which is what keeps the sheet's tap handler one line.
 	if is_water_kind(p_archetype):
 		return enter_water_component(p_archetype)
-	if p_archetype == WATER_SHELL_ARCHETYPE and is_water_kind(p_variant):
-		return enter_water_component(p_variant)
+	# **And the BARE shell card reaches it too** (Wave 26, doc 93 §BA, doc 12
+	# §2.7 D-120). `enter("water_facility")` with no variant used to fall through
+	# to the plain building path, where the ghost ran doc 02's checks and the
+	# confirm ran `cmd_place_building` — which stamped a water works that hosted
+	# no doc-05 node and supplied nothing. Doc 02 authors this archetype's whole
+	# level table on `reference_variant: "pump"` and doc 03 prices both at the
+	# same $45,000 `water_plant` row, so the shell card with no variant IS the
+	# pump card, and now says so. The ghost and the command are one code path
+	# again: `E_NO_MAIN` is drawn before the player pays for it instead of after.
+	if p_archetype == WATER_SHELL_ARCHETYPE:
+		var wanted := p_variant if is_water_kind(p_variant) \
+				else (sim.catalog.reference_water_variant() if sim != null else "")
+		return enter_water_component(wanted)
 	if sim == null or not sim.catalog.has(p_archetype):
 		cancel()
 		return CommandQueue.fail(&"E_UNKNOWN_ARCHETYPE", {"archetype": p_archetype})
