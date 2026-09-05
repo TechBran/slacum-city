@@ -314,9 +314,23 @@ func test_b_when_no_placeable_transformer_carries_it_the_fix_says_so() -> void:
 	# **The demand this test has to invent grew in Wave 28, and that is the
 	# ruling working.** It used to be 4,600 kW, which was not a synthetic number
 	# at all — it sat between `data_center` L3 (2,600) and L4 (6,630), so this
-	# "impossible" case was a load doc 02 actually shipped. Doc 93 §BC-1 now
-	# forbids that, and gate 34 proves no authored cell reaches this branch, so
-	# the branch can only be entered by a test that hand-writes a stat row.
+	# "impossible" case was a load doc 02 actually shipped.
+	#
+	# **What gate 34 does and does not prove, corrected in the fix pass.** The
+	# first cut of this comment claimed the gate proved "no authored cell reaches
+	# this branch", and that was false twice over. (i) The gate checked the
+	# STEADY-STATE inequality while `cmd_upgrade_building` refuses on `pad_peak +
+	# 1.15 × delta`, and under the real one `data_center` L5→L6 reached
+	# `E_NEEDS_TRANSFORMER` on a real placed building — 6,346 kW against a 6,075
+	# kW envelope. (ii) Reaching `E_NEEDS_TRANSFORMER` is not the same as reaching
+	# the *wall*: a pad past the top rung can still be answered by doc 04 §2.9's
+	# parallel unit, which is the branch above this one and the reason
+	# `PowerActions.rung_needed` now separates `needs_second` from
+	# `no_rung_carries`. What gate 34 proves NOW is BC-1's two clauses: every
+	# authored cell is servable on one rung and every authored STEP is buyable at
+	# the gate — so no authored cell can strand itself on a pad of its own, and
+	# this branch (the biggest placeable transformer, alone or in parallel, still
+	# short) can only be entered by a test that hand-writes a stat row.
 	var sim := _starter()
 	var top: int = (PowerGrid.CAPACITY[&"transformer"] as Array).size()
 	var t18 := sim.grid.component("T-18")

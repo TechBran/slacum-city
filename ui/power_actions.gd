@@ -99,19 +99,30 @@ func transformer_block(component_id: String) -> Dictionary:
 	var band := PowerGrid.capacity_band(peak / maxf(1.0, effective))
 	var served := sim.grid.buildings_served_by(component_id)
 	var rows: Array[Dictionary] = []
-	# The rung the HUNGRIEST customer's next level asks for, and who is asking
-	# (Wave 28, doc 12 D-123). One pass over the rows already built, so S18 can
-	# say "T-04 is L2; the data center under it needs L4" without the player
-	# opening every building panel underneath it to find that out.
+	# The rung the HUNGRIEST customer's next level asks for, who is asking, and
+	# — since Wave 28's fix pass — who cannot be answered by re-rating this pad
+	# at all (doc 12 D-123). One pass over the rows already built, so S18 can say
+	# "T-04 is L2; the data center under it needs L4" without the player opening
+	# every building panel underneath it to find that out.
 	var wanted := int(c["level"])
 	var wanted_for := ""
 	var stranded := ""
+	var second_for := ""
 	for building_id: Variant in served:
 		var row := _customer_row(String(building_id))
 		rows.append(row)
 		if bool(row.get("no_rung_carries", false)):
 			if stranded == "":
 				stranded = String(building_id)
+		# **A pad that no rung can re-rate is not a pad with no answer** (Wave 28
+		# fix pass, doc 04 §2.9). When the load under this unit is past the top
+		# rung, the purchase that clears it is a SECOND transformer beside it,
+		# which `cmd_fix_power_capacity` quotes and sells — so S18 names the
+		# customer that wants one instead of the sentence above, which is for the
+		# case where nothing on the ladder feeds the building at all.
+		elif bool(row.get("needs_second", false)):
+			if second_for == "":
+				second_for = String(building_id)
 		elif int(row.get("needs_rung", 0)) > wanted:
 			wanted = int(row["needs_rung"])
 			wanted_for = String(building_id)
@@ -211,9 +222,9 @@ func transformer_block(component_id: String) -> Dictionary:
 		"customers_need_rung": wanted,
 		"customers_need_bigger": wanted > int(c["level"]),
 		"customers_need_rung_for": wanted_for,
-		"customers_need_capacity_kw": _rung_capacity(wanted),
-		"customers_need_capacity_text": RequirementFormatter.power(_rung_capacity(wanted)),
+		"customers_need_capacity_text": RequirementFormatter.power(rung_capacity(wanted)),
 		"customer_stranded": stranded,
+		"customer_needs_second": second_for,
 		"upstream": upstream,
 		"upgrade": upgrade_quote(component_id),
 		"repair": repair,
@@ -246,12 +257,15 @@ func _customer_row(sim_id: String) -> Dictionary:
 		"sim_id": sim_id,
 		"exists": true,
 		"archetype": String(b.archetype),
-		# The three scalars this file's own summary and S18 read — not the whole
-		# `next_level` block. A customer row is built up to seventeen times per
-		# panel open (doc 92 §65.1) and a field nobody reads is seventeen
-		# dictionaries of nothing.
+		# The three scalars this file's own summary reads to build S18's line —
+		# not the whole `next_level` block, and not one field more than the loop
+		# above consumes. A customer row is built up to seventeen times per panel
+		# open (doc 92 §65.1) and a field nobody reads is seventeen dictionaries
+		# of nothing; the row's `needs_bigger` was exactly that and Wave 28's fix
+		# pass deleted it (the summary compares `needs_rung` to the pad's own
+		# level itself).
 		"needs_rung": int(needs.get("needs_rung", 0)),
-		"needs_bigger": bool(needs.get("needs_bigger", false)),
+		"needs_second": bool(needs.get("needs_second", false)),
 		"no_rung_carries": bool(needs.get("no_rung_carries", false)),
 		"name_key": BuildController.card_name_key(String(b.archetype), String(b.variant)),
 		"name_fallback": str(sim.catalog.archetype_info(String(b.archetype)).get("name",
@@ -397,15 +411,28 @@ func _next_level_block(sim_id: String, b: Building, top: int) -> Dictionary:
 ## because that is what the gate is actually judged on.
 ##
 ## `{host_transformer, host_level, after_kw, needs_rung,
-## needs_capacity_kw, needs_bigger, no_rung_carries}`. `after_kw` is the reading
-## the rung is CHOSEN from — the pad's peak plus the delta — and it is published
-## so `tools/measure_envelope.gd` can print the input beside the answer; a rung
-## nobody can check the arithmetic of is a number to be believed rather than read.
+## needs_capacity_kw, needs_bigger, alone_rung, needs_second, no_rung_carries}`.
+## `after_kw` is the reading the rung is CHOSEN from — the pad's peak plus the
+## delta — and it is published so `tools/measure_envelope.gd` can print the input
+## beside the answer; a rung nobody can check the arithmetic of is a number to be
+## believed rather than read.
 ##
-##   * `needs_rung` **0 means no rung on the ladder carries it** — the wall doc
-##     93 §BC-1 forbids, kept as a distinguishable answer rather than clamped to
-##     the top rung, so a surface can say "nothing you can buy fixes this"
-##     instead of selling a purchase that will not clear.
+##   * `needs_rung` **0 means no rung on the ladder carries THIS PAD's whole
+##     load** — its siblings and its streetlights included. That is a real
+##     answer and it is *not* the end of the road, which is the fault this
+##     function shipped with: doc 04 §2.9's other purchase is a **parallel
+##     transformer**, a second unit beside the first that adoption hands this
+##     building to, and `CitySim.cmd_fix_power_capacity` already sells it. A pad
+##     at 6,150 kW is legal, un-shed and merely past the 0.90 UPGRADE gate, and
+##     every customer under it used to be told *"nothing on the ladder feeds
+##     it"* while the fix verb was quoting a $42,160 transformer that cleared.
+##   * So the wall is asked about the BUILDING, not the pad: `alone_rung` is the
+##     rung a transformer of its own would have to be, from
+##     `CitySim.building_peak_demand_kw` plus the same delta. `needs_second` is
+##     "no rung under this pad, but one beside it carries you" — a purchase, with
+##     a price. `no_rung_carries` is `alone_rung == 0`, which is the only state
+##     in which nothing on doc 04's ladder feeds this building at any price, and
+##     gate 34's BC-1 is what keeps an authored cell out of it.
 ##   * Nameplate, not `cap_eff`: a player buys a nameplate. A unit derated by
 ##     heat or condition can still refuse the upgrade the rung would allow, and
 ##     that is the REPAIR row's sentence, not this one's.
@@ -417,7 +444,8 @@ static func rung_needed(sim: CitySim, sim_id: String, delta_kw: float,
 	var host := String(sim.grid.attachment_of(sim_id))
 	var out := {"host_transformer": host, "host_level": 0,
 			"after_kw": 0.0, "needs_rung": 0, "needs_capacity_kw": 0.0,
-			"needs_bigger": false, "no_rung_carries": false}
+			"needs_bigger": false, "alone_rung": 0, "needs_second": false,
+			"no_rung_carries": false}
 	if host == "" or not sim.grid.has_component(host):
 		return out
 	var c := sim.grid.component(host)
@@ -434,17 +462,27 @@ static func rung_needed(sim: CitySim, sim_id: String, delta_kw: float,
 		peak = maxf(float(c["load_kw"]), float(sim.peak_component_loads().get(host, 0.0)))
 	var after := peak + maxf(0.0, delta_kw)
 	var rung := PowerGrid.transformer_rung_for(after)
+	# **The same question asked about a pad of its own** — doc 04 §2.9's parallel
+	# transformer, which a full pad's arithmetic cannot see. A new unit starts
+	# empty, so what it has to carry is this building's own peak share plus the
+	# delta, and nothing else on the pad it is standing beside.
+	var alone := sim.building_peak_demand_kw(sim_id) + maxf(0.0, delta_kw)
+	var alone_rung := PowerGrid.transformer_rung_for(alone)
 	out["after_kw"] = after
 	out["needs_rung"] = rung
-	out["needs_capacity_kw"] = _rung_capacity(rung)
+	out["needs_capacity_kw"] = rung_capacity(rung)
 	out["needs_bigger"] = rung > int(c["level"])
-	out["no_rung_carries"] = rung == 0
+	out["alone_rung"] = alone_rung
+	out["needs_second"] = rung == 0 and alone_rung > 0
+	out["no_rung_carries"] = alone_rung == 0
 	return out
 
 
-## The nameplate of one rung of doc 04 §2.2's ladder; 0.0 for the `needs_rung`
-## 0 that means no rung carries the load at all.
-static func _rung_capacity(rung: int) -> float:
+## The nameplate of one rung of doc 04 §2.2's ladder; 0.0 for the rung 0 that
+## means no rung carries the load at all. Public because the panel model prices
+## the SECOND transformer's rung with it (Wave 28 fix pass) and a second copy of
+## a one-line ladder read is how the panel and the gate drift apart.
+static func rung_capacity(rung: int) -> float:
 	var ladder: Array = PowerGrid.CAPACITY[&"transformer"]
 	return float(ladder[rung - 1]) if rung >= 1 and rung <= ladder.size() else 0.0
 
@@ -462,6 +500,11 @@ static func rung_needed_for_next_level(sim: CitySim, sim_id: String) -> Dictiona
 	var delta := (float(next_stats.get("power_demand_kw", 0.0))
 			- float(b.stats.get("power_demand_kw", 0.0))) * CitySim.UPGRADE_HEADROOM_MARGIN
 	var out := rung_needed(sim, sim_id, delta, sim.power_headroom(sim_id, delta))
+	# The block travels — `FixRouter` hands it to S18, which draws a sentence
+	# ABOUT this building on a panel describing a component — so it carries who
+	# it is about. Without the id the receiving panel would have the answer and
+	# not the question.
+	out["sim_id"] = sim_id
 	out["to_level"] = b.level + 1
 	out["delta_kw"] = delta
 	return out

@@ -76,6 +76,10 @@ var _upstream_rows: Dictionary = {}   # component id -> Button
 
 var _component_id := ""
 var _view: Dictionary = {}
+## **The building a `FIX_POWER` route asked about**, as `FixRouter.route`'s own
+## `needs` block (Wave 28 fix pass, doc 12 D-123(c)). Empty when the player
+## opened this pad by tapping it, which is the ordinary case and changes nothing.
+var _asked_about: Dictionary = {}
 var _touch_min := 48.0
 var _spacing := 8.0
 ## The two-tap confirms. Both are cleared by any change of selection, because a
@@ -246,12 +250,16 @@ func selected_id() -> String:
 ## Tap a transformer → this. An id the grid no longer carries closes the panel
 ## rather than showing a stale one (§2.2: the panel exits on "tap map"), which is
 ## also what happens the instant the REMOVE row on this very panel fires.
-func show_component(component_id: String) -> void:
+## `asked_about` is `FixRouter.route(…, FIX_POWER)`'s `needs` block — the
+## building whose checklist row sent the player here, and what its next level
+## asks of this pad. `{}` for a plain tap.
+func show_component(component_id: String, asked_about: Dictionary = {}) -> void:
 	if model == null:
 		return
 	if component_id != _component_id:
 		_repair_armed = ""
 		_remove_armed = ""
+	_asked_about = asked_about
 	var view := model.view(component_id)
 	if not bool(view.get("exists", false)):
 		close()
@@ -455,16 +463,40 @@ func _render_customers(v: Dictionary) -> void:
 	# row is that it does. A pad serving NOBODY returned above, where the title
 	# already says so, because "nothing under this wants a bigger pad" is a
 	# strange thing to tell a player about an empty one. `customer_stranded`
-	# wins over the rung line, because "no rung carries this" is a wall and the
-	# row above it would send the player shopping for nothing.
+	# wins over the other two, because "no rung carries this" is a wall and the
+	# rows below it would send the player shopping for nothing.
 	var stranded := str(v.get("customer_stranded", ""))
+	var second := str(v.get("customer_needs_second", ""))
 	var needs_key := "ui_transformer_customers_fit"
 	var needs_state := HudModel.STATE_NORMAL
 	var needs_args := {}
-	if stranded != "":
+	var asked := _asked_about_line()
+	if not asked.is_empty():
+		# **The building the player came FROM wins the line** (Wave 28 fix pass).
+		# A `FIX_POWER` route hands this panel `FixRouter`'s own `needs` reading
+		# for the building whose checklist row was tapped, and that building is
+		# the question. The summary below answers a different one — "the
+		# hungriest customer" — and it cannot be made to answer this one, because
+		# the customer list is CAPPED (`customers_hidden` above): the building
+		# the player asked about may have no row on this panel at all.
+		needs_key = str(asked["key"])
+		needs_state = StringName(String(asked["state"]))
+		needs_args = asked["args"]
+	elif stranded != "":
 		needs_key = "ui_transformer_customer_stranded"
 		needs_state = HudModel.STATE_CRITICAL
 		needs_args = {"id": stranded}
+	elif second != "":
+		# **A second transformer is a PURCHASE, not a wall** (Wave 28 fix pass,
+		# doc 04 §2.9). This pad cannot be re-rated to carry that customer's next
+		# level — its own load is already past the top rung — but the fix verb
+		# sells a parallel unit beside it that adoption hands the building to, so
+		# the line points at the purchase instead of at the ceiling. It sits
+		# between the two because it is worse news than "buy a bigger one" and
+		# better news than "nothing carries this".
+		needs_key = "ui_transformer_customer_needs_second"
+		needs_state = HudModel.STATE_WARNING
+		needs_args = {"id": second}
 	elif bool(v.get("customers_need_bigger", false)):
 		needs_key = "ui_transformer_customers_need_rung"
 		needs_state = HudModel.STATE_WARNING
@@ -485,6 +517,34 @@ func _render_customers(v: Dictionary) -> void:
 				{"n": hidden}, "+%d" % hidden), &"LegendRow", true)
 		more.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_customers.add_child(more)
+
+
+## S18's line for the building a `FIX_POWER` route asked about, or `{}` when
+## nothing did — or when that building's next level fits on the pad it has, in
+## which case the pad's own summary is the more useful sentence.
+##
+## The three states are `PowerActions.rung_needed`'s three and they are read
+## here rather than recomputed: `no_rung_carries` is the only wall (nothing on
+## doc 04 §2.2's ladder feeds this building at any price), `needs_second` is
+## §2.9's parallel transformer — a purchase `cmd_fix_power_capacity` sells — and
+## `needs_bigger` is one rung up on this pad.
+func _asked_about_line() -> Dictionary:
+	var sim_id := str(_asked_about.get("sim_id", ""))
+	if sim_id == "":
+		return {}
+	if bool(_asked_about.get("no_rung_carries", false)):
+		return {"key": "ui_transformer_customer_stranded",
+				"state": HudModel.STATE_CRITICAL, "args": {"id": sim_id}}
+	if bool(_asked_about.get("needs_second", false)):
+		return {"key": "ui_transformer_customer_needs_second",
+				"state": HudModel.STATE_WARNING, "args": {"id": sim_id}}
+	if bool(_asked_about.get("needs_bigger", false)):
+		return {"key": "ui_transformer_customers_need_rung",
+				"state": HudModel.STATE_WARNING,
+				"args": {"id": sim_id, "rung": int(_asked_about.get("needs_rung", 0)),
+				"kw": RequirementFormatter.power(_asked_about.get("needs_capacity_kw", 0.0)),
+				"host": int(_asked_about.get("host_level", 0))}}
+	return {}
 
 
 ## The three verbs. Order is `model.focus_of()`'s: a FAILED transformer, or one

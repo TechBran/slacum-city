@@ -4251,6 +4251,33 @@ func building_demand_kw(sim_id: String) -> float:
 	return float(_last_demands.get(sim_id, 0.0))
 
 
+## **The same reading at ITS OWN channel's daily maximum** — one row of what
+## `peak_component_loads()` walks up the whole service tree, for a caller that
+## needs one building's share rather than a component's total.
+##
+## Wave 28's fix pass added it for `PowerActions.rung_needed`, which has to
+## answer a question the pad's total cannot: *would a transformer of its own
+## carry this building's next level?* That is doc 04 §2.9's parallel unit — the
+## purchase `cmd_fix_power_capacity` already sells — and without this the panel
+## could only see the crowded pad and told the player to give up.
+##
+## Scaled exactly as `peak_component_loads` scales it (`maxf(1.0, peak / now)`,
+## per channel, never below the live reading), so the building's share and the
+## pad's total are the same arithmetic and cannot disagree.
+func building_peak_demand_kw(sim_id: String) -> float:
+	var b: Building = buildings.get(sim_id)
+	if b == null:
+		return 0.0
+	var live := float(_last_demands.get(sim_id, 0.0))
+	if live <= 0.0:
+		return 0.0
+	var channel := String(DEMAND_CLASS_CHANNEL.get(b.archetype, "power_demand_civic"))
+	var now: float = curves.channel_clamp(channel,
+			curves.channel_curve_value(channel, clock.fine_sample_hour()))
+	var peak: float = float(curves.channel_peak(channel)["value"])
+	return live * maxf(1.0, peak / maxf(0.001, now))
+
+
 ## **The public door onto `_building_records`** (PA-100). The record is the
 ## `Building` object's other half — `{id, grid_id, type, footprint, block, tags…}`
 ## — and the render layer needs two of its keys (`footprint`, to centre a mesh on

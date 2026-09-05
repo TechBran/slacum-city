@@ -801,6 +801,120 @@ func test_the_fix_router_quotes_the_next_rung_and_names_the_rung_that_clears_it(
 	sim.dispose()
 
 
+# ============= Wave 28 FIX PASS — a full pad is not a wall (doc 93 §BC-3 rider)
+#
+# The wave shipped a sentence that lies in a reachable, legal state. A level-6
+# transformer's nameplate is 6,750 kW and the UPGRADE gate is 0.90 of it, so a
+# pad loaded anywhere in [6,075, 6,750) is un-shed, un-overloaded and perfectly
+# legal — and every customer under it was told *"nothing on the ladder feeds
+# it"*, while `cmd_fix_power_capacity` was at that same tick quoting a parallel
+# transformer that cleared. These tests are that state, built by hand.
+
+
+## The verifier's own case: a top-rung pad at **6,150 kW** (r = 0.911) with one
+## small `data_center` under it. Every number is set on the grid the way the
+## other hobbling tests in this file set one — a level, a nameplate and a load —
+## so nothing here depends on a city happening to contain such a pad.
+func _pad_past_the_top_rung(sim: CitySim, sim_id: String) -> String:
+	var b: Building = sim.buildings[sim_id]
+	b.archetype = &"data_center"
+	b.max_level = sim.catalog.max_level_of("data_center")
+	b.level = 1
+	b.stats = sim.catalog.stats("data_center", 1).duplicate()
+	sim.advance_hours(1.0)   # so `_last_demands` is this archetype's
+	var host := String(sim.grid.attachment_of(sim_id))
+	var c := sim.grid.component(host)
+	var top: int = (PowerGrid.CAPACITY[&"transformer"] as Array).size()
+	c["level"] = top
+	c["capacity_kw"] = float(PowerGrid.CAPACITY[&"transformer"][top - 1])
+	c["condition"] = 1.0
+	c["load_kw"] = 6150.0
+	return host
+
+
+func test_a_pad_past_the_top_rung_offers_the_second_transformer_instead_of_a_wall() -> void:
+	var sim := _sim()
+	var sim_id := "WTR-2"
+	var host := _pad_past_the_top_rung(sim, sim_id)
+	var c := sim.grid.component(host)
+	# The state is LEGAL: past the 0.90 upgrade gate, nowhere near shedding.
+	assert_true(float(c["load_kw"]) > PowerGrid.UPGRADE_MAX_R * float(c["capacity_kw"]),
+			"the pad is past the UPGRADE gate")
+	assert_true(float(c["load_kw"]) < float(c["capacity_kw"]),
+			"…and under its own nameplate, so it is not overloaded either")
+
+	var next: Dictionary = PowerActions.rung_needed_for_next_level(sim, sim_id)
+	assert_eq(int(next["needs_rung"]), 0, "no rung under THIS pad carries the load")
+	assert_true(bool(next["needs_second"]),
+			"…so the answer is doc 04 §2.9's parallel transformer")
+	assert_false(bool(next["no_rung_carries"]),
+			"…and it is NOT the wall: a pad of its own carries this building")
+	assert_true(int(next["alone_rung"]) >= 1 and int(next["alone_rung"])
+			<= (PowerGrid.CAPACITY[&"transformer"] as Array).size(),
+			"the rung a transformer of its own would be: %d" % int(next["alone_rung"]))
+
+	# **And the sim agrees, at the same tick, with money.** This is the assertion
+	# the shipped sentence failed: the panel said give up while the fix verb was
+	# selling a purchase that cleared.
+	sim.treasury.credit(1_000_000, &"test_grant")
+	var quote := sim.cmd_fix_power_capacity(sim_id, true)
+	assert_true(bool(quote["ok"]), "the fix verb quotes a purchase: %s" % str(quote))
+	assert_eq(String(quote["payload"]["action"]), "place_transformer")
+	assert_true(bool(quote["payload"]["clears"]), "…and it clears the blocker")
+
+	# S5's row names the purchase rather than the ceiling.
+	var actions := PowerActions.new(sim, RequirementFormatter.new(_cfg()))
+	var row: Dictionary = TransformerPanelModel.building_row(actions, sim_id)
+	var upgrade: Dictionary = row["needs_upgrade"]
+	assert_eq(String(upgrade["text_key"]), "ui_power_row_needs_second")
+	assert_eq(int(upgrade["needs_rung"]), int(next["alone_rung"]),
+			"the rung it names is the SECOND pad's, which is the one being bought")
+
+	# S18's line names the customer, and does not call it stranded.
+	var block := actions.transformer_block(host)
+	assert_eq(String(block["customer_needs_second"]), sim_id)
+	assert_eq(String(block["customer_stranded"]), "",
+			"nothing here is unservable; a second pad carries it")
+	sim.dispose()
+
+
+func test_the_router_carries_the_rung_without_a_quote_and_s18_draws_it() -> void:
+	# A91-D-144 / doc 12 D-123(c). `needs` used to sit inside `if with_quote:`
+	# and BOTH production callers — `ui/ui_root.gd` and `game/main.gd` — pass
+	# false, so the third of "three surfaces" reached no surface at all.
+	var sim := _sim()
+	var sim_id := _blocked_subject(sim)
+	assert_ne(sim_id, "", "a building whose next level wants a bigger pad")
+	var host := String(sim.grid.attachment_of(sim_id))
+	var target := {"kind": RequirementFormatter.FIX_POWER, "id": host, "sim_id": sim_id}
+	var bare := FixRouter.route(sim, target, false)
+	assert_false(bare.has("quote"), "no quote without `with_quote` — that half is unchanged")
+	var needs: Dictionary = bare.get("needs", {})
+	assert_false(needs.is_empty(), "…and the rung IS carried on the production path")
+	assert_eq(String(needs["sim_id"]), sim_id, "it names the building it is about")
+	assert_eq(int(needs["needs_rung"]),
+			int(PowerActions.rung_needed_for_next_level(sim, sim_id)["needs_rung"]))
+
+	# …and the panel the route opens says that building's sentence, not the
+	# pad's own summary — which answers about the HUNGRIEST customer and may not
+	# be about this building at all.
+	var root := _mount()
+	# The shell's real boot order: S5 gets the controller, S18 gets nothing and
+	# resolves its own model off it (`test_s18_opens_in_a_shell_that_never_hands_it_a_model`).
+	root.building_panel.setup(root.config, BuildController.new(sim))
+	assert_true(root.show_transformer(host, needs), "S18 opens on the wall")
+	var line: Label = null
+	for child in root.transformer_panel.get_node(
+			root.transformer_panel.body_path() + "/Customers").get_children():
+		if child is Label and String((child as Label).name) == "CustomersNeedRung":
+			line = child
+	assert_true(line != null, "S18 draws the customers line")
+	assert_true(line.text.contains(sim_id),
+			"…about the building the player came from: '%s'" % line.text)
+	_unmount(root)
+	sim.dispose()
+
+
 ## The roster, in a stable order — the tests above pick "the first" of something
 ## and a dictionary iteration order is not a promise.
 func _sorted_building_ids(sim: CitySim) -> Array:

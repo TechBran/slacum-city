@@ -2112,14 +2112,17 @@ func close_land_panel() -> void:
 ## Returns whether the panel took the tap, so the caller can fall through to its
 ## own deselect when it did not — a build whose `TransformerPanel` has no model
 ## must deselect exactly as it does today rather than eat the tap.
-func show_transformer(component_id: String) -> bool:
+## `asked_about` is `FixRouter.route`'s `needs` block for the building whose
+## checklist row sent the player here (Wave 28 fix pass, doc 12 D-123(c)); `{}`
+## for a plain tap, which is what every other caller passes.
+func show_transformer(component_id: String, asked_about: Dictionary = {}) -> bool:
 	if transformer_panel == null:
 		return false
 	if transformer_panel.model == null:
 		transformer_panel.model = _transformer_model()
 	if transformer_panel.model == null:
 		return false
-	transformer_panel.show_component(component_id)
+	transformer_panel.show_component(component_id, asked_about)
 	return transformer_panel.is_open()
 
 
@@ -2270,7 +2273,15 @@ func _serve_transformer_fix(fix_target: Dictionary) -> bool:
 	if String(action["action"]) != String(FixRouter.ACTION_SHEET) \
 			or StringName(str(action.get("sheet", &""))) != FixRouter.SHEET_TRANSFORMER_PANEL:
 		return false
-	if not show_transformer(str(action.get("binds_at", action.get("id", "")))):
+	# **…and WHAT the player asked about**, not only where the wall is (Wave 28
+	# fix pass). The route's `needs` is `PowerActions.rung_needed_for_next_level`
+	# for the building whose row was tapped; S18's own summary answers about the
+	# HUNGRIEST customer, and the two are not the same building — nor is the
+	# asked-about one guaranteed a row here at all, because the customer list is
+	# capped. Handing it over is what makes the router's third reading reach a
+	# surface instead of only a tool (doc 12 D-123(c), report 98 RR-223).
+	if not show_transformer(str(action.get("binds_at", action.get("id", ""))),
+			action.get("needs", {})):
 		return false
 	transformer_selected.emit(transformer_panel.selected_id())
 	return true

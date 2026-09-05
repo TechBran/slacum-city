@@ -221,17 +221,30 @@ static func building_row(actions: PowerActions, sim_id: String) -> Dictionary:
 	# numbers are `PowerActions.rung_needed`'s, which is the sim's own gate walk.
 	var next: Dictionary = actions.next_level(sim_id)
 	var upgrade := {}
-	if bool(next.get("needs_bigger", false)) or bool(next.get("no_rung_carries", false)):
+	var second := bool(next.get("needs_second", false))
+	var no_rung := bool(next.get("no_rung_carries", false))
+	if bool(next.get("needs_bigger", false)) or second or no_rung:
+		# **Which rung the sentence is about.** When a bigger unit under this
+		# building carries it, that is `needs_rung`. When none does, the answer is
+		# doc 04 §2.9's PARALLEL transformer and the rung that matters is
+		# `alone_rung` — what a pad of its own would have to be — because that is
+		# the thing `cmd_fix_power_capacity` will actually place and charge for.
+		var rung: int = int(next.get("alone_rung", 0)) if second \
+				else int(next.get("needs_rung", 0))
 		upgrade = {
 			"to_level": int(next.get("to_level", 0)),
-			"needs_rung": int(next.get("needs_rung", 0)),
+			"needs_rung": rung,
 			"host_level": int(next.get("host_level", 0)),
 			"needs_capacity_text": RequirementFormatter.power(
-					next.get("needs_capacity_kw", 0.0)),
-			# `needs_rung` 0 is "no transformer in the game carries this", and it
-			# gets its OWN sentence rather than a rung number the player cannot buy.
-			"text_key": "ui_power_row_no_rung" if bool(next.get("no_rung_carries", false)) \
-					else "ui_power_row_needs_rung",
+					PowerActions.rung_capacity(rung)),
+			# Three sentences, three states, and only ONE of them is a wall:
+			# `no_rung_carries` means no transformer in the game carries this
+			# building at any price; `needs_second` means this pad cannot be
+			# re-rated to carry it but a second one beside it can, which is a
+			# purchase and not a refusal; anything else is one rung up.
+			"text_key": "ui_power_row_no_rung" if no_rung \
+					else ("ui_power_row_needs_second" if second \
+					else "ui_power_row_needs_rung"),
 		}
 	return {
 		"available": true,
