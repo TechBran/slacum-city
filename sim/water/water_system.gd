@@ -385,8 +385,36 @@ func _solve_zone(z: PressureZone, dt_h: float, ch_res: float, ch_com: float,
 	z.break_penalty = breaks_penalty
 
 	# --- supply (§2.5) -----------------------------------------------------
+	#
+	# **The upstream share is split over the pumps that are RUNNING, and that is
+	# a correction rather than a change of rule** (Wave 28, A91-D-149, doc 92
+	# §69.4). §2.5 says *"shared upstream is split among pumps in proportion to
+	# `rated_flow_m3h`"*, and `WaterTopology._resolve_supply_chain` does that on
+	# TOPOLOGY change — while whether a pump runs is decided HERE, per tick, off
+	# doc 04's power fraction and the restart lockout. So a pump that was dark,
+	# tripped or inside its five-minute lockout went on holding its slice of the
+	# treated water, and the pumps that could have moved it never saw it.
+	#
+	# **Measured, seed 1337 at game-day 25** (`tools/measure_water_chain.gd`):
+	# source 257.3, treatment 385.9, pumps rated 480.0, `feed_capacity` 214.0 —
+	# and a supply of **128.6 against a demand of 136.2**, a zone in deficit with
+	# **85.4 m³/h** (a third of its own chain) held by a pump that was not
+	# turning. Nothing in doc 05 authorises that loss: §2.5's sentence is about
+	# sharing what the chain makes among the pumps that can move it, and a pump
+	# that is not moving anything is not one of them.
+	#
+	# Cost is one extra pass over the zone's pumps, which is O(pumps in zone) on
+	# a term §7 test 29 budgets at 120 zones — the sum below replaces a cached
+	# float and nothing else in the tick changes.
 	var supply_raw := 0.0
 	var trip := _k_trip_fraction
+	var running_rated := 0.0
+	for node_id in z.live_pump_ids:
+		var counted: WaterNode = nodes[node_id]
+		var counted_fraction := power_fraction_of(counted)
+		if counted_fraction >= trip and counted.restart_timer_min <= 0.0:
+			running_rated += float(data.component(counted.variant, counted.level)
+					.get("rated_flow_m3h", 0.0))
 	for node_id in z.live_pump_ids:
 		var pump: WaterNode = nodes[node_id]
 		var fraction := power_fraction_of(pump)
@@ -395,7 +423,13 @@ func _solve_zone(z: PressureZone, dt_h: float, ch_res: float, ch_com: float,
 			pump.flow_m3h = 0.0
 			continue
 		var rated := float(data.component(pump.variant, pump.level).get("rated_flow_m3h", 0.0))
-		pump.flow_m3h = minf(rated * fraction * pump.cond_factor(), pump.share_m3h)
+		# `share_m3h` stays the topology-time figure — it is what doc 05 §3.2
+		# persists and what `WaterTopology` publishes — and the tick uses the
+		# re-split of the SAME upstream capacity over the running set. With every
+		# live pump running the two are identical, which is why both shipped
+		# cities' baselines do not move.
+		var share := z.upstream_cap_m3h * rated / maxf(running_rated, EPSILON)
+		pump.flow_m3h = minf(rated * fraction * pump.cond_factor(), share)
 		supply_raw += pump.flow_m3h
 	z.supply_m3h = minf(supply_raw, z.feed_capacity_m3h) if not z.edge_ids.is_empty() \
 			else supply_raw
@@ -898,7 +932,7 @@ func supply_chain(zone_key: String) -> Dictionary:
 func supply_chain_of(z: PressureZone) -> Dictionary:
 	if z == null:
 		return {"zone_key": "", "live": false, "source_m3h": 0.0, "treatment_m3h": 0.0,
-				"upstream_m3h": 0.0, "pump_rated_m3h": 0.0, "pump_available_m3h": 0.0,
+				"upstream_m3h": 0.0, "pump_m3h": 0.0, "pump_rated_m3h": 0.0, "pump_available_m3h": 0.0,
 				"mains_m3h": 0.0, "supply_m3h": 0.0, "demand_m3h": 0.0,
 				"headroom_m3h": 0.0, "pressure": 0.0, "binding": "none",
 				"binding_m3h": 0.0, "binding_ids": [], "stranded_m3h": 0.0,
@@ -917,17 +951,39 @@ func supply_chain_of(z: PressureZone) -> Dictionary:
 					.get("throughput_m3h", 0.0)) * n.cond_factor()
 	var pump_rated := 0.0
 	var pump_available := 0.0
+	var pump_delivering := 0.0
+	var running_rated := 0.0
+	for node_id in z.live_pump_ids:
+		var counted: WaterNode = nodes[node_id]
+		if power_fraction_of(counted) >= _k_trip_fraction \
+				and counted.restart_timer_min <= 0.0:
+			running_rated += float(data.component(counted.variant, counted.level)
+					.get("rated_flow_m3h", 0.0))
 	for node_id in z.live_pump_ids:
 		var n: WaterNode = nodes[node_id]
 		var rated := float(data.component(n.variant, n.level).get("rated_flow_m3h", 0.0))
 		pump_rated += rated
 		var fraction := power_fraction_of(n)
 		if fraction >= _k_trip_fraction and n.restart_timer_min <= 0.0:
-			pump_available += rated * fraction * n.cond_factor()
+			var effective := rated * fraction * n.cond_factor()
+			pump_available += effective
+			# §2.5's own expression, per pump: `min(rated · power · condition,
+			# share)`, with `_solve_zone`'s own re-split of the upstream over the
+			# RUNNING pumps (A91-D-149). The two must be the same arithmetic or
+			# the panel would quote a term the tick does not deliver.
+			pump_delivering += minf(effective,
+					minf(source_yield, treatment) * rated / maxf(running_rated, EPSILON))
 	var mains := z.feed_capacity_m3h if not z.edge_ids.is_empty() else INF
+	# **The pump TERM is what the pumps deliver, not what they are rated to.**
+	# Measured on the curriculum arc at game-day 20 (doc 92 §69.4): a zone with
+	# `pump_available` 235.6 and `feed_capacity` 214.0 supplying **129.2**, where
+	# an argmin over the rated side names `mains` and the mains are carrying 60 %
+	# of what they could. The term that binds is the pumps, and the reason is the
+	# share split — so the chain says `pump`, which is also the purchase that
+	# moves it (a bigger running pump takes a bigger share).
 	var terms := {
 		&"source": source_yield, &"treatment": treatment,
-		&"pump": pump_available, &"mains": mains,
+		&"pump": pump_delivering, &"mains": mains,
 	}
 	var binding := &"none"
 	var binding_value := INF
@@ -949,15 +1005,24 @@ func supply_chain_of(z: PressureZone) -> Dictionary:
 			if value < next_value:
 				next_value = value
 				next_binding = stage
+	# **Exactly the share-split loss, and nothing else.** What the running pumps
+	# could take (`min(upstream, Σ rated·power·condition)`) minus what §2.5's
+	# proportional share lets them take. It does not read `supply_m3h`, so it is
+	# answerable before the first tick and is not confounded by the feed min-cut.
+	#
+	# **Since A91-D-149 it is normally ZERO**, and that is the point of keeping
+	# it: the split is now over the RUNNING pumps, so the only water it can find
+	# is water a running pump is individually too small to take. It stays
+	# published so the next regression of this shape is a number on a table
+	# rather than a difference nobody computes.
 	var stranded := maxf(0.0,
-			minf(minf(source_yield, treatment), pump_available) - z.supply_m3h) \
+			minf(minf(source_yield, treatment), pump_available) - pump_delivering) \
 			if not z.dead else 0.0
-	if not z.edge_ids.is_empty():
-		stranded = maxf(0.0, minf(stranded, z.feed_capacity_m3h - z.supply_m3h))
 	return {
 		"zone_key": z.zone_key, "live": not z.dead,
 		"source_m3h": source_yield, "treatment_m3h": treatment,
 		"upstream_m3h": minf(source_yield, treatment),
+		"pump_m3h": pump_delivering,
 		"pump_rated_m3h": pump_rated, "pump_available_m3h": pump_available,
 		"mains_m3h": z.feed_capacity_m3h,
 		"supply_m3h": z.supply_m3h, "demand_m3h": z.demand_m3h,

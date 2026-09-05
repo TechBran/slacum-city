@@ -56,7 +56,7 @@ func test_the_chain_reports_all_four_terms_and_names_the_one_that_binds() -> voi
 	# The binding stage is the ARGMIN of the four, and `supply` never exceeds it.
 	var terms := {"source": float(chain["source_m3h"]),
 			"treatment": float(chain["treatment_m3h"]),
-			"pump": float(chain["pump_available_m3h"]),
+			"pump": float(chain["pump_m3h"]),
 			"mains": float(chain["mains_m3h"])}
 	var smallest := INF
 	for key: Variant in terms:
@@ -481,6 +481,51 @@ func test_the_headroom_row_names_the_purchase_rather_than_the_district() -> void
 # ===========================================================================
 # 8. The instrument, and the price accessors it made live
 # ===========================================================================
+
+## **A91-D-149, and the numbers are doc 05 §2.13's own ladder.** A zone with two
+## pumps of different sizes on a shared intake: dark the big one and the small
+## one must be able to take everything the chain still makes, up to its own
+## plate. Before Wave 28 it took its topology-time SHARE — `upstream × 40 / 280`
+## — and the rest of the treated water went nowhere.
+func test_a_dark_pump_does_not_keep_the_water_the_running_one_could_move() -> void:
+	var water := WaterSystem.new(WaterData.from_dict(
+			StarterCityLoader.read_json("res://data/water.json")))
+	water.add_node("SRC", &"source", Vector2i(4, 4), {"subtype": "river", "level": 2})
+	water.add_node("TRT", &"treatment", Vector2i(5, 4), {"level": 2})
+	water.add_node("SMALL", &"pump", Vector2i(6, 4), {"level": 1})   # rated 40.0
+	water.add_node("BIG", &"pump", Vector2i(7, 4), {"level": 3})     # rated 240
+	water.add_main("M", [Vector2i(4, 4), Vector2i(5, 4), Vector2i(6, 4),
+			Vector2i(7, 4), Vector2i(8, 4)], {"tier": "trunk"})
+	water.rebuild_zones()
+	var zone: PressureZone = water.topology.zones[0]
+	var upstream := zone.upstream_cap_m3h
+	assert_true(upstream > 0.0, "the chain makes something")
+	# Both lit: the split is over the same set either way, so this is the
+	# control arm and it must not have moved.
+	water.advance(1.0 / 240.0, {})
+	var both := water.supply_chain(zone.zone_key)
+	assert_almost_eq(float(both["stranded_m3h"]), 0.0, 0.001,
+			"nothing is stranded while every pump runs")
+	# Now dark the big one, through doc 04's published fraction and nothing else.
+	water.set_power_fraction_override("BIG", 0.0)
+	water.advance(1.0 / 240.0, {})
+	var dark := water.supply_chain(zone.zone_key)
+	var small_rated := float(water.data.component(&"pump", 1).get("rated_flow_m3h", 0.0))
+	assert_almost_eq(float(dark["pump_m3h"]), small_rated, 0.001,
+			"the running pump takes its whole plate: %f" % dark["pump_m3h"])
+	assert_almost_eq(float(dark["stranded_m3h"]), 0.0, 0.001,
+			"and nothing is stranded behind the dark one")
+	# The pre-Wave-28 arithmetic, stated so the regression is unmistakable: the
+	# topology-time share would have handed the small pump 40/280 of the
+	# upstream, which is a fraction of its own plate.
+	var old_share := upstream * small_rated / (small_rated
+			+ float(water.data.component(&"pump", 3).get("rated_flow_m3h", 0.0)))
+	assert_true(old_share < small_rated - 0.5,
+			"the old split really was smaller than the pump's own plate: %f vs %f"
+			% [old_share, small_rated])
+	assert_true(float(dark["pump_m3h"]) > old_share + 0.5,
+			"and the fix delivers more than it: %f vs %f" % [dark["pump_m3h"], old_share])
+
 
 func test_doc_03s_water_capital_accessors_now_have_a_consumer() -> void:
 	# `capital_value_water_main`, `capital_value_water_component` and

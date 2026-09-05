@@ -431,7 +431,11 @@ func chain_rows(chain: Dictionary) -> Array[Dictionary]:
 			&"treatment":
 				value = float(chain["treatment_m3h"])
 			&"pump":
-				value = float(chain["pump_available_m3h"])
+				# The DELIVERED figure, which is §2.5's own `min(rated·power·
+				# condition, share)`; `rated_text` beside it is what the pumps
+				# are plated for, so a zone whose pumps cannot take the water
+				# their own chain is making shows both numbers.
+				value = float(chain["pump_m3h"])
 				detail = RequirementFormatter.water_m3h(chain["pump_rated_m3h"])
 			&"mains":
 				value = float(chain["mains_m3h"])
@@ -459,7 +463,7 @@ func chain_rows(chain: Dictionary) -> Array[Dictionary]:
 
 static func _widest(chain: Dictionary) -> float:
 	return maxf(maxf(float(chain["source_m3h"]), float(chain["treatment_m3h"])),
-			maxf(float(chain["pump_available_m3h"]), float(chain["mains_m3h"])))
+			maxf(float(chain["pump_m3h"]), float(chain["mains_m3h"])))
 
 
 ## Every main in this zone that is not OK, with what putting it back costs. The

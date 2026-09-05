@@ -10794,6 +10794,24 @@ is what doc 92 §67.4 measured 118 pumps and $5.5M being bought for the want of.
 Its consumers are named: the instrument, S19, the `E_WATER_HEADROOM` row and the
 fix router.
 
+**And computing it found a defect the same size as this wave's headline**
+(A91-D-149, doc 92 §69.4). Writing the pump term down forced the question of
+which pump term §2.5 means, and the answer is `min(rated·power·condition,
+share)` — the DELIVERED figure. `WaterTopology` splits the upstream over the
+zone's LIVE pumps on topology change; `_solve_zone` decides which of them RUN on
+every tick. A pump that is dark, tripped or inside §2.6's restart lockout kept
+its slice and did not deliver it. Measured on the curriculum arc at game-day 25:
+a zone in DEFICIT at supply **128.6** against demand **136.2** with `source
+257.3 / treatment 385.9 / pumps rated 480.0 / mains 214.0` — **85.4 m³/h, a
+third of its own chain, stranded behind a pump that was not turning** — and the
+old rated-side read naming `mains` as the binder while the mains carried 60 % of
+what they could. `_solve_zone` re-splits the same upstream over the RUNNING
+pumps: supply **128.6 → 214.0 (+66.4 %)**, headroom **0.0 → 68.0**, the deficit
+gone, and the binder honestly `mains 214.0`. **All four baselines are
+bit-identical**, by arithmetic as well as by measurement: with every live pump
+running the two splits are the same expression over the same set, and neither
+shipped city has a dark pump in 24 game-hours.
+
 **`tools/measure_water_chain.gd`** is the instrument this wave commits. It walks
 §2.1–§2.8 against `sim/water/` on a growing city or on a real save through the
 real `SaveService` (into a private `user://`, never the live one), and prints per

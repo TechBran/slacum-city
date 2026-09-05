@@ -13378,24 +13378,55 @@ volume ledger says so:
         = supply 73.5 against demand 42.1
         +40.1  leak from broken mains, charged to DEMAND (§2.4) — RULE
 
-**Every loss in that ledger cites a section except one**, which is §69.4.
+**Every loss in that ledger cites a section except one**, which is §69.4 — and
+§69.4 closed it, so the same ledger on the same city after this wave prints two
+rows and not three.
 
-### 69.4 The one loss no section authorises — filed, not fixed (A91-D-149)
+### 69.4 The one loss no section authorised — and it is a third of a grown city's chain (A91-D-149)
 
 §2.5 splits the upstream capacity among a zone's pumps *"in proportion to
 `rated_flow_m3h`"*, and `WaterTopology._resolve_supply_chain` does it on TOPOLOGY
 change while `_solve_zone` decides whether a pump runs on every TICK. A pump that
-is dark, tripped or inside its 5-minute restart lockout is still `is_live()`, so
-it keeps `share_m3h` and the pumps that could have used it never see it.
+is dark, tripped or inside §2.6's five-minute restart lockout is still
+`is_live()`, so it kept `share_m3h` — and that share was simply not delivered.
 
-Worked, on the tables this doc already publishes: a zone with an L1 pump (40) and
-an L3 pump (240) on 100 m³/h of upstream splits 14.3 / 85.7. Trip the L3 and the
-zone delivers **14.3** where `min(rated·power·condition, upstream)` would carry
-**40.0** — **64 % of the water the chain still has is stranded behind a pump that
-is not turning.** On the player's own save it is **0.1 m³/h**, because his two
-pumps are the same size and the split is even; that is why it is filed rather
-than fixed. `WaterSystem.supply_chain` publishes it as `stranded_m3h` so it can
-never again be lost inside a difference of two numbers.
+**`tools/measure_water_chain.gd --strategy=curriculum --seeds=1337 --days=25`,
+before and after the re-split. It is the only sim delta between the two runs.**
+
+| game-day | supply, fork | supply, after | stranded, fork | after | headroom, fork | after |
+|---|---|---|---|---|---|---|
+| 5 | 79.6 | 79.6 | 0.0 | 0.0 | 57.1 | 57.1 |
+| 10 | 97.1 | 97.4 | 0.3 | 0.0 | 6.9 | 7.2 |
+| 15 | 137.3 | **193.2** | 55.9 | 0.0 | 37.8 | **80.1** |
+| 20 | 129.2 | **214.0** | 84.8 | 0.0 | 2.6 | **90.5** |
+| 25 | 128.6 | **214.0** | 85.4 | 0.0 | **0.0** | **68.0** |
+
+**At game-day 25 the fork's zone is in DEFICIT** — supply 128.6 against demand
+136.2, `zones_in_deficit 1` — with `source 257.3`, `treatment 385.9`, pumps
+plated at `480.0` and mains carrying `214.0`. Every term of its chain is wider
+than what it delivers, and **85.4 m³/h — a third of its own treated water — is
+held by a pump that is not turning.** After the re-split it supplies **214.0**,
+which is `feed_capacity` and therefore the honest binder, with 68.0 m³/h spare.
+
+**Why nothing had seen it.** The loss is exactly zero whenever every live pump is
+running, which is true of both shipped cities at every tick of both `profile_sim`
+baselines, true of the founding city, and true of the player's own save to within
+**0.1 m³/h** — his two pumps are the same size, so the proportional split is even
+and the residue is the condition term's rounding. It needs pumps of different
+sizes with one of them dark, which is what a player builds and what the
+curriculum agent has built by game-day 15.
+
+**And it was making the CHAIN READ lie**, which is the part worth keeping. Before
+the fix the pump term was `Σ rated · power · condition` — the rated side — so an
+argmin over the four terms named `mains 214.0` at game-day 20 while the zone was
+supplying 129.2. The term is now what the pumps actually DELIVER
+(§2.5's own `min(rated·power·condition, share)`), so the read and the tick are
+one arithmetic and the advice line names a purchase that moves the number.
+
+**The four baselines do not move**, by the argument above and by measurement
+(§69.7). The arc DOES move — seed 1337 ends at 4,564 residents and $28,146,258
+against the fork's 4,919 and $26,977,275 over 25 game-days — and that is a
+city with more water in it spending differently, not a re-fit.
 
 ### 69.5 §67.9 item 2, corrected: `cmd_place_water_main` HAS a door
 
@@ -13452,7 +13483,7 @@ and measure the two together.**
 | starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
 | bench | `9695f7667048b55d2426fdd8741afc12be49a51d747c552a25fd96f25248a559` | `b85488059d8dcb7f4f88151fdf2985427e18bd03066d8a7cf67a52aecfbed406` |
 
-**All four are bit-identical to the fork's**, and that includes three sim
+**All four are bit-identical to the fork's**, and that includes four sim
 changes. The reason is worth stating rather than assumed, because it is also the
 reason A91-D-145 survived twenty-eight waves:
 
@@ -13465,6 +13496,14 @@ reason A91-D-145 survived twenty-eight waves:
   already cleared the field.
 * **RR-226**'s zero-delta arm changes what `can_upgrade_water` ANSWERS, and
   nothing in either baseline asks it: `cmd_upgrade_building` is a command.
+* **RR-227's share re-split is the one that could have moved them, and it is
+  hash-neutral by ARITHMETIC rather than by reachability.** With every live pump
+  running, `upstream × rated_i / Σ_running rated` and `upstream × rated_i /
+  Σ_live rated` are the same expression — the two sums are over the same set. It
+  bites only where a live pump is not running, and neither shipped city has one
+  in 24 game-hours (the founding city has a single duty pump; the benchmark
+  city's are all lit). Measured, not assumed: all four hashes below are the
+  fork's after this change as well.
 
-Hash-neutral by measurement, not by construction, in all three cases — and
+Hash-neutral by measurement in all four cases, and by construction in the last — and
 `tests/test_water_chain.gd` is where the behaviour is pinned instead.

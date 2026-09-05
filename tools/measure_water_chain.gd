@@ -198,7 +198,7 @@ func _run_save(saves: String, slot: int, days: int, stride: int,
 func _print_chain(sim: CitySim, day: int, spread: bool) -> void:
 	print("")
 	print("-- game-day %d --" % day)
-	print("| zone | source | treat | upstr | pump rated | pump avail | mains "
+	print("| zone | source | treat | upstr | pump rated | pump DELIV | mains "
 			+ "| SUPPLY | demand | press | headroom | BINDS | next | stranded |")
 	for raw: Variant in sim.water.supply_chains():
 		var c: Dictionary = raw
@@ -206,7 +206,7 @@ func _print_chain(sim: CitySim, day: int, spread: bool) -> void:
 			continue
 		print("| %s | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %.1f | %s %.1f | %s %.1f | %.1f |"
 				% [c["zone_key"], c["source_m3h"], c["treatment_m3h"], c["upstream_m3h"],
-				c["pump_rated_m3h"], c["pump_available_m3h"], c["mains_m3h"],
+				c["pump_rated_m3h"], c["pump_m3h"], c["mains_m3h"],
 				c["supply_m3h"], c["demand_m3h"], c["pressure"], c["headroom_m3h"],
 				c["binding"], c["binding_m3h"], c["next_binding"],
 				c["next_binding_m3h"], c["stranded_m3h"]])
@@ -286,6 +286,7 @@ func _print_losses(sim: CitySim) -> void:
 		var treatment: float = c["treatment_m3h"]
 		var upstream: float = c["upstream_m3h"]
 		var available: float = c["pump_available_m3h"]
+		var delivering: float = c["pump_m3h"]
 		var supply: float = c["supply_m3h"]
 		print("  %s: raw intake %.1f" % [key, source])
 		if treatment < source:
@@ -294,12 +295,14 @@ func _print_losses(sim: CitySim) -> void:
 		if available < upstream:
 			print("      −%.1f  pump rated·power·condition below upstream (§2.5) — RULE"
 					% (upstream - available))
+		if delivering < minf(upstream, available) - 0.01:
+			print("      (of which %.1f is the share split, below)" % (minf(upstream, available) - delivering))
 		if float(c["stranded_m3h"]) > 0.01:
 			print("      −%.1f  STRANDED: upstream share held by a pump that is not running (§2.5 splits at TOPOLOGY time, runs at TICK time) — NO SECTION AUTHORISES THIS"
 					% float(c["stranded_m3h"]))
-		if float(c["mains_m3h"]) < minf(upstream, available) - 0.01:
+		if float(c["mains_m3h"]) < delivering - 0.01:
 			print("      −%.1f  feed_capacity min-cut (§2.5) — RULE"
-					% (minf(upstream, available) - float(c["mains_m3h"])))
+					% (delivering - float(c["mains_m3h"])))
 		print("      = supply %.1f against demand %.1f" % [supply, c["demand_m3h"]])
 		var z: PressureZone = sim.water.topology.zone_by_key(key)
 		if z != null and z.leak_m3h > 0.0:
