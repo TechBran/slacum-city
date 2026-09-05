@@ -482,6 +482,45 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > proves exactly that**: `tools/ab_land_works.gd` digests the canonical body with
 > these four key groups stripped and the result is byte-identical to the fork's
 > published digest on both cities and both paths.
+> ### 2026-09-04, Wave 25 — **no rung, and the reasoning is the point**
+>
+> Doc 04 §2.15.2's `cmd_repair_grid_component` (report 98 §68 RR-206) puts a new
+> kind of thing in an existing section: a `ConstructionQueue` job whose payload
+> carries `grid_component`, `kind`, `cost`, `damage_fraction` and
+> `repair_target`. `city.section_version` stays at **9**, and §2.8's own rule is
+> why rather than an appeal to convenience.
+>
+> **Nothing about the SHAPE moved.** `ConstructionQueue.serialize()` writes each
+> job's `payload` as an opaque `Dictionary` and `deserialize()` reads it back
+> whole; the queue has never enumerated a payload's keys and no migrator ever
+> could. The keys are plain `String`, `int` and `float`, so unlike doc 10's road
+> payload (A91-D-47, whose live `Vector2i` degrades to the text `"(3, 4)"`
+> through `JSON.stringify`) this one round-trips exactly.
+>
+> **Nothing about the RULES moved for a body that has one.** A v9 save written
+> before this wave carries no such job — the command did not exist — so there is
+> nothing to default and nothing to reinterpret. §2.8's *"missing input means a
+> DOCUMENTED default"* is satisfied trivially: the absent thing is a job, and a
+> city with no crew on a transformer is a city with no crew on a transformer.
+>
+> **And a rung taken anyway would have been the fault §2.8 forbids.** *"A rung is
+> taken because a body needs it, never to date-stamp a wave"* — a `_v9_to_v10`
+> identity migrator here would describe a rule the city section did not gain, and
+> every future migrator would walk it for nothing.
+>
+> **What a returning player gets.** A save taken with a crew EN ROUTE restores
+> with the job in the queue, the money already spent, and the transformer still
+> FAILED — and the crew finishes on the other side exactly as it would have
+> before, which `tests/test_ui_transformer.gd`'s
+> `test_the_crew_survives_a_save_and_finishes_on_the_other_side` pins by
+> restoring one capture twice and advancing both.
+>
+> **One counter is appended, at 0**, which is doc 09 §2.12's own migration policy
+> for `StatsRecorder` (*"counters migrate by appending at 0 and never renaming"*):
+> `grid_components_repaired`, beside `grid_components_upgraded` and
+> `grid_components_demolished`. **The four determinism baselines do not move**
+> (doc 92 §65.5).
+
 
 > ### Shipped 2026-08-20 — `city.section_version` 4 → 5, **the upgrade-timing epoch**
 >

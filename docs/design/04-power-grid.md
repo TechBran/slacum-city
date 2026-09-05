@@ -573,6 +573,134 @@ channel's daily maximum before the 0.90 ceiling is applied. `CapacityWarning`
 (§4) is now emitted on an upward crossing of §5.10's WARNING and CRITICAL bands
 — doc 98 §44 RR-118.
 
+### 2.15 The transformer is a thing you tap (Wave 25)
+
+*Report 98 §68 RR-205..RR-208. Rulings doc 93 §AY. Prices doc 92 §65.2.
+Surfaces doc 12 §2.25 / D-114..D-116.*
+
+§2.14 gave the placed grid three verbs and one place to reach them: the panel of
+a BUILDING the component happened to feed. This section gives the component
+itself an id a tap can produce, a surface, and the one verb §2.14 could not
+offer.
+
+#### 2.15.1 Two read-only accessors the graph was missing
+
+**`buildings_served_by(transformer_id) -> Array`** — every building attached to
+one transformer, ascending by building id. `attachment_of()` has always answered
+the question one building at a time and `attachment_map()` for the whole city;
+neither could answer *"who is behind THIS pad?"*, and three call sites open-coded
+the sweep instead (report 98 §68 RR-205). Sorted, for the reason
+`attachment_map()` is: two runs that listed a transformer's customers in
+different orders would draw two different panels from identical state.
+
+**`damage_fraction(component_id) -> float`** — how much of a component a repair
+has to buy back, on doc 03 §2.5's own `[0,1]` scale: the WEAR (`1 − condition`)
+plus, when the component is FAILED, §2.6's `FAILURE_DAMAGE` for its kind.
+**OPEN is deliberately not damage**: a tripped or locked-out component is a relay
+position, not a broken asset, and §2.8's auto-reclose or doc 06's dispatch closes
+it for nothing.
+
+**`FAILURE_DAMAGE` is now a table and it has a reader.** §2.6's per-kind burnout
+damage — transformer 0.35, substation 0.30, feeder 0.05, transmission 0.05 —
+was written three times (twice as literals in the thermal pass, once as a ternary
+in the lightning band) and published on every `PowerComponentFailed` with
+**nothing consuming it**: `_fail` does not touch `condition` and
+`repair_component` lifted to a flat 0.85 whatever the damage had been. It is one
+constant now, and §2.15.2's price reads it. Doc 91 A91-D-130. Values unchanged.
+
+**`distress_band(state, energized, load_ratio, condition, temp_c) -> int`** joins
+them, with `severe_load_ratio()` and `worn_condition_threshold()`. §5.10's bands
+as a single verdict about one component — the number the renderer packs into the
+pad buffer and the number `ui/power_actions.gd` puts a word beside on S18. It was
+written in `game/render/power_infra_model.gd`, whose own header already said
+every number it classifies on is read out of `PowerGrid`; it moved here when the
+panel became a second reader, because a pad drawn SEVERE beside a panel calling
+it *"getting full"* is two opinions about one transformer.
+
+#### 2.15.2 `cmd_repair_grid_component(component_id, preview)` — call the crews
+
+The player, 2026-09-04: *"if you click on the transformer, you can repair it —
+which means calling your crews there."*
+
+Before this wave the ONLY thing that brought a FAILED component back was doc 06
+resolving the incident its failure filed: `PowerGrid.repair_component` had one
+caller in the project (`CityIncidentWorld.power_restore_component`) and there was
+no command. A player looking at a burned-out transformer could upgrade it
+(refused, `E_STATE` — *"repair it first"*, with nothing that could), demolish it
+and pay to place another, or wait. Doc 91 A91-D-129.
+
+**Transformers only**, and each exclusion is a different reason. A substation and
+a plant are BUILDINGS (report 98 C-30) and have had `cmd_repair_building` all
+along. A FEEDER is excluded because **doc 03 cannot price it**: §2.5's grid
+bullet reads a component's repair capital off its §2.13(b) build cost, and a
+line's §2.13(b) price is per tile of its run — so `capital_value_grid("feeder")`
+answers 0 and a feeder repair here would be free. Filed as doc 91 A91-D-131
+rather than approximated; a failed feeder keeps doc 06's dispatch.
+
+| term | value | whose |
+|---|---|---|
+| price | `capital_value_grid(kind, level) × damage_fraction × REPAIR_COST_PER_CAPITAL × M_repair` | doc 03 §2.5 |
+| damage | `(1 − condition) + FAILURE_DAMAGE[kind]` when FAILED | §2.6, above |
+| crew-hours | `w_base(power_event_map[kind]) × damage_fraction` — 0.90 gh at full damage | doc 06's `transformer_failure` row |
+| crew | `heavy_equipment_crew`, through `ConstructionQueue` | doc 09 §2.3's `UTILITY_CORRIDOR` crew |
+| target | 0.85 from FAILED, **1.00 from standing** | doc 02 §2.12's two repair targets |
+
+**It does not heal on the tap.** The job is an ordinary queue `repair` with a
+`grid_component` payload key, so S16 lists it, `cmd_rush_construction` can buy
+its remaining time at doc 03 §2.13(f)'s rate, and the component returns to
+service when `_complete_grid_repair` runs on the one completion door. `condition`
+is restored to the target the job was QUOTED at, never re-derived, so a failure
+between dispatch and arrival cannot silently downgrade what the player paid for.
+
+**`repair_component(id, target)` gained its second target for that reason.** Doc
+02 §2.12 rules that a post-damage repair never restores to new and gives a
+building 1.00 from `active` and 0.85 from `damaged`; a component had only the
+0.85 half — right for the failure path doc 06 resolves, wrong for a player buying
+an overhaul of a transformer that is still standing, who would be charged for
+`1 − condition` and lifted only to 0.85.
+
+Refusals, in order: `E_UNKNOWN_COMPONENT`, `E_NOT_DAMAGED`,
+`E_ALREADY_REPAIRING`, `E_FUNDS` / the treasury's own. **`E_NOT_DAMAGED` covers
+three states and the third is why the verb is not a trap**: zero damage, a
+standing component already at its target, and a quoted price that rounds to $0 —
+because `repair_component` never LOWERS a condition, so such a purchase would
+take doc 03's money and move nothing. The threshold is doc 03's own rounding.
+
+Events: `grid_component_repair_started` on dispatch and `grid_component_repaired`
+on arrival, both read by `data/ui.json.event_log` under the `power` filter and
+both naming the transformer. **The ARRIVAL has a second reader** — doc 08's
+`data/notifications.json` binds it to a `P3_routine` `grid_repair_done`, which is
+the banner. The dispatch has none on purpose: a player who has just pressed CALL
+A CREW is looking at the panel that already shows the crew and its ETA, and doc
+08's own test for a notification is whether it is worth raising to somebody who is
+somewhere else.
+
+#### 2.15.3 The pick, the panel, and the router
+
+`ui/build_controller.gd`'s `pick_at_ground` answers `PICK_COMPONENT` between
+OPPORTUNITY and BUILDING, on the same 48 dp radius the street collectable uses,
+**capped at half a tile** — a transformer stands on one tile and a tap further
+than that from its centre is not on it. Without the cap the pick would out-rank
+the building at every zoom-out (48 dp is 16.04 m of ground at Z-far, two tiles in
+every direction). Measured: on both shipped cities a tap on a pad's own centre
+reached `PICK_NONE` before this wave — **the shell DESELECTED**, 100 % of the
+time (doc 92 §65.3).
+
+S18 (`ui/transformer_panel.gd`, doc 12 §2.25) is what it opens. Everything §2.14
+put on the building panel is on it, plus the customer list §2.15.1 made possible
+and §2.15.2's crew.
+
+**And `Fix this →` goes there too.** `ui/fix_router.gd` answers
+`SHEET_TRANSFORMER_PANEL` for a `POWER_CAPACITY` row — whose id has always been
+the COMPONENT the headroom binds at, never a building — and for a grid
+component's own row when the sim says that component is a transformer. A feeder
+and a doc-05 pump are `FIX_COMPONENT` ids too and keep the camera move, because
+neither has a surface of its own; the branch asks the GRID what the id is rather
+than reading its spelling. `UIRoot._serve_transformer_fix` is the consumer, so
+the answer works from every surface that raises the row — the placement bar, S4,
+the alerts centre — and not only from the building panel, whose in-place path
+(A91-D-54) it keeps.
+
 ---
 
 ## 3. Data Schema
@@ -661,7 +789,9 @@ Its roster lives in `data/grid_components.json` under a new **`routable`** key, 
 - **The run is drawn by the C-41 assist, not by §2.7's L.** This is the only run card whose geometry is not an L, and §2.1's land rule is the reason: a straight Chebyshev line between two owned blocks routinely crosses one the city does not own, which is the failure this doc already records from seed 4242. `suggest_feeder_route` returns the shortest LEGAL run — which, on doc 03 §2.13(b)'s per-tile price, is also the cheapest — and falls back to the straight line when there is none, so a refusal is still shown against a path.
 - **The founding city answers `E_NO_SLOT`, and that is the design.** Doc 09 §2.9.5 fills both of SUB-A's §2.2 slots, so a player's first run is refused with the purchase named in words — *"SUB-A has no spare feeder slot: 0 free of the 1 this run needs. Upgrade that substation, or build another one and start the run there."* — and `Fix this →` flies the camera to SUB-A. **The loop that answer opens is complete and is walked end to end by a test** on the founding city (`tests/test_path_tool.gd::test_the_whole_feeder_loop_is_walkable_from_the_founding_city`, Wave 11): a `substation` card off the Utility tab at **$15,000**, commissioned **9 game-hours** later by item 2's `node_shells` mapping, arrives with **2 free slots**; a 7-tile class-2 run off its fence line then quotes **$1,470**, commits, and **adopts 6 transformers carrying 89.3 kW** off the circuit that was full. Two purchases, both priced by doc 03, and §2.9's transfer rule is what makes the second one relief rather than headroom.
 
-**Still unshipped from the §4 list:** `place_tie` / `set_tie_mode` (the tie registry and `evaluate_tie_transfer` exist and are tested; no command sells one), `set_feeder_underground`, `buy_arrester`, `buy_flood_wall`, `place_backup_gen`, `request_preventive_maintenance`, `set_shed_policy`, and the road-**preferring** form of `suggest_route_along_roads` (the assist ships as shortest-legal-run; road weighting is a refinement nothing depends on).
+**As shipped (Wave 25) — `repair_power_component`, and the accessors the graph never had.** `cmd_repair_grid_component(component_id, preview)` is §2.15.2's verb: doc 03 §2.5-priced, dispatching a `heavy_equipment_crew` through doc 09's `ConstructionQueue` at doc 06's own `transformer_failure.w_base`, transformers only, refusing `E_UNKNOWN_COMPONENT` → `E_NOT_DAMAGED` → `E_ALREADY_REPAIRING` → the treasury's own. Read-only accessors beside it: **`buildings_served_by(id)`**, **`damage_fraction(id)`**, **`distress_band(state, energized, load_ratio, condition, temp_c)`** with `severe_load_ratio()` and `worn_condition_threshold()`, and **`grid_repair_job(id)`** / **`grid_repair_crew_hours(id)`** on `CitySim`. `repair_component(id, target)` gains doc 02 §2.12's second repair target. New coordinator events, both with readers in `data/ui.json.event_log`: `grid_component_repair_started` `{component, kind, level, cost, damage_fraction, crew_hours, job_id, customers}` and `grid_component_repaired` `{component, kind, job_id, was_failed, condition, customers}`.
+
+**Still unshipped from the §4 list:** `place_tie` / `set_tie_mode` (the tie registry and `evaluate_tie_transfer` exist and are tested; no command sells one), `set_feeder_underground`, `buy_arrester`, `buy_flood_wall`, `place_backup_gen`, `request_preventive_maintenance`, `set_shed_policy`, and the road-**preferring** form of `suggest_route_along_roads` (the assist ships as shortest-legal-run; road weighting is a refinement nothing depends on). **`repair_power_component` leaves this list** — Wave 25, §2.15.2 — and takes doc 91 A91-D-129 with it.
 
 **Events:** `PowerComponentFailed`, `PowerComponentTripped`, `AutoReclosedOK`, `AutoRecloseLockout`, `PowerOutage`, `PowerRestored`, `MajorOutage`, `TotalBlackout`, `CascadeStep`, `TieTransferSuccess`, `TieTransferBlocked`, `LoadShedStarted`, `LoadShedEnded`, `RollingBlackoutRotated`, `BuildingPowerChanged`, `TrafficSignalPowerChanged`, `StreetlightsChanged`, **`BlockDarkChanged`** (renamed from `DistrictDarkChanged`, report 98 C-38), `BackupGenStarted`, `BackupGenFailed`, `SurgeAbsorbed`, `CapacityWarning`, `GenerationDeficit`, `FuelShortage`.
 
@@ -798,6 +928,8 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
 39. `test_route_feeder_success_relieves_the_authored_pair` / `test_route_feeder_rejections` / `test_route_feeder_assist_stays_on_owned_ground` / `test_route_feeder_survives_save_roundtrip_and_is_deterministic` / `test_demolishing_a_substation_takes_its_circuits_and_leaves_a_way_back` — the whole verb: every reason code in §4's shipped order on its own case; the quote is the price (`billed_tiles × $210` at class 2, doc 03 §2.13(b)) and the preview charges nothing and adds nothing to the graph; `line_km` grows by exactly `tiles × 0.008`; the hot feeder's load measurably falls; every tile the assist suggests is owned and READY; and a routed feeder survives a save taken mid-construction with two reloads bit-identical across 8 further game-hours.
 40. `test_gate_18b_the_late_game_ceiling_is_lifted` / `test_gate_18c_no_capacity_constant_moved` — doc 92 pass-3 F-11's ruling, made executable: `balanced` ends a **50-game-day** city under **20 %** building-time dark (measured 6.25 / 5.91 / 5.74 % across three seeds, against Wave 5's 54.63 %), having bought trunk to get there, and every §2.2 capacity row plus the authored starter topology are asserted unchanged.
 
+41. `test_h_*` in `tests/test_power_operations.gd` (Wave 25, §2.15.2) — the repair verb, eight tests. The price is doc 03 §2.5 on §2.5's own grid capital and the crew-hours are doc 06's `transformer_failure.w_base` scaled by the damage, both re-derived in the test rather than transcribed (an L2 at 63 % damage is **$589**); **the crew has to arrive** — money leaves on the tap, the transformer does not come back until the job completes, and it lands at doc 02 §2.12's post-damage target and never above it; a STANDING unit is overhauled all the way back to 1.00, which is §2.12's other target; the refusal ladder is the one §2.15.2's header documents, including all three arms of `E_NOT_DAMAGED` (zero damage, a standing unit at its target, and a price that rounds to $0) and the by-name refusals for a feeder and a substation; both events have a `data/ui.json.event_log` READER, asserted against the table rather than merely emitted; the job is listed by S16 with the pad's tile and is rushable; and `FAILURE_DAMAGE` is pinned on both sides — what a failure publishes and what a repair charges for. `test_h_buildings_served_by_is_the_grids_own_roster` pins §2.15.1's accessor against `attachment_of` building by building on every transformer in the founding city.
+
 ---
 
 ## 8. Tunables — `data/power.json`
@@ -907,6 +1039,17 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
 
 1. **None blocking.** One tension to record: §4 locks utilities at 4 Hz. Thermal integration genuinely does not need 4 Hz (tau ≥ 240 gs), and §2.4 reserves the right to shard Pass C across 4 ticks under profiling pressure. That is an implementation detail *inside* the locked cadence, not a deviation from it — flagged so `perf.thermal_shard_count` surprises nobody.
 2. **Doc numbering — RESOLVED.** Report 98 Ruling Zero makes the on-disk filenames canonical. §5 has been renumbered in full: world/land/population is **09**, roads is **10**, buildings is **02**, economy is **03**, water is **05**, incidents/dispatch is **06**, weather + Director is **07**, persistence/offline is **08**, rendering is **11**, UI/overlays is **12**. No doc-number reference elsewhere in this file uses the old map.
+
+**Open (Wave 25)**
+
+2b. **A FEEDER cannot be repaired, because doc 03 cannot price one.** §2.5's grid
+bullet reads a component's repair capital off its §2.13(b) build cost, and a
+line's §2.13(b) price is per tile of its run — so `capital_value_grid("feeder")`
+answers 0 and §2.15.2 refuses feeders by name rather than shipping a free repair
+(doc 91 A91-D-131). Closing it is doc 03's call: does a feeder repair re-buy the
+whole run, or the faulted span? Until it does, a failed feeder keeps the door it
+has always had — doc 06's dispatch — so nothing is blocked, and a route-aware
+capital accessor plus one line in `REPAIRABLE_GRID_KINDS` is the whole of the fix.
 
 **Resolved by report 98 (recorded, not open)**
 

@@ -969,6 +969,22 @@ const PICK_BUILDING := &"building"
 const PICK_BLOCK := &"block"
 ## Wave 14. A collectable thing standing on the street, not a thing built on it.
 const PICK_OPPORTUNITY := &"opportunity"
+## Wave 25 (report 98 §68 RR-207, doc 93 §AY2). A `PowerGrid` component the
+## player can tap — a transformer pad today, which is the only grid component
+## `PowerInfraView` draws as an object standing on a tile.
+const PICK_COMPONENT := &"component"
+
+## The grid kinds a tap may select. A feeder and a transmission line are drawn as
+## a ROUTE and have no tile to measure a radius from; a substation and a plant
+## are BUILDINGS (report 98 C-30) and are already picked as one, so admitting
+## them here would give one object two pick kinds.
+const PICKABLE_COMPONENT_KINDS: Array[StringName] = [&"transformer"]
+
+## How far from a pad's tile centre a tap may land and still select it, as a
+## fraction of a tile — half, because that is the edge of the tile the pad
+## stands on. See `component_near` for why this is a CAP on the finger radius
+## rather than a radius of its own.
+const COMPONENT_PICK_TILE_FRACTION := 0.5
 
 ## `data/ui.json.street.tap_dp`, and the fallback for a malformed file. The path
 ## is `UIConfig`'s own — a second copy of it here is a second thing to rename.
@@ -1023,6 +1039,59 @@ func set_tap_radius_from(m_per_dp: float, dp: float = -1.0) -> float:
 	var want := dp if dp > 0.0 else BuildController.tap_dp()
 	tap_radius_m = maxf(0.0, m_per_dp) * want
 	return tap_radius_m
+
+
+## The nearest pickable grid component within `radius_m` of `point`, as
+## `{id, kind, tile, world_pos, distance_m}`, or `{}` (Wave 25, RR-207).
+##
+## **A radius from the tapped POINT to the pad's TILE CENTRE**, not a tile test,
+## because the pad is a 2.4 × 2.0 m cabinet inside an 8 m tile: a finger 48 dp
+## wide over the cabinet must catch the cabinet, and a tile test would answer
+## for the whole tile. (Measured at the Wave 25 merge: no pad in the founding
+## city or the bench city stands on a tile a building occupies — 0 of 18 and
+## 0 of 144 — so the ordering below costs no building a tap; it is there so
+## the smaller object wins IF the two ever share a tile.) The radius is
+## `tap_radius_m` — the same 48 dp of finger
+## `set_tap_radius_from` converts for the street collectable — so a player who
+## has zoomed out until the pad is four pixels across gets a proportionally
+## wider catch, and one zoomed all the way in has to be on it.
+##
+## The scan is over `component_ids_of_kind(&"transformer")` and nothing else: a
+## line has a route, not a tile, and would answer `Vector2i.ZERO` for every
+## query. Ties are broken by distance and then by id, so two pads on adjacent
+## tiles resolve the same way on every machine.
+func component_near(point: Vector3, radius_m: float = -1.0) -> Dictionary:
+	var radius := radius_m if radius_m >= 0.0 else tap_radius_m
+	# **Capped at half a tile, and the cap is the whole safety argument.** A
+	# transformer stands on ONE tile; a tap more than half a tile from its centre
+	# is not on it. Without the cap this pick out-ranks the building at every
+	# zoom the street collectable was designed for — 48 dp is 16.04 m of ground
+	# at full zoom-out (doc 92 §38.3), two tiles in every direction — so a tap
+	# squarely on a house would open the transformer next door. The dog gets to
+	# do that because a dog is leaving; a transformer is not.
+	#
+	# Derived from `tile_m`, not authored: it is "the pad's own tile, with a
+	# finger's tolerance inside it". At the default camera height the finger is
+	# 2.581 m and the cap never binds (doc 92 §65.3).
+	radius = minf(radius, tile_m * COMPONENT_PICK_TILE_FRACTION)
+	if radius <= 0.0 or sim == null or sim.grid == null:
+		return {}
+	var best: Dictionary = {}
+	var best_d := radius
+	for kind in PICKABLE_COMPONENT_KINDS:
+		for id_value in sim.grid.component_ids_of_kind(kind):
+			var id := String(id_value)
+			var tile := sim.grid.component_tile(id)
+			var centre := Vector3((float(tile.x) + 0.5) * tile_m, 0.0,
+					(float(tile.y) + 0.5) * tile_m)
+			var d := Vector2(centre.x - point.x, centre.z - point.z).length()
+			if d > best_d or (d == best_d and not best.is_empty() \
+					and id > String(best["id"])):
+				continue
+			best_d = d
+			best = {"id": id, "kind": String(kind), "tile": tile,
+					"world_pos": centre, "distance_m": d}
+	return best
 
 
 ## The roster, or `null`. The shell's binding wins; otherwise the sim is asked
@@ -1108,6 +1177,8 @@ func collect_opportunity(id: String) -> Dictionary:
 ##
 ##   0. a street opportunity within `tap_radius_m` → `{kind: "opportunity", id}`
 ##      → collect (Wave 14, below)
+##   0b. a grid component within `tap_radius_m` → `{kind: "component", id}` → S18
+##      (Wave 25, below)
 ##   1. a building on the tile  → `{kind: "building", id: sim_id}` → S5
 ##   2. otherwise the block, when S4 has something to offer for it (unowned,
 ##      owned-undeveloped, or mid-pipeline) → `{kind: "block", id: block_id}`
@@ -1128,6 +1199,17 @@ func collect_opportunity(id: String) -> Dictionary:
 ## there on the next tap, which is exactly the asymmetry that makes this order
 ## the safe one.
 ##
+## **And why a transformer outranks a building** (Wave 25, doc 93 §AY2, as
+## corrected at the merge). `PowerInfraView` draws a padmount cabinet
+## 2.40 × 2.00 m on the transformer's tile. The lane's first draft said doc 09
+## puts most pads on tiles a building already occupies; the lane's own
+## instrument and the verifier both measured 0 of 18 (founding) and 0 of 144
+## (bench), so tile ownership never handed a pad tap to a house. The order is
+## kept for the reason that survives measurement: within one finger's radius
+## the smaller, more urgent object wins — the transformer is the thing that is
+## on fire, the house is fine and one tap away — and it costs nothing: 0 of 77
+## buildings within six tiles of the grid lose their tap to a pad.
+##
 ## `block` is filled in on every in-bounds pick, kind 1 and 3 included, so a
 ## caller that wants the block a *building* sits in does not need a second query.
 func pick_at_ground(point: Vector3) -> Dictionary:
@@ -1139,6 +1221,12 @@ func pick_at_ground(point: Vector3) -> Dictionary:
 		out["kind"] = PICK_OPPORTUNITY
 		out["id"] = str(chance["id"])
 		out["opportunity"] = chance
+		return out
+	var component := component_near(point)
+	if not component.is_empty():
+		out["kind"] = PICK_COMPONENT
+		out["id"] = String(component["id"])
+		out["component"] = component
 		return out
 	var sim_id := sim_id_at_tile(tile)
 	if sim_id != "":

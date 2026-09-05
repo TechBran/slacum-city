@@ -6258,3 +6258,159 @@ snapshots and events and never calls back into it. Every choice `LandWorksView`
 makes about where a stake, a stump or a spoil heap goes is a hash of the block id
 and the index, so it is the same on every device and after every load, and the
 sim's state hash cannot move because the view exists.
+## AY. Wave-25 rulings — what a transformer owes the player, and what a building panel is allowed to hold (2026-09-04)
+
+*(Report 98 §68 RR-205..RR-208. Measured in doc 92 §65. Defect rows doc 91
+A91-D-129, A91-D-130, A91-D-131. Delta rows doc 12 D-114, D-115, D-116.)*
+
+The player asked for one thing and it decomposes into three rulings: the grid
+gets a repair verb, the pad gets a panel, and the building panel gives back what
+was never its to hold.
+
+### AY1 — A component the city can lose is a component the city can pay to fix, and the price is doc 03's
+
+**Ruling.** Every asset the city owns that can be DAMAGED has a player-reachable
+repair priced by doc 03 §2.5. That has been true of buildings since doc 02 §2.6
+and of roads since doc 10 §2.13. It was **not** true of the grid: doc 04's
+components could fail, and the only thing that put one back was doc 06 resolving
+the incident the failure filed. The verb is now
+`CitySim.cmd_repair_grid_component`.
+
+**Four things it may not do, and the reasoning for each.**
+
+1. **It may not author a price.** Doc 03 §2.5 has said since C-16 that a grid
+   component's repair capital is its §2.13(b) build cost at the current level;
+   `CostCurves.capital_value_grid` has implemented it since Wave 17. The verb
+   reads it through a new accessor (`repair_cost_grid`) and adds nothing. No row
+   is added to `data/economy.json`, and the charge books under the existing
+   `&"repair"` category — so this wave moves no ledger line and needs no doc 03
+   §2.13 amendment beyond a pointer at the spender.
+2. **It may not heal on the tap.** The player's word was *"calling your crews
+   there"*, and a verb that healed instantly would be the thing doc 09 §2.3
+   exists to stop: work that costs money and no time. The job is an ordinary
+   `ConstructionQueue` `repair` with crew-hours, a crew type and a job id — so
+   S16 lists it, `cmd_rush_construction` can buy its remaining time at doc 03
+   §2.13(f)'s rate, and the ETA the panel shows is the queue's own.
+3. **It may not author a duration either.** Doc 06 already measured how long
+   fixing a transformer takes: `transformer_failure.w_base` = 0.90 game-hours of
+   work at tier 1. The crew-hours are that number scaled by the damage being
+   bought back — doc 02 §2.6's shape (`authored work × damage_fraction`), with
+   doc 06's number in place of doc 02's build time, because doc 06 is the
+   document that measured *this* job. A retune of doc 06's work moves the repair
+   clock with it, and neither number is written twice.
+4. **It may not be a purchase that changes nothing.** `repair_component` never
+   LOWERS a condition, so a repair of a standing component already at its target
+   would take the money and move nothing. `E_NOT_DAMAGED` therefore covers three
+   states, not one: zero damage, a standing component at its target, and a
+   quoted price that rounds to $0. The third arm's threshold is doc 03's own
+   rounding — this wave authors no floor.
+
+**And one thing it must do that is easy to miss.** Doc 02 §2.12 rules that *a
+post-damage repair never restores to new*, and gives a building two targets:
+1.00 from `active`, 0.85 from `damaged`. The same rule applies to a component,
+and `PowerGrid.repair_component` had only the 0.85 half — correct for the
+failure path doc 06 resolves, wrong for a player buying an overhaul of a
+transformer that is still standing, who would be charged for `1 − condition` and
+lifted only to 0.85. `REPAIR_TARGET_WORN = 1.00` is §2.12's other half, and the
+job carries the target it was QUOTED at so a failure between dispatch and arrival
+cannot silently downgrade what the player paid for.
+
+**The number that was never read.** `_fail`'s `damage_fraction` — 0.35 / 0.05 /
+0.30 / 0.05 by kind — was authored three times and consumed nowhere (doc 91
+A91-D-130). It is now `PowerGrid.FAILURE_DAMAGE`, one table, and it is the price
+basis. A wave that adds a repair without giving the burnout number a reader would
+have been authoring a *second* damage model beside a live one.
+
+**What is deliberately NOT repairable, and why it is a ruling rather than an
+omission.** A substation and a plant are BUILDINGS (report 98 C-30) and have had
+`cmd_repair_building` all along. A component that is merely OPEN is not damaged:
+a tripped relay is a position, and doc 04's auto-reclose or doc 06's dispatch
+closes it for nothing — pricing a repair on it would sell a fix for a fault that
+does not exist. A FEEDER is excluded because doc 03 cannot price it: §2.13(b)
+prices a line per tile of its run, `capital_value_grid("feeder", 1)` answers 0,
+and a feeder repair admitted here would be free. That is doc 03's authorship
+decision to make (the whole run, or the faulted span?) and it is filed as
+A91-D-131 rather than guessed at in `sim/`.
+
+
+*Merge note (2026-09-05).* The lane's `E_NOT_DAMAGED` gate was doc 03's rounding
+(`cost <= 0`), and the verifier found every transformer on the founding city
+offering `CALL A CREW  $1` at game-hour 6 with the panel reading 100 %. The gate
+now also requires `GRID_REPAIR_MIN_DAMAGE_FRACTION` (0.05, `data/economy.json`,
+`CostCurves.grid_repair_min_damage`) of wear on a STANDING component; a FAILED
+one is always offered the crew. `tests/test_ui_transformer.gd::
+test_a_hair_of_wear_is_not_a_repair_and_real_wear_is` runs it on the shipped
+city rather than a forced `condition = 1.0`.
+
+### AY2 — A thing the player can see is a thing the player can tap, and what it opens is a panel like any other
+
+**Ruling.** The distribution layer has been DRAWN since Wave 17 —
+`PowerInfraView` puts a padmount cabinet with three bushings on every
+transformer's tile and runs a service drop to every building it feeds. A city
+object that is rendered at that fidelity and cannot be selected is a promise the
+game does not keep. `BuildController.pick_at_ground` gains `PICK_COMPONENT`.
+
+**Where it sits in the order, and why.** Between OPPORTUNITY and BUILDING, on the
+same 48 dp radius, measured from the tapped POINT to the pad's tile centre. This
+is doc 12 §2.21's argument about the street collectable, one object over: the
+cabinet is 2.4 m across inside an 8 m tile, and a finger 48 dp wide over it must
+catch it rather than the tile. *(Corrected at the merge, 2026-09-05: the lane's
+first draft said a tile-ownership pick would hand every pad tap to the house
+behind it; its own instrument and the verifier measured 0 of 18 founding pads
+and 0 of 144 bench pads standing on a building's tile, so that never happened.
+The order stays for the reason that survives measurement — within one radius the
+smaller, more urgent object wins — and it is free: 0 of 77 buildings within six
+tiles of the grid lose their tap.)* The asymmetry that makes the order safe is
+the same one: **the house has not moved and is one tap away**, and the
+transformer is the thing that is on fire.
+
+**It is a PANEL, not a popup.** Same layer (`PanelLayer`), same one-surface rule
+(`UIWidgets.close_siblings`), same `ui_root.selected_entity_id` semantics, same
+✕, same 48 dp targets, same headless model — because the player's own sentence
+was *"all of that information pops up just like a building does"*, and "like a
+building does" is a specification. `TransformerPanelModel` computes every value
+and `TransformerPanel` computes none, which is the split that lets the whole
+surface be driven by `tests/test_ui_transformer.gd` instead of photographed.
+
+**What it must show, in the order a player asks for it.** Which unit and what
+condition; what it carries against what it can carry AT TODAY'S AMBIENT (doc 04
+§2.7's derating is why "150 kW" is not an answer); what feeds it; **who is behind
+it** — the list Wave 17 could not draw because the grid had no public way to ask
+(RR-205), each row a jump; and the four verbs. When the unit has FAILED the panel
+opens ON the repair, because that is the moment the player tapped it.
+
+### AY3 — A panel's job is the decisions only it can make; everything else is a door
+
+**Ruling.** The building panel keeps what is about THIS BUILDING and hands off
+what is about a shared piece of infrastructure. The POWER section becomes one
+row — `Power · fed by T-03 · 78 % · ›` — and the water block becomes one row of
+the same shape, both opening the surface that owns the thing.
+
+**The test is not "how long is the panel", it is "who owns this decision".** A
+transformer is shared by every building in its service radius, so its UPGRADE
+button was drawn on N panels, its REMOVE row was armed from N panels, and a
+player who upgraded it from a house's panel had no way to see the other N−1
+buildings they had just helped. That is the defect, and panel length was only its
+symptom. The water node has the same shape: it is hosted by a shell and serves a
+zone.
+
+**What was examined and KEPT, which is as much of the ruling as what moved.**
+
+* **The priority row** stays. Doc 04 §2.4's shed priority is a property of THIS
+  building — the player is saying *this hospital comes before that shop* — and no
+  other surface can ask the question.
+* **The coverage / requirement checklist** stays. Doc 12 §2.7 calls the
+  `Fix this →` row the single most important teaching device in the game; it is
+  about this building's next level and belongs nowhere else.
+* **The progress block** stays. It answers *"is anything happening on this lot?"*,
+  which a player asks of the building in front of them, not of a queue — and S16
+  is the list, not the answer.
+* **The repair, upgrade, priority, demolish, restore and salvage verbs** stay.
+  They are the player's own list: *"the buildings just need a few things: repair,
+  upgrading, and things we already have."*
+
+**The one-row summary is a READING, not a label.** `fed by T-03 · 78 %` carries
+the transformer's id and its load band, so the row is worth looking at even when
+the player never opens the panel behind it — and `NOT SERVED` is drawn in the
+critical state, because "nothing feeds this" is the most useful thing the row can
+ever say and must not be one tap away.

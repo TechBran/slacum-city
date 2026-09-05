@@ -23,13 +23,18 @@ extends RefCounted
 ##  * `ACTION_FOCUS` — *go and look at this*: `{world_pos: Vector3}`. Every fix
 ##    whose answer is a place.
 ##  * `ACTION_SHEET` — *open this surface, already armed*:
-##    `{sheet, arm, binds_at, world_pos}`. `FIX_POWER`'s answer is not a place to
-##    go (the player is already looking at the building); it is the panel's power
-##    strip, armed to quote. `binds_at` is the component the headroom binds at —
-##    which is what the id on this kind actually is — and `world_pos` is where
-##    that wall stands, for a surface that wants to show it. `sim_id` and `quote`
-##    appear only when the caller supplied the BUILDING explicitly, because the
-##    component id is not one and must never be mistaken for one.
+##    `{sheet, arm, binds_at, world_pos}`. **Wave 25 moved where it points.**
+##    Until this wave the only sheet a fix row could name was S5 with its power
+##    strip armed — the best answer available while the transformer had no
+##    surface, and a poor one: the row said *"T-02 is full"* and offered a
+##    purchase with no picture of the thing being purchased. `FIX_POWER` and a
+##    transformer's own `FIX_COMPONENT` both answer `SHEET_TRANSFORMER_PANEL`
+##    now, because the wall became a PLACE (doc 04 §2.15.3). `binds_at` is the
+##    component — which is what the id on these kinds actually is — and
+##    `world_pos` is where that wall stands, for a surface that wants to show
+##    it. `sim_id` and `quote` appear only when the caller supplied the BUILDING
+##    explicitly, because the component id is not one and must never be mistaken
+##    for one.
 ##  * `ACTION_VERB` — *run this, and here is what it will cost*:
 ##    `{verb, args, quote}`. `FIX_REPAIR` buys a repair. The quote is the sim's
 ##    own `preview: true` return, which is a pure read — it stops before the
@@ -55,12 +60,24 @@ const REASON_UNKNOWN_KIND := &"unknown_kind"  ## a FIX_* this router has not met
 const REASON_UNRESOLVED := &"unresolved"      ## the id named nothing on the map
 const REASON_NO_SIM := &"no_sim"              ## called before boot
 
-## The surface `FIX_POWER` arms. `ui/building_panel.gd` performs this in place
-## today (`_power_fix_armed = _sim_id`); naming it here is what lets the
-## placement bar and the alerts centre reach the same behaviour without each
-## re-deriving it (PA-23's consumer).
-const SHEET_BUILDING_PANEL := &"building_panel"
+## Wave 25's S18 (doc 12 §2.25). The surface a `POWER_CAPACITY` row and a grid
+## component's own row both open now — the wall is a PLACE, and this is it.
+##
+## **It replaced `SHEET_BUILDING_PANEL`, which is gone rather than kept.** That
+## name had exactly one producer, the `FIX_POWER` arm below, and this wave moved
+## it; no shell and no test ever matched on the string. A sheet name a router
+## can no longer answer is a door in the wall of a room nobody can enter, which
+## is the defect class this wave is named after — so it is not left behind as
+## decoration. The in-place path it described is unaffected and is still the
+## right one: `building_panel.gd::_on_fix_pressed` intercepts `FIX_POWER` before
+## the router ever sees it (A91-D-54), and now raises `power_row_opened`.
+const SHEET_TRANSFORMER_PANEL := &"transformer_panel"
+## Which of S18's two purchases the row was about. Kept on the `FIX_POWER` answer
+## because a surface with NO in-place path has to be able to tell them apart.
 const ARM_POWER_FIX := &"power_fix"
+## S18 opened with nothing armed: the panel's own `focus_of()` decides which verb
+## it lands on, because it knows whether the unit is dead and this does not.
+const ARM_TRANSFORMER := &"transformer"
 
 ## Kinds whose fix is a PURCHASE rather than a place. Both are answered by the
 ## building panel in place; both are listed here so the router is total over
@@ -102,8 +119,10 @@ static func route(sim: CitySim, fix_target: Dictionary,
 				answer["quote"] = sim.cmd_repair_building(id, true)
 			return answer
 		RequirementFormatter.FIX_POWER:
-			# Same reason, one row down: the panel arms its own power strip and
-			# the strip spends. The router names the surface and the arm.
+			# Not a place either, and for a DIFFERENT reason from FIX_REPAIR's:
+			# the building panel intercepts this kind before the router sees it
+			# and spends in place (A91-D-54). What follows is the answer for
+			# every OTHER surface — the ones that have no strip to arm.
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
 			# **`FIX_POWER`'s id is NOT the building.** `build_controller.gd`
@@ -121,8 +140,16 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			var wall: Variant = WorldLocator.locate_any(sim, id)
 			if wall == null:
 				return _none(kind, id, REASON_UNRESOLVED)
+			# **Wave 25 (report 98 §68 RR-207): the sheet is S18, not S5.** The id
+			# on this kind is the COMPONENT the headroom binds at, and until this
+			# wave the only thing a surface could do with it was arm a confirm
+			# strip on a panel that was describing something else. The wall is a
+			# PLACE now, so the router sends the player to it. `arm` still says
+			# `power_fix`, because the building panel performs that verb IN PLACE
+			# (A91-D-54) and a surface with no in-place path has to know which of
+			# the two purchases the row was about.
 			var armed := {"action": ACTION_SHEET, "reason": &"", "kind": kind, "id": id,
-					"sheet": SHEET_BUILDING_PANEL, "arm": ARM_POWER_FIX,
+					"sheet": SHEET_TRANSFORMER_PANEL, "arm": ARM_POWER_FIX,
 					"binds_at": id, "world_pos": wall}
 			var subject := str(fix_target.get("sim_id", ""))
 			if subject != "" and sim.buildings.has(subject):
@@ -132,8 +159,7 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			return armed
 		RequirementFormatter.FIX_BUILDING, RequirementFormatter.FIX_BLOCK, \
 				RequirementFormatter.FIX_TILE, RequirementFormatter.FIX_DISTRICT, \
-				RequirementFormatter.FIX_ROAD_SEGMENT, \
-				RequirementFormatter.FIX_COMPONENT:
+				RequirementFormatter.FIX_ROAD_SEGMENT:
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
 			var where: Variant = WorldLocator.locate(sim, _locator_kind(kind), id)
@@ -141,6 +167,25 @@ static func route(sim: CitySim, fix_target: Dictionary,
 				return _none(kind, id, REASON_UNRESOLVED)
 			return {"action": ACTION_FOCUS, "reason": &"", "kind": kind, "id": id,
 					"world_pos": where}
+		RequirementFormatter.FIX_COMPONENT:
+			# **Wave 25.** A grid component's fix stopped being *"go and look at
+			# it"* the moment it became a thing with a panel: a transformer opens
+			# S18, where its condition, its customers, its ladder and its crew
+			# are. Every OTHER component this kind can carry — a feeder, a doc-05
+			# pump — still has no surface of its own and keeps the camera move,
+			# and the branch is decided by what the SIM says the id is rather than
+			# by how the id is spelled.
+			if id == "":
+				return _none(kind, id, REASON_EMPTY_ID)
+			var at: Variant = WorldLocator.locate(sim, WorldLocator.KIND_COMPONENT, id)
+			if at == null:
+				return _none(kind, id, REASON_UNRESOLVED)
+			if FixRouter._opens_transformer_panel(sim, id):
+				return {"action": ACTION_SHEET, "reason": &"", "kind": kind, "id": id,
+						"sheet": SHEET_TRANSFORMER_PANEL, "arm": ARM_TRANSFORMER,
+						"binds_at": id, "world_pos": at}
+			return {"action": ACTION_FOCUS, "reason": &"", "kind": kind, "id": id,
+					"world_pos": at}
 	return _none(kind, id, REASON_UNKNOWN_KIND)
 
 
@@ -151,6 +196,20 @@ static func route(sim: CitySim, fix_target: Dictionary,
 ## safe (PA-05 evidence).
 static func can_route(sim: CitySim, fix_target: Dictionary) -> bool:
 	return String(route(sim, fix_target, false)["action"]) != String(ACTION_NONE)
+
+
+## Is this id a component S18 can open? **Asked of the GRID, never of the id's
+## spelling** — `T-06` and a doc-05 pump are both `FIX_COMPONENT` ids and only
+## one of them has a panel, and a rule that read the prefix would send a player
+## to a blank sheet the first time a component kind is renamed. The authority is
+## `BuildController.PICKABLE_COMPONENT_KINDS`, which is the same list the tap
+## radius answers `PICK_COMPONENT` for, so the router and the map cannot come to
+## different conclusions about what is a thing you can open.
+static func _opens_transformer_panel(sim: CitySim, id: String) -> bool:
+	if sim == null or sim.grid == null or not sim.grid.has_component(id):
+		return false
+	return BuildController.PICKABLE_COMPONENT_KINDS.has(
+			StringName(String(sim.grid.component(id)["kind"])))
 
 
 ## The `WorldLocator` kind a `RequirementFormatter.FIX_*` resolves through. They

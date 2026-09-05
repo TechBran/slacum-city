@@ -853,11 +853,10 @@ func _downstream_index() -> Dictionary:
 
 
 func power_customers_downstream(id: String) -> int:
-	var count := 0
-	for building_id in sim.buildings:
-		if sim.grid.attachment_of(String(building_id)) == id:
-			count += 1
-	return count
+	# RR-205: one sweep of the attachment map, in `PowerGrid`, rather than a
+	# per-building `attachment_of()` over the whole roster (1,500 lookups on the
+	# benchmark city for a count the grid already holds).
+	return sim.grid.buildings_served_by(id).size()
 
 
 func power_feeder_load_shed(_id: String, _fraction: float) -> void:

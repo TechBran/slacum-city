@@ -10055,3 +10055,278 @@ that has ever existed to land them — and it still does not, because they are
 three other lanes' ledger rows and folding them in would put a change with no
 brief inside a merge two sibling waves are re-fitting against. The offer is filed
 here so the next lane that moves a baseline can take it in one line.
+## 68. WAVE 25 — the transformer is a thing you tap (binding)
+
+*(Measured in doc 92 §65. Rulings in doc 93 §AY. Defect rows doc 91 A91-D-129,
+A91-D-130, A91-D-131. Delta rows doc 12 D-114, D-115, D-116.)*
+
+The player, 2026-09-04: *"In every building we have the transformer power
+information. We should have that on the transformer itself. So if you click on
+the transformer, you can repair it — which means calling your crews there. If it
+fails, you can fix it from there, call your crews; and all of the buildings that
+connect to that transformer and the power-feed situation, and the ability to
+upgrade the transformer — all should be there on the transformer. You click the
+transformer and all of that information pops up just like a building does. So we
+don't clutter the building information. The buildings just need a few things:
+repair, upgrading, and things we already have. Right now there's too many things
+there."*
+
+Three separate things were true of the fork, and only the third is a matter of
+taste:
+
+1. **A transformer was not selectable.** `BuildController.pick_at_ground`
+   answered `opportunity → building → block` and nothing else, and
+   `game/main.gd` routed those three. There was no id a tap could produce for a
+   grid component, so there was no panel it could open, so every verb doc 04 §4
+   owns had to be reached through a BUILDING the transformer happened to feed.
+2. **A failed transformer had exactly one door and the player did not hold the
+   key to it.** `PowerGrid.repair_component` was called from one place in the
+   whole project — `CityIncidentWorld.power_restore_component`, inside doc 06's
+   incident resolution. There was no command. A player looking at a dead pad
+   could upgrade it (refused: `E_STATE`), demolish it, or wait.
+3. **The building panel had grown a whole subsystem inside it.** Wave 17 put the
+   hop list, the per-hop UPGRADE buttons, the armed REMOVE row and the fix strip
+   into `ui/building_panel.gd`, because the building was the only door there was.
+
+### RR-205 — `buildings_served_by`: the grid could not name its own customers (docs 04 §2.15.1, 12 D-114, 92 §65.1)
+
+`PowerGrid` publishes `attachment_of(building_id)` (one building → its
+transformer) and `attachment_map()` (the whole table). It published **no way to
+ask a transformer who is behind it**. `_children_of` is private and walks
+COMPONENTS, not buildings.
+
+The consequence was three open-coded copies of one loop, all sweeping the
+attachment map by hand: `CitySim.cmd_demolish_grid_component` (then re-sorting
+what it built), `CityIncidentWorld.power_customers_downstream` (a
+per-building `attachment_of()` over the whole roster — **1,500 dictionary
+lookups on the benchmark city** for a count the grid already holds), and
+`PowerGrid._customer_index` (a count, kept). `buildings_served_by(id)` is the
+public read, sorted for the same determinism reason `attachment_map()` is; the
+first two callers are now one line each.
+
+**`PowerGrid.damage_fraction(id)` lands with it**, and it closes an
+A91-D-19-shaped hole in doc 04's own middle.
+`_fail(id, cause, damage_fraction)` published a per-kind damage on every
+`PowerComponentFailed` — 0.35 transformer, 0.05 feeder, 0.30 substation, 0.05
+line — **written three times** (twice as literals in `_pass_c_thermal`, a third
+time as a ternary inside `_resolve_lightning_with`) and **read by nothing**:
+`_fail` does not touch `condition`, `repair_component` lifted to a flat 0.85, and
+no consumer in `sim/`, `ui/`, `game/` or `data/` ever named the key. It is now
+`PowerGrid.FAILURE_DAMAGE`, one table, and RR-206's price is read off it. Values
+unchanged: all four `profile_sim` baselines are byte-identical (doc 92 §65.5).
+
+### RR-206 — `cmd_repair_grid_component`: the verb the player asked for by name (docs 03 §2.5, 04 §2.15.2, 06 §2.6, 92 §65.2, 93 §AY1)
+
+A doc-03-priced repair that **dispatches a crew** rather than healing on the tap.
+Nothing about it is authored in `sim/`:
+
+| term | value | whose number |
+|---|---|---|
+| capital | `CostCurves.capital_value_grid(kind, level)` | doc 03 §2.5's grid bullet, shipped C-16, spender-less until now |
+| `damage_fraction` | `(1 − condition) + FAILURE_DAMAGE[kind]` when FAILED | doc 04 §2.6 (RR-205's hoisted table) |
+| price | `capital × damage × REPAIR_COST_PER_CAPITAL (0.85) × M_repair` | doc 03 §2.5, the one repair formula in the project |
+| crew-hours | `w_base(power_event_map[kind]) × damage_fraction` | doc 06's `transformer_failure.w_base` = **0.90 game-hours** |
+| crew type | `heavy_equipment_crew` | doc 09 §2.3's `UTILITY_CORRIDOR` crew — the phase that lays this equipment |
+| repair target | 0.85 from FAILED, 1.00 from standing | doc 02 §2.12's two targets, applied to a component |
+
+**No new ledger line and no new row in `data/economy.json`.** The charge books
+under the existing `&"repair"` category, so the Economy ledger's `Repairs` line
+carries it with no schema change. The job is an ordinary `ConstructionQueue`
+`repair` with a `grid_component` payload key, so it is listed by S16, rushable by
+`cmd_rush_construction`, and completed by the one completion door
+(`_route_completed_jobs`) — routed to `_complete_grid_repair` **ahead of**
+`on_construction_completed`, whose first act is a `buildings` lookup that a
+component id can never satisfy.
+
+Refusal ladder, in order: `E_UNKNOWN_COMPONENT`, `E_NOT_DAMAGED`,
+`E_ALREADY_REPAIRING`, `E_FUNDS` / the treasury's own spend refusals.
+
+**Both events have named readers**, which is the test this project applies to
+anything it emits: `data/ui.json.event_log` logs both under the `power` filter,
+and `data/notifications.json` binds the ARRIVAL to a `P3_routine` banner. The
+DISPATCH is deliberately not bound — a player who has just pressed CALL A CREW is
+looking at the panel that already shows the crew and the ETA.
+
+**Two things it deliberately refuses, and both are written down rather than
+approximated.** A component that is only OPEN is not damaged — a tripped relay
+is a position, and doc 04's auto-reclose or doc 06's dispatch closes it for
+nothing. And a FEEDER is out of scope: doc 03 §2.5 prices a grid component's
+repair capital as its §2.13(b) build cost, a feeder's §2.13(b) price is **per
+tile of its run**, so `capital_value_grid("feeder", 1)` answers **0** and a
+feeder repair admitted here would have been free. Filed as A91-D-131 rather than
+shipped.
+
+**`E_NOT_DAMAGED` has a third arm that is not obvious and is the whole reason
+the verb is not a trap.** `repair_component` never LOWERS a condition, so a
+repair of a standing component already at its target would take doc 03's money
+and move nothing. The gate therefore refuses when the quoted price rounds to
+$0 as well as when the damage is zero — the threshold is doc 03's own rounding,
+not a number this wave authored.
+
+### RR-207 — `PICK_COMPONENT`, S18, and the router that finally has somewhere to send a `POWER_CAPACITY` row (docs 12 §2.25, 04 §2.15.1, 92 §65.3, 93 §AY2)
+
+`pick_at_ground` gains a fourth answer between OPPORTUNITY and BUILDING, on the
+same 48 dp radius `set_tap_radius_from` already computes, measured against the
+pad's own tile centre. **The order is the point**: a padmount cabinet is 2.4 m
+across standing in front of a house that occupies a whole 8 m tile, so a pick
+decided by tile ownership hands every tap to the house — the same asymmetry doc
+12 §2.21 argued for the street collectable, one object over. The house has not
+moved and is one tap away.
+
+`ui/transformer_panel_model.gd` is the headless model (every number, every string
+KEY, every refusal) and `ui/transformer_panel.gd` is the code-built view that
+computes nothing — the same split `LandPanelModel` / `LandPanel` uses, and the
+reason the whole surface is under `tests/test_ui_transformer.gd` rather than
+under a screenshot.
+
+**And one seam that would otherwise have made the whole screen inert.**
+`UIRoot.bring_up_screens()` builds every panel against one shared `UIConfig` and
+NO sim; the shell builds the `BuildController` afterwards and hands it to S5 and
+the build sheet, and has no reason to hand anything to a screen that did not
+exist last wave. `UIRoot._transformer_model()` therefore resolves S18's model
+from the controller a sibling is already holding — the same argument
+`bind_water_actions`' resolver makes for the incident drawer, and for the same
+reason. Without it `show_transformer` would return `false` for ever in the
+shipped game and the failure would look exactly like *a tap that does nothing*,
+which is the defect this wave was opened on.
+`test_s18_opens_in_a_shell_that_never_hands_it_a_model` drives the shipped boot
+order and nothing else.
+
+**And the same trap one layer up.** `FixRouter` now answers
+`SHEET_TRANSFORMER_PANEL` for a `POWER_CAPACITY` row and for a grid component's
+own row — but every surface that raises one re-emits to the shell, whose handler
+knows exactly one action (`ACTION_FOCUS`, a camera move). A correct new answer
+consumed by nothing is the shape this wave is named after, so
+`UIRoot._serve_transformer_fix` serves it: both panels are on the root's own
+`PanelLayer`, the route is one line, and everything the root cannot serve passes
+through to the shell untouched. `test_a_fix_row_raised_by_a_surface_with_no_in_place_path_opens_s18_here`
+drives it through S4's own signal and asserts the pass-through as well as the
+catch.
+
+`SHEET_BUILDING_PANEL` is **deleted, not deprecated**. It had one producer, the
+`FIX_POWER` arm this wave moved, and no consumer anywhere in `ui/`, `game/` or
+`tests/` — the shell has only ever branched on `action`, never on `sheet`. A
+sheet name a router can no longer answer is a door in a wall nobody can enter,
+which is the exact defect class the paragraph above is about, so it goes with
+the branch that produced it. The in-place path its docstring described is
+untouched and still correct: `building_panel.gd::_on_fix_pressed` catches
+`FIX_POWER` before the router is consulted (A91-D-54) and now raises
+`power_row_opened` instead of arming the strip.
+
+### RR-208 — the building panel diet (docs 12 §2.9 D-115/D-116, 92 §65.4, 93 §AY3)
+
+Wave 17's POWER section — header, draw line, shed line, N hop rows each with a
+title, a reading, an UPGRADE button, a checklist and an armed REMOVE row, then
+the next-level line and the fix strip — becomes **one row**:
+`Power · fed by T-03 · 78 % · ›`, or `Power · NOT SERVED · ›`, which opens S18.
+Measured in doc 92 §65.4.
+
+**The water block does NOT take the same treatment, and the asymmetry is the
+ruling** (doc 12 D-116, doc 93 §AY3, doc 92 §65.4). It is the same shape read the
+other way: a transformer HAS a surface to be handed to, so collapsing its section
+MOVES a verb; a doc-05 node has none, so collapsing its section would DELETE one —
+A91-D-19 run backwards. `_render_water` and `_build_water_row` are untouched by
+this wave and `WTR-1` is exactly the length it was. (An earlier draft of this
+section said the opposite; the code, the measurement and doc 12 all say this.)
+
+**The three blocks that were examined and KEPT are as much of the ruling as the
+two that moved** (doc 93 §AY3): the priority row is a decision only this panel
+can make about this building; the coverage checklist is the requirement contract
+doc 12 §2.7 calls the game's most important teaching device; the progress block
+is the answer to *"is anything happening here?"*, which a player asks of the
+building and not of a queue.
+
+**One thing this wave broke and put back: the sRGB census.** `set_selected`'s
+ring (`game/render/power_infra_view.gd`) shipped a vertex colour array of 24
+`Color.WHITE` entries under `vertex_color_use_as_albedo`. It rendered correctly —
+white is 1.0 in both spaces, so the multiply was a no-op and the ring's authored
+gold rode `albedo_color`, which the engine decodes for free (A91-D-36, RR-91,
+RR-95) — but it put the file into
+`test_render_polish.gd::test_every_procedural_mesh_decodes_its_authored_vertex_colour`'s
+census of renderers that hand a shader authored colour raw, and that guard is a
+source-text census which cannot tell a white multiplier from a hue. **The array
+is deleted rather than decoded**: there was no authored colour in it, and a
+`srgb_to_linear` added to satisfy a census is the census measuring nothing. The
+ring is byte-identical on screen; the census is back to guarding five files, all
+of which genuinely carry hue on a vertex. Found by the full suite, not by the
+checkpoints — it is the one test in the tree that reads `game/render/*.gd` as
+TEXT, so nothing in the transformer suite could have caught it.
+
+### 68.1 `game/main.gd` — the five snippets, with anchors
+
+This lane may not edit the shell (the lead owns `game/main.gd`). Everything else
+in Wave 25 is complete and green without these; what they add is the WORLD half —
+the tap routing, the pad highlight, and the HUD refresh after S18's verbs. All
+five are additive except snippet 3, which is a two-line DELETION and a tidy-up
+rather than a fix: `BuildingPanel.grid_upgraded` / `grid_demolished` are still
+declared and still RAISED — by `UIRoot`, on the panel's behalf — precisely so an
+unpatched shell keeps working. **Nothing below is needed for the tree to boot or
+for the suite to pass.**
+
+**1. Route `PICK_COMPONENT`.** In `_handle_tap`, immediately after the
+`PICK_OPPORTUNITY` arm's `return` and BEFORE the `PICK_BUILDING` arm:
+
+```gdscript
+	if StringName(str(pick["kind"])) == BuildController.PICK_COMPONENT \
+			and ui_root != null and ui_root.show_transformer(str(pick["id"])):
+		# S18 closes its siblings itself (`UIWidgets.close_siblings`), so the
+		# building panel and S4 stand down without being told twice.
+		ui_root.selected_entity_id = str(pick["id"])
+		if power_infra != null:
+			power_infra.set_selected(str(pick["id"]))
+		return
+```
+
+**2. Follow the selection into the world.** In `_wire_build_ui()`, in the
+`if building_panel != null:` block, beside the other panel connections
+(`ui_root` is in scope there as the member):
+
+```gdscript
+	if ui_root != null:
+		ui_root.transformer_selected.connect(func(component_id: String) -> void:
+			if power_infra != null:
+				power_infra.set_selected(component_id)
+			ui_root.selected_entity_id = component_id)
+		ui_root.transformer_customer_selected.connect(
+			func(sim_id: String, world_pos: Vector3) -> void:
+				camera_state.focus_on(world_pos)
+				if building_panel != null:
+					building_panel.show_building(sim_id)
+				ui_root.selected_entity_id = sim_id)
+		ui_root.grid_action.connect(
+			func(_action: StringName, _component_id: String, _result: Dictionary) -> void:
+				_refresh_hud()
+				if power_infra != null:
+					power_infra.note_topology_changed())
+```
+
+**3. Retire S5's two grid signals.** In the `if building_panel != null:` block,
+**delete** these two connections — S18 raises `upgraded` / `demolished` and
+snippet 2's `grid_action` arm does the same work:
+
+```gdscript
+		building_panel.grid_upgraded.connect(
+				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+		building_panel.grid_demolished.connect(
+				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+```
+
+`building_panel.power_fixed` stays: `cmd_fix_power_capacity`'s strip is still on
+S5 (doc 12 D-116).
+
+**4. Keep the panel live.** In the 1 Hz HUD block, on the line after
+`ui_root.refresh_land_panel()`:
+
+```gdscript
+		ui_root.refresh_transformer_panel()
+```
+
+**5. A loaded save is a different grid.** Beside the existing
+`power_infra.note_topology_changed()` in the post-load path:
+
+```gdscript
+	if power_infra != null:
+		power_infra.set_selected("")   # the ring cannot outlive the city under it
+	if ui_root != null:
+		ui_root.close_transformer_panel()
+```

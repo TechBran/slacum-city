@@ -215,6 +215,13 @@ const CODE_TABLE := {
 	# the failure shape PA-24 found on `E_WATER_HEADROOM`.
 	&"E_OWNER_MAINTAINED": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
 	&"E_JOB_IN_FLIGHT": {"severity": SEVERITY_INFO, "fix": FIX_NONE},
+	# Wave 25, doc 04 §2.15.2's `cmd_repair_grid_component` (report 98 §68 RR-206).
+	# `E_JOB_IN_FLIGHT`'s twin for a grid component, and a SEPARATE code rather
+	# than a re-use, because the two carry different copy: one says a crew is on
+	# this BUILDING, the other says a crew is on the transformer that feeds a
+	# street of them. INFO for the same reason its twin is — "it is already being
+	# repaired" is news, not a fault.
+	&"E_ALREADY_REPAIRING": {"severity": SEVERITY_INFO, "fix": FIX_COMPONENT},
 	# Wave 18, doc 02 §2.12's restore. `cmd_restore_all_destroyed` answers this
 	# on a healthy city and `BuildController` draws no batch row for it — the
 	# entry exists for the same reason `E_OWNER_MAINTAINED`'s does, so the code
@@ -586,6 +593,12 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"OCCUPIED":
 			args["have"] = str(p.get("have", _tile_text(p)))
 			args["need"] = str(p.get("need", ""))
+		&"E_ALREADY_REPAIRING":
+			# Wave 25, doc 04 §2.15.2. `at` is the COMPONENT a crew is already on —
+			# the same `{at}` name `POWER_CAPACITY` above uses for the thing that
+			# runs out first, because a player reading two power rows should not
+			# have to learn two words for "which piece of equipment".
+			args["at"] = str(p.get("at", p.get("component", "")))
 		&"NOT_OWNED", &"UNDEVELOPED":
 			args["at"] = str(p.get("at", p.get("block_id", _tile_text(p))))
 			args["have"] = str(p.get("have", args["at"]))

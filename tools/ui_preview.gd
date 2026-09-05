@@ -69,8 +69,43 @@ const SCREENS: Array[String] = [
 	# the row, which is A91-D-28's lesson applied on the way in.
 	"building_salvage",
 	# Wave 17's POWER section (doc 12 §2.9 D-70) in its two states: the wire with
-	# room, and the wire that is the reason the UPGRADE button is dead.
+	# room, and the wire that is the reason the UPGRADE button is dead. Since
+	# Wave 25 (D-115) the first of those is ONE ROW and a door, and the second is
+	# that row with the fix strip under it — the two building-panel variants the
+	# diet has to be photographed in.
 	"building_power", "building_power_fix",
+
+	# S18, Wave 25 (doc 12 §2.25). Six states, in the same commit as the screen —
+	# A91-D-28's lesson, applied on the way in. Every distress band the panel can
+	# open in, plus the one it was written for.
+	#
+	#   `transformer`           CLEAN: a working unit with room, the customer
+	#                           list short, UPGRADE live with its price on it.
+	#   `transformer_stressed`  §5.10's WARNING band — the state that is worth
+	#                           acting on before an incident exists.
+	#   `transformer_troubled`  CRITICAL: over its derated plate, smoking in the
+	#                           world, and the panel says so in words (A5).
+	#   `transformer_severe`    §5.10's SEVERE band — past `severe_load_ratio()`,
+	#                           odds-on to burn out inside the game-hour. The pad
+	#                           is throwing sparks and the panel has to be as
+	#                           loud as the world is.
+	#   `transformer_dark`      de-energized: a working unit with nothing behind
+	#                           it. Not a fault, and the panel must not dress it
+	#                           as one — the OFFLINE token, not the critical one.
+	#   `transformer_failed`    the state the wave exists for: burned out, the
+	#                           panel opens ON the crew, and every customer row
+	#                           reads DARK.
+	#   `transformer_repairing` the same unit with the crew already rolling — a
+	#                           progress bar and an ETA where the button was,
+	#                           which is a different screen and not a label.
+	#   `transformer_crowded`   the longest this panel ever gets: the widest
+	#                           transformer in the benchmark city feeds 17
+	#                           buildings (doc 92 §65.1) and the list caps at 8
+	#                           with a `+N more` line, so this is the state the
+	#                           cap exists for.
+	"transformer", "transformer_stressed", "transformer_troubled",
+	"transformer_severe", "transformer_dark",
+	"transformer_failed", "transformer_repairing", "transformer_crowded",
 	"land_buy", "land_blocked", "land_developing",
 	# Wave 25 (doc 12 §2.21 D-117): the same panel with doc 03 §2.8b's excavation
 	# band on it — a block far enough through the pipeline that CLEARING and
@@ -523,6 +558,63 @@ func _first_main() -> String:
 	return str(ids[0]) if not ids.is_empty() else ""
 
 
+## S18's subject: the transformer with the most buildings behind it, so the
+## preview photographs the customer list rather than an empty one. Asked of the
+## roster, never named — doc 09's starter city is data and its grid may move.
+func _busiest_transformer() -> String:
+	var best := ""
+	var most := -1
+	for id_value in _sim.grid.component_ids_of_kind(&"transformer"):
+		var n := _sim.grid.buildings_served_by(String(id_value)).size()
+		if n > most:
+			most = n
+			best = String(id_value)
+	return best
+
+
+## A transformer pushed to a chosen load ratio, for the two band states. The
+## LOAD is written, not the band: `PowerGrid.distress_band` then classifies it
+## exactly as it classifies a real one, so the panel's word and the pad's smoke
+## are the same verdict for the same reason they are in the game.
+func _band_transformer(ratio: float) -> String:
+	var id := _busiest_transformer()
+	var c := _sim.grid.component(id)
+	c["load_kw"] = ratio * _sim.grid.cap_eff(id, _sim.ambient_c())
+	c["energized"] = true
+	return id
+
+
+## Move buildings onto one pad until it has `want` customers — through
+## `PowerGrid.attach_building`, so the roster, the count and the kW total are
+## produced the way a grown city produces them.
+func _crowd_a_transformer(want: int) -> String:
+	var id := _busiest_transformer()
+	var tile := _sim.grid.component_tile(id)
+	var keys := _sim.buildings.keys()
+	keys.sort()
+	for key: Variant in keys:
+		if _sim.grid.buildings_served_by(id).size() >= want:
+			break
+		if _sim.grid.attachment_of(str(key)) == id:
+			continue
+		_sim.grid.detach_building(str(key))
+		# The pad's OWN tile, so `would_attach`'s distance term (0) picks this
+		# transformer and no other: the crowding is produced by the shipped
+		# attachment rule rather than written into the table.
+		_sim.grid.attach_building(str(key), tile)
+	return id
+
+
+## Open S18 on `component_id`, with the model the shell would have given it.
+func _open_transformer(component_id: String) -> void:
+	if _root.transformer_panel == null or component_id == "":
+		return
+	if _root.transformer_panel.model == null:
+		_root.transformer_panel.setup(_root.config, TransformerPanelModel.new(
+				_sim, _controller.power, _root.config, _controller.tile_m))
+	_root.transformer_panel.show_component(component_id)
+
+
 ## The first `water_facility` shell — the one building in the city whose panel
 ## carries doc 05 §6's node block.
 func _water_shell() -> String:
@@ -769,6 +861,47 @@ func _apply(screen: String) -> void:
 			if _building_panel != null:
 				_sim.treasury.balance = 500_000
 				_building_panel.show_building(_power_blocked_building())
+		"transformer":
+			_sim.treasury.balance = 500_000
+			_open_transformer(_busiest_transformer())
+		"transformer_stressed":
+			_open_transformer(_band_transformer(PowerGrid.OVERLAY_WARNING_R + 0.05))
+		"transformer_troubled":
+			_open_transformer(_band_transformer(PowerGrid.OVERLAY_CRITICAL_R + 0.10))
+		"transformer_severe":
+			_open_transformer(_band_transformer(PowerGrid.severe_load_ratio() + 0.10))
+		"transformer_dark":
+			# De-energized, and the load is stale on purpose: doc 04's own rule is
+			# that state outranks any load number, so this is also the state that
+			# proves the panel reads the band rather than the ratio.
+			var dark := _busiest_transformer()
+			_sim.grid.component(dark)["energized"] = false
+			_open_transformer(dark)
+		"transformer_failed":
+			# Burned out, and the player can afford the crew — this is the panel
+			# in the state it was written for, opened on the repair.
+			_sim.treasury.balance = 500_000
+			var dead := _busiest_transformer()
+			_sim.grid.component(dead)["state"] = &"FAILED"
+			_sim.grid.component(dead)["energized"] = false
+			_open_transformer(dead)
+		"transformer_repairing":
+			# The same unit one tap later. The crew is REAL — the command is the
+			# shipped one, so the bar and the ETA are the queue's own numbers and
+			# not a fixture of them.
+			_sim.treasury.balance = 500_000
+			var mending := _busiest_transformer()
+			_sim.grid.component(mending)["state"] = &"FAILED"
+			_sim.grid.component(mending)["energized"] = false
+			_sim.cmd_repair_grid_component(mending)
+			_open_transformer(mending)
+		"transformer_crowded":
+			# Twelve customers on one pad, made by moving buildings onto it
+			# through the grid's own attach verb rather than by writing a
+			# fixture: the list, the count and the demand total are then the same
+			# numbers a grown city produces.
+			_sim.treasury.balance = 500_000
+			_open_transformer(_crowd_a_transformer(12))
 		"land_buy":
 			# The city can afford it: the panel's happy face, with the primary
 			# button live and no blocker rows under it.

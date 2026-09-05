@@ -899,3 +899,232 @@ func test_g_the_transformer_demolish_quote_prices_the_move() -> void:
 	# A feeder has no demolish verb in this cut, and the quote says so rather
 	# than drawing a button that can only refuse.
 	assert_false(bool(controller.power.demolish_quote("F_NORTH")["available"]))
+
+
+# ===========================================================================
+# H — call the crews (Wave 25, doc 04 §2.15.2, report 98 §68 RR-206)
+#
+# The verb that did not exist: `PowerGrid.repair_component` had one caller in the
+# whole project — doc 06's incident resolution — so a player looking at a
+# burned-out transformer could upgrade it (refused, `E_STATE`), demolish it, or
+# wait. A91-D-129.
+# ===========================================================================
+
+func test_h_the_repair_is_priced_by_doc_03_and_clocked_by_doc_06() -> void:
+	var sim := _starter()
+	sim.treasury.credit(50_000, &"test_grant")
+	var c := sim.grid.component("T-04")
+	c["state"] = &"FAILED"
+	c["condition"] = 0.72
+	var quote := sim.cmd_repair_grid_component("T-04", true)
+	assert_true(bool(quote["ok"]), "a burned-out transformer can be repaired")
+	var payload: Dictionary = quote["payload"]
+	# doc 04 §2.6's burnout damage plus the wear, on doc 03 §2.5's own formula.
+	var damage := (1.0 - 0.72) + float(PowerGrid.FAILURE_DAMAGE[&"transformer"])
+	assert_true(absf(float(payload["damage_fraction"]) - damage) < 1e-9,
+			"damage is §2.6's FAILURE_DAMAGE plus the wear")
+	assert_eq(int(payload["cost"]), sim.econ_curves.repair_cost(
+			sim.econ_curves.capital_value_grid("transformer", 2), damage, 1.0),
+			"the price is doc 03 §2.5 on §2.5's own grid capital")
+	assert_eq(int(payload["cost"]), 589, "an L2 at 63 % damage — $1,100 × 0.63 × 0.85")
+	# doc 06's own work for this failure, scaled by the damage bought back.
+	var row := sim.incident_catalog.type_row("transformer_failure", "")
+	assert_true(absf(float(payload["crew_hours"])
+			- float(row["w_base"]) * damage) < 1e-9,
+			"crew-hours are doc 06's `w_base`, and doc 06 is the only author of them")
+	assert_eq(String(payload["crew_type"]), "heavy_equipment_crew",
+			"doc 09 §2.3's UTILITY_CORRIDOR crew — the one that lays this equipment")
+
+
+func test_h_the_crew_has_to_arrive_and_the_transformer_comes_back_when_it_does() -> void:
+	var sim := _starter()
+	sim.treasury.credit(50_000, &"test_grant")
+	sim.grid.component("T-04")["state"] = &"FAILED"
+	sim.grid.component("T-04")["condition"] = 0.72
+	var before := sim.treasury.balance
+	var done := sim.cmd_repair_grid_component("T-04")
+	assert_true(bool(done["ok"]))
+	assert_eq(sim.treasury.balance, before - int(done["payload"]["cost"]),
+			"doc 03 is paid on the tap")
+	assert_eq(String(sim.grid.component("T-04")["state"]), "FAILED",
+			"and NOTHING else happens on the tap — a crew has to travel")
+	var job_id := int(done["payload"]["job_id"])
+	assert_true(job_id > 0 and sim.construction.job(job_id).has("payload"),
+			"there is a real job in doc 09's queue")
+	assert_eq(String(sim.construction.job(job_id)["payload"]["grid_component"]), "T-04")
+	sim.advance_hours(2.0)
+	assert_eq(String(sim.grid.component("T-04")["state"]), "OK",
+			"it comes back when the crew finishes")
+	# At doc 02 §2.12's post-damage target, less the wear the two game-hours of
+	# advancing put back on it (§2.6's `WEAR_PER_GH`) — the repair restores TO
+	# 0.85 and the clock starts again immediately, which is the honest reading.
+	var condition := float(sim.grid.component("T-04")["condition"])
+	assert_true(condition <= 0.85 + 1e-9,
+			"never above doc 02 §2.12's post-damage target")
+	assert_true(condition >= 0.85 - 4.0 * PowerGrid.WEAR_PER_GH,
+			"…and within two game-hours of wear of it")
+
+
+func test_h_a_standing_transformer_is_overhauled_all_the_way_back() -> void:
+	# Doc 02 §2.12's OTHER target: `repair_target_active` is 1.00, and a player
+	# buying an overhaul of a unit that is still standing must not be charged for
+	# `1 − condition` and lifted only to 0.85.
+	var sim := _starter()
+	sim.treasury.credit(50_000, &"test_grant")
+	sim.grid.component("T-04")["condition"] = 0.60
+	var quote := sim.cmd_repair_grid_component("T-04", true)
+	assert_eq(float(quote["payload"]["repair_target"]), 1.0)
+	assert_true(absf(float(quote["payload"]["damage_fraction"]) - 0.40) < 1e-9,
+			"a standing unit's damage is its wear and nothing else")
+	assert_true(bool(sim.cmd_repair_grid_component("T-04")["ok"]))
+	sim.advance_hours(2.0)
+	assert_true(float(sim.grid.component("T-04")["condition"]) > 0.99,
+			"the overhaul buys back what it charged for")
+
+
+func test_h_the_refusal_ladder_is_the_one_the_header_documents() -> void:
+	var sim := _starter()
+	# 1. not a transformer, and not a component at all.
+	assert_eq(String(sim.cmd_repair_grid_component("NOPE", true)["reason_code"]),
+			"E_UNKNOWN_COMPONENT")
+	assert_eq(String(sim.cmd_repair_grid_component("F_NORTH", true)["reason_code"]),
+			"E_UNKNOWN_COMPONENT",
+			"a feeder is refused BY NAME: doc 03 prices a line per tile and "
+			+ "`capital_value_grid` cannot read a route (A91-D-131)")
+	assert_eq(String(sim.cmd_repair_grid_component("SUB-A", true)["reason_code"]),
+			"E_UNKNOWN_COMPONENT", "a substation is a BUILDING (C-30)")
+	# 2. nothing to buy.
+	sim.grid.component("T-04")["condition"] = 1.0
+	assert_eq(String(sim.cmd_repair_grid_component("T-04", true)["reason_code"]),
+			"E_NOT_DAMAGED")
+	# …including a standing unit whose price rounds to nothing, which is the arm
+	# that stops the verb being a trap: `repair_component` never LOWERS a
+	# condition, so this purchase would move nothing at all.
+	sim.grid.component("T-04")["condition"] = 0.99999
+	assert_eq(String(sim.cmd_repair_grid_component("T-04", true)["reason_code"]),
+			"E_NOT_DAMAGED", "doc 03 prices this at $0 and it buys nothing")
+	# …and an OPEN unit is a relay position, not a fault.
+	sim.grid.component("T-04")["condition"] = 1.0
+	sim.grid.force_open("T-04")
+	assert_eq(String(sim.cmd_repair_grid_component("T-04", true)["reason_code"]),
+			"E_NOT_DAMAGED", "a tripped relay costs nothing to close")
+	# 3. one crew per component.
+	sim.grid.component("T-04")["state"] = &"FAILED"
+	sim.treasury.credit(50_000, &"test_grant")
+	assert_true(bool(sim.cmd_repair_grid_component("T-04")["ok"]))
+	assert_eq(String(sim.cmd_repair_grid_component("T-04", true)["reason_code"]),
+			"E_ALREADY_REPAIRING")
+	# 4. the money.
+	var broke := _starter()
+	broke.grid.component("T-04")["state"] = &"FAILED"
+	broke.treasury.balance = 0
+	assert_eq(String(broke.cmd_repair_grid_component("T-04", true)["reason_code"]),
+			"E_FUNDS")
+
+
+func test_h_the_repair_events_have_readers() -> void:
+	# This project's signature defect is an event nothing consumes, so each of
+	# these two is checked against the table that reads it rather than merely
+	# asserted to fire.
+	var sim := _starter()
+	sim.treasury.credit(50_000, &"test_grant")
+	sim.bus.drain()
+	sim.grid.component("T-04")["state"] = &"FAILED"
+	assert_true(bool(sim.cmd_repair_grid_component("T-04")["ok"]))
+	var started := _events_of(sim, "grid_component_repair_started")
+	assert_eq(started.size(), 1, "the dispatch is announced once")
+	assert_eq(String((started[0] as Dictionary)["component"]), "T-04",
+			"and the announcement names the transformer")
+	sim.advance_hours(2.0)
+	var done := _events_of(sim, "grid_component_repaired")
+	assert_eq(done.size(), 1, "so is the arrival")
+	assert_true(bool((done[0] as Dictionary)["was_failed"]))
+	# The readers, by name: `data/ui.json.event_log` binds both under `power`.
+	var log_rows: Array = UIConfig.load_from_files().section("event_log").get("events", [])
+	var bound: Dictionary = {}
+	for entry: Variant in log_rows:
+		bound[String((entry as Dictionary).get("type", ""))] = entry
+	for event_type: String in ["grid_component_repair_started", "grid_component_repaired"]:
+		assert_true(bound.has(event_type),
+				"%s has an event_log row — an event with no reader is A91-D-19" % event_type)
+		assert_eq(String((bound[event_type] as Dictionary)["category"]), "power")
+	# …and the ARRIVAL has a second one: doc 08's notification bindings, which is
+	# what puts a banner in front of a player who is looking somewhere else. The
+	# dispatch deliberately has none — see the file's own comment.
+	var notify: Dictionary = StarterCityLoader.read_json("res://data/notifications.json")
+	var bound_types: Dictionary = {}
+	for entry: Variant in (notify.get("bindings", []) as Array):
+		bound_types[String((entry as Dictionary).get("type", ""))] = \
+				String((entry as Dictionary).get("notify_id", ""))
+	assert_eq(String(bound_types.get("grid_component_repaired", "")), "grid_repair_done",
+			"the arrival raises a banner")
+	assert_true((notify.get("events", {}) as Dictionary).has("grid_repair_done"),
+			"…and its class row exists, or the binding names nothing")
+
+
+func test_h_the_job_is_a_project_like_any_other() -> void:
+	# S16 lists it, `cmd_rush_construction` can buy its remaining time, and the
+	# row carries the PAD's tile so the jump affordance lands on the thing being
+	# fixed rather than at (−1, −1).
+	var sim := _starter()
+	sim.treasury.credit(50_000, &"test_grant")
+	sim.grid.component("T-04")["state"] = &"FAILED"
+	sim.grid.component("T-04")["condition"] = 0.50
+	assert_true(bool(sim.cmd_repair_grid_component("T-04")["ok"]))
+	var rows: Array[Dictionary] = sim.construction_overview()
+	var found: Dictionary = {}
+	for entry: Variant in rows:
+		if String((entry as Dictionary)["ref"]) == "T-04":
+			found = entry
+	assert_false(found.is_empty(), "the queue lists the crew")
+	assert_eq(found["tile"], sim.grid.component_tile("T-04"),
+			"the row points at the pad")
+	assert_eq(String(found["title_key"]), "ui_power_kind_transformer",
+			"and names it the way the panel does")
+	assert_true(bool(found["rushable"]), "a project with a cash price can be rushed")
+
+
+func test_h_the_burnout_damage_table_has_exactly_one_home() -> void:
+	# A91-D-130: `_fail`'s `damage_fraction` was written three times and read by
+	# nothing. The values are unchanged, and this pins BOTH halves — the table is
+	# what the failure publishes, and it is what the repair charges for.
+	var grid := PowerGrid.new()
+	grid.add_component("t", &"transformer", {"level": 1})
+	grid.add_component("f", &"feeder", {"conductor_class": 1})
+	for pair: Array in [["t", &"transformer"], ["f", &"feeder"]]:
+		var id := String(pair[0])
+		var kind: StringName = pair[1]
+		grid._fail(id, "TEST", float(PowerGrid.FAILURE_DAMAGE[kind]))
+		var events := grid.drain_events()
+		var damage := -1.0
+		for entry: Variant in events:
+			if String((entry as Dictionary)["type"]) == "PowerComponentFailed":
+				damage = float((entry as Dictionary)["damage_fraction"])
+		assert_eq(damage, float(PowerGrid.FAILURE_DAMAGE[kind]),
+				"%s publishes the table's own value" % String(kind))
+		assert_true(absf(grid.damage_fraction(id)
+				- float(PowerGrid.FAILURE_DAMAGE[kind])) < 1e-9,
+				"…and `damage_fraction` reads the same number back")
+	# The lightning band re-derived it a third time and now does not.
+	assert_eq(float(PowerGrid.FAILURE_DAMAGE[&"transformer"]), 0.35)
+	assert_eq(float(PowerGrid.FAILURE_DAMAGE[&"substation"]), 0.30)
+	assert_eq(float(PowerGrid.FAILURE_DAMAGE[&"feeder"]), 0.05)
+	assert_eq(float(PowerGrid.FAILURE_DAMAGE[&"transmission"]), 0.05)
+
+
+func test_h_buildings_served_by_is_the_grids_own_roster() -> void:
+	var sim := _starter()
+	var total := 0
+	for id_value in sim.grid.component_ids_of_kind(&"transformer"):
+		var served := sim.grid.buildings_served_by(String(id_value))
+		total += served.size()
+		var sorted := served.duplicate()
+		sorted.sort()
+		assert_eq(str(served), str(sorted), "ascending, so two runs draw one panel")
+		for sim_id: Variant in served:
+			assert_eq(sim.grid.attachment_of(String(sim_id)), String(id_value),
+					"and it agrees with `attachment_of` building by building")
+	assert_eq(total, sim.grid.attachment_map().size(),
+			"every attached building is behind exactly one transformer")
+	assert_eq(sim.grid.buildings_served_by("NOPE").size(), 0,
+			"an id the grid has never heard of is empty, not an error")

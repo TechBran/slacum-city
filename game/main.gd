@@ -941,6 +941,7 @@ func _refresh_hud() -> void:
 		# building, so this is one dictionary a second while a panel is up and
 		# nothing at all when it is down — `refresh_land_panel`'s exact shape.
 		ui_root.refresh_building_panel()
+		ui_root.refresh_transformer_panel()   # Wave 25: S18's crew clock
 		# The goal chip and, while it is up, the sheet. Cheap — a five-row
 		# objective list and a six-rung strip — so it rides the same 1 Hz
 		# cadence every other reading does. This is also what re-seeds the chip
@@ -1017,10 +1018,25 @@ func _wire_build_ui(ui_instance: Node) -> void:
 		# the water ladder above: two args, and the city moved, so the chips do.
 		building_panel.power_fixed.connect(
 				func(_sim_id: String, _result: Dictionary) -> void: _refresh_hud())
-		building_panel.grid_upgraded.connect(
-				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
-		building_panel.grid_demolished.connect(
-				func(_component_id: String, _result: Dictionary) -> void: _refresh_hud())
+		# Wave 25: S18 (the transformer panel) raises `upgraded` / `demolished` now;
+		# `UIRoot.grid_action` below is the one arm that refreshes the HUD for all of
+		# S18's verbs, and the selection follows the tap into the world.
+		if ui_root != null:
+			ui_root.transformer_selected.connect(func(component_id: String) -> void:
+				if power_infra != null:
+					power_infra.set_selected(component_id)
+				ui_root.selected_entity_id = component_id)
+			ui_root.transformer_customer_selected.connect(
+				func(sim_id: String, world_pos: Vector3) -> void:
+					camera_state.focus_on(world_pos)
+					if building_panel != null:
+						building_panel.show_building(sim_id)
+					ui_root.selected_entity_id = sim_id)
+			ui_root.grid_action.connect(
+				func(_action: StringName, _component_id: String, _result: Dictionary) -> void:
+					_refresh_hud()
+					if power_infra != null:
+						power_infra.note_topology_changed())
 		# S16 on S5 (doc 12 §2.22 item 3): the SAME model instance the queue
 		# panel holds, so the two can never publish different numbers for one
 		# project. Three args, so the refusal is forwarded by hand — an accepted
@@ -1958,6 +1974,10 @@ func _resync_world_views() -> void:
 	# lands on the next frame's `sync`.
 	if power_infra != null:
 		power_infra.note_topology_changed()
+	if power_infra != null:
+		power_infra.set_selected("")   # Wave 25: the ring cannot outlive the city under it
+	if ui_root != null:
+		ui_root.close_transformer_panel()
 	# A loaded save is a different city, and the lamps were never resynced:
 	# `apply_lamps` is a set difference, so this retires the city that is gone
 	# and lights the one that arrived in one pass.
@@ -2454,6 +2474,14 @@ func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
 		# that is not there is silence, not a buzz.
 		if bool(payday.get("cue", false)) and audio != null:
 			audio.ui_cue(AudioService.UI_CASH)
+		return
+	if StringName(str(pick["kind"])) == BuildController.PICK_COMPONENT \
+			and ui_root != null and ui_root.show_transformer(str(pick["id"])):
+		# S18 closes its siblings itself (`UIWidgets.close_siblings`), so the
+		# building panel and S4 stand down without being told twice (Wave 25).
+		ui_root.selected_entity_id = str(pick["id"])
+		if power_infra != null:
+			power_infra.set_selected(str(pick["id"]))
 		return
 	if StringName(str(pick["kind"])) == BuildController.PICK_BUILDING \
 			and building_panel != null:

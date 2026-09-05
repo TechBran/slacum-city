@@ -20,13 +20,18 @@ extends RefCounted
 
 ## Distress bands, in severity order — the value packed into the pad buffer's
 ## `.b` channel and the only thing the shaders switch on.
-const DISTRESS_CLEAN := 0      # energized, inside §5.10's NORMAL band
-const DISTRESS_STRESSED := 1   # WARNING band, or past the hazard knee, or worn
-const DISTRESS_TROUBLED := 2   # CRITICAL band — this one smokes
-const DISTRESS_SEVERE := 3     # odds-on to fail within the game-hour — sparks
-const DISTRESS_DARK := 4       # OPEN or de-energized: no hum, no heat, no smoke
-const DISTRESS_FAILED := 5     # burned out: charred, dead, a dying wisp
-const DISTRESS_COUNT := 6
+## **Aliases of `PowerGrid`'s, not a second table** (Wave 25, RR-207). The bands
+## moved into doc 04 when `ui/power_actions.gd` became a second reader of them,
+## because a panel and a shader that disagreed about whether a transformer is in
+## trouble is precisely the defect the three-channel rule exists to prevent. The
+## names stay here because this is the file the shaders are written against.
+const DISTRESS_CLEAN := PowerGrid.DISTRESS_CLEAN
+const DISTRESS_STRESSED := PowerGrid.DISTRESS_STRESSED
+const DISTRESS_TROUBLED := PowerGrid.DISTRESS_TROUBLED
+const DISTRESS_SEVERE := PowerGrid.DISTRESS_SEVERE
+const DISTRESS_DARK := PowerGrid.DISTRESS_DARK
+const DISTRESS_FAILED := PowerGrid.DISTRESS_FAILED
+const DISTRESS_COUNT := PowerGrid.DISTRESS_COUNT
 
 ## `packed = distress + OVERLAY_STRIDE * overlay_state`, the SAME stride and the
 ## same decoder shape `building.gdshader`'s `overlay_of()` uses (doc 12 §2.5 /
@@ -41,13 +46,13 @@ const OVERLAY_STRIDE := 112.0
 ## band has to be a fixed, explainable line — a smoking threshold that slid with
 ## the weather would make the same transformer smoke and stop smoking while its
 ## load never moved.
-const REFERENCE_AMBIENT_C := 25.0
+const REFERENCE_AMBIENT_C := PowerGrid.REFERENCE_AMBIENT_C
 
 ## The hazard rate, per game-hour, that defines DISTRESS_SEVERE: 1.0 means the
 ## component is odds-on (1 − e⁻¹ = 63 %) to fail inside one game hour. That is
 ## the honest reading of "about to go", and it is the only authored number in
 ## this file — everything else about the band is solved from doc 04 §2.6.
-const SEVERE_HAZARD_PER_GH := 1.0
+const SEVERE_HAZARD_PER_GH := PowerGrid.SEVERE_HAZARD_PER_GH
 
 # ------------------------------------------------------------------- config
 
@@ -229,16 +234,7 @@ func set_road_probe(probe: Callable) -> void:
 ## it; nothing has to be re-picked.
 static func severe_ratio(t_ambient: float = REFERENCE_AMBIENT_C,
 		hazard_per_gh: float = SEVERE_HAZARD_PER_GH) -> float:
-	var thermal: Array = PowerGrid.THERMAL[&"transformer"]
-	var hazard: Array = PowerGrid.HAZARD[&"transformer"]
-	var theta_rated := float(thermal[0])
-	var knee := float(hazard[0])
-	var span := float(hazard[1])
-	var h_hot := float(hazard[2])
-	var h_cold := float(hazard[3])
-	var stress := pow(maxf(0.0, (hazard_per_gh - h_cold) / maxf(h_hot, 1e-9)), 1.0 / 3.0)
-	var theta := knee + span * stress - t_ambient
-	return sqrt(maxf(0.0, theta) / maxf(theta_rated, 1e-9))
+	return PowerGrid.severe_load_ratio(t_ambient, hazard_per_gh)
 
 
 ## The condition at which §2.6's wear/hazard multiplier `1 + 3(1−c)²` has
@@ -246,7 +242,7 @@ static func severe_ratio(t_ambient: float = REFERENCE_AMBIENT_C,
 ## rather than for its load, and the point at which this layer starts showing
 ## soot on a pad that is not otherwise in trouble. `(1−c)² = ⅓ ⇒ c = 0.4226`.
 static func worn_condition_threshold() -> float:
-	return 1.0 - sqrt(1.0 / 3.0)
+	return PowerGrid.worn_condition_threshold()
 
 
 ## Which band a transformer row falls in. Pure, and the whole of the mapping the
@@ -254,17 +250,7 @@ static func worn_condition_threshold() -> float:
 ## transformer with a stale 1.8 load ratio is CHARRED, not SPARKING.
 func distress_for(state: String, energized: bool, load_ratio: float,
 		condition: float, temp_c: float) -> int:
-	if state == "FAILED":
-		return DISTRESS_FAILED
-	if state == "OPEN" or not energized:
-		return DISTRESS_DARK
-	if load_ratio >= severe_r:
-		return DISTRESS_SEVERE
-	if load_ratio >= critical_r:
-		return DISTRESS_TROUBLED
-	if load_ratio >= warn_r or temp_c >= hot_c or condition < worn_condition:
-		return DISTRESS_STRESSED
-	return DISTRESS_CLEAN
+	return PowerGrid.distress_band(state, energized, load_ratio, condition, temp_c)
 
 
 # ---------------------------------------------------------------- topology
