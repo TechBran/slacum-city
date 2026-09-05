@@ -10803,8 +10803,9 @@ from *"buy the top one"*.
 
 Three surfaces, all reading that one function: the building panel's POWER row
 (`ui_power_row_needs_rung` / `ui_power_row_no_rung`), S18's customer block
-(`customers_need_rung`, drawn in every state — silence would read as "the panel
-does not know"), and the fix router's `FIX_POWER` answer, which now carries
+(`customers_need_rung`, drawn in every state that has customers at all —
+silence would read as "the panel does not know"), and the fix router's
+`FIX_POWER` answer, which now carries
 `needs` beside its quote.
 
 **Measured on a data centre at every level** (`tools/measure_envelope.gd
