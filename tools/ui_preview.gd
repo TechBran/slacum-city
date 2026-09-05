@@ -106,6 +106,19 @@ const SCREENS: Array[String] = [
 	"transformer", "transformer_stressed", "transformer_troubled",
 	"transformer_severe", "transformer_dark",
 	"transformer_failed", "transformer_repairing", "transformer_crowded",
+	# Wave 28 (doc 12 D-124): S19, the water panel. Four states, and each is a
+	# different SENTENCE rather than a different tint —
+	#   `water`          the chain drawn on a sound zone: which stage is
+	#                    narrowest, what the zone supplies, who it serves.
+	#   `water_binds`    the same panel with the chain's narrowest stage pushed
+	#                    under the others, so the BINDS row and its advice line
+	#                    are what the picture is of. This is the state doc 92
+	#                    §67.4's $5.5M of wrong pumps was bought for the want of.
+	#   `water_leaking`  a main broken under the zone: the MAINS OPEN block, the
+	#                    leak in m³/h, and the crew's price — the shape the
+	#                    player's own save was in (doc 92 §69.1).
+	#   `water_repairing` the same main one tap later, with a real crew on it.
+	"water", "water_binds", "water_leaking", "water_repairing",
 	"land_buy", "land_blocked", "land_developing",
 	# Wave 25 (doc 12 §2.21 D-117): the same panel with doc 03 §2.8b's excavation
 	# band on it — a block far enough through the pipeline that CLEARING and
@@ -615,6 +628,78 @@ func _open_transformer(component_id: String) -> void:
 	_root.transformer_panel.show_component(component_id)
 
 
+## S19's subject: the doc-05 node whose zone serves the most buildings, so the
+## preview photographs a populated served list rather than an empty one. Asked
+## of the roster, never named — doc 09's starter city is data and its plants may
+## move. The pump wins a tie, for `BuildController.WATER_PICK_ORDER`'s reason.
+func _busiest_water_node() -> String:
+	var best := ""
+	var most := -1
+	var keys := _sim.water.nodes.keys()
+	keys.sort()
+	for key: Variant in keys:
+		var node: WaterNode = _sim.water.nodes[key]
+		if not BuildController.PICKABLE_WATER_VARIANTS.has(node.variant):
+			continue
+		var zone: PressureZone = _sim.water.topology.zone_of(String(key))
+		var n := zone.building_count if zone != null else 0
+		var better := n > most or (n == most and node.variant == &"pump"
+				and best != "" and (_sim.water.nodes[best] as WaterNode).variant != &"pump")
+		if better:
+			most = n
+			best = String(key)
+	return best
+
+
+## Wear the zone's treatment train down until §2.5's `min(source, treatment)` is
+## unambiguously the treatment term. The CONDITION is written, not the capacity:
+## `cond_factor` then derates it exactly as it derates a real plant, so the
+## BINDS row is the shipped rule's verdict and not a fixture of one.
+func _bind_water_treatment() -> String:
+	var subject := _busiest_water_node()
+	var zone: PressureZone = _sim.water.topology.zone_of(subject)
+	if zone != null:
+		for id_value: Variant in zone.treatment_ids:
+			(_sim.water.nodes[id_value] as WaterNode).condition = 0.30
+		_sim.water.rebuild_zones()
+		_sim.advance_hours(0.25)
+	return subject
+
+
+## Break a main under S19's zone through doc 06's own seam, at the tier its
+## table publishes for a tier-4 `water_main_break`. Returns the NODE the panel
+## opens on; `_first_broken_main` names the segment.
+func _break_water_main() -> String:
+	var subject := _busiest_water_node()
+	var zone: PressureZone = _sim.water.topology.zone_of(subject)
+	if zone != null and not zone.edge_ids.is_empty():
+		var ids: Array = zone.edge_ids.duplicate()
+		ids.sort()
+		_sim.water.set_segment_broken(String(ids[0]), 0.8, "preview", -0.60)
+		_sim.water.rebuild_zones()
+		_sim.advance_hours(0.25)
+	return subject
+
+
+func _first_broken_main() -> String:
+	var keys := _sim.water.edges.keys()
+	keys.sort()
+	for key: Variant in keys:
+		if (_sim.water.edges[key] as WaterEdge).is_broken():
+			return String(key)
+	return ""
+
+
+## Open S19 on `node_id`, with the model the shell would have given it.
+func _open_water(node_id: String) -> void:
+	if _root.water_panel == null or node_id == "":
+		return
+	if _root.water_panel.model == null:
+		_root.water_panel.setup(_root.config, WaterPanelModel.new(
+				_sim, _controller.water, _root.config, _controller.tile_m))
+	_root.water_panel.show_node(node_id)
+
+
 ## The first `water_facility` shell — the one building in the city whose panel
 ## carries doc 05 §6's node block.
 func _water_shell() -> String:
@@ -902,6 +987,35 @@ func _apply(screen: String) -> void:
 			# numbers a grown city produces.
 			_sim.treasury.balance = 500_000
 			_open_transformer(_crowd_a_transformer(12))
+		"water":
+			# The founding city's own plant, on a sound zone: the chain drawn
+			# from the shipped tables, nothing broken, the ladder quoted.
+			_sim.treasury.balance = 500_000
+			_open_water(_busiest_water_node())
+		"water_binds":
+			# The narrowest stage made narrower — by dropping the treatment
+			# train's CONDITION, which is doc 05 §2.5's own `cond_factor` term
+			# and not a written number. The chain then classifies it exactly as
+			# it classifies a worn plant in a real city, and the advice line
+			# names the purchase that moves it.
+			_sim.treasury.balance = 500_000
+			_open_water(_bind_water_treatment())
+		"water_leaking":
+			# A main under this zone broken through doc 06's own seam, at the
+			# tier-4 delta its table publishes — so the leak, the penalty and the
+			# crew's price are the sim's numbers. The state the player's save was
+			# in, minus the two years.
+			_sim.treasury.balance = 500_000
+			_open_water(_break_water_main())
+		"water_repairing":
+			# The same main one tap later. The crew is REAL — the command is the
+			# shipped one, so the bar and the ETA are the queue's own numbers.
+			_sim.treasury.balance = 500_000
+			var leaking := _break_water_main()
+			var broken := _first_broken_main()
+			if broken != "":
+				_sim.cmd_repair_water_asset(broken)
+			_open_water(leaking)
 		"land_buy":
 			# The city can afford it: the panel's happy face, with the primary
 			# button live and no blocker rows under it.

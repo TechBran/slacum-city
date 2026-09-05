@@ -13245,3 +13245,226 @@ command: `can_upgrade_power("WTR-2", 97.75)` is refused at `T-18` with `r_after`
 pool, and the binding transformer's ratio went UP, because an hour of city passed
 and the plant is not on that transformer. That is doc 92 §48.1's whole sentence,
 made against the layer that was always the honest one to make it against.
+
+## 69. Wave 28 — the whole water system, audited: the break nobody could clear (2026-09-05)
+
+*(Lane B. Rulings doc 93 §BD. Resolutions report 98 §73 RR-224..RR-228. Defect
+rows doc 91 A91-D-145..A91-D-149. Surfaces doc 12 D-124..D-126. Doc 05
+amendments in its §10. The instrument is `tools/measure_water_chain.gd`, which
+this wave commits.)*
+
+**The fork is `a581948`** — main after Waves 23–26 — and the four
+`profile_sim --hash-only` baselines at it are §67.11's, reproduced exactly:
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
+| bench | `9695f7667048b55d2426fdd8741afc12be49a51d747c552a25fd96f25248a559` | `b85488059d8dcb7f4f88151fdf2985427e18bd03066d8a7cf67a52aecfbed406` |
+
+**The player, on the device:** *"The water pumping situation. Our water capacity
+— we need to be able to, one, create a water source; two, put pumps on it to
+increase our volume. My volume is starting to get low. We've got to make sure
+the pump stations, the whole water infrastructure, is tight."*
+
+### 69.1 The cause, measured on the player's own save — and it is not capacity
+
+`tools/measure_water_chain.gd --saves=<the player's slot dir> --slot=0 --losses
+--spread`, through the real `SaveService` into a private `user://`, at the fork:
+
+    population 41  treasury $14,899,376  buildings 89  water nodes 5  mains 14
+
+| term (doc 05 §2.5) | m³/h |
+|---|---|
+| Σ source yield (`WTR-1-SRC`, L1 river, condition 0.76) | 94.2 |
+| Σ treatment throughput (`WTR-1-TRT`, L1, condition 0.86) | **74.6** |
+| Σ pump rated (`P-072-PMP` + `WTR-1-PMP`, both L1) | 80.0 |
+| Σ pump available (rated × power × condition) | 73.6 |
+| `feed_capacity` (live mains at the supply nodes) | 214.0 |
+| **supply** | **73.5** |
+| demand | 42.1 |
+| headroom | **31.3** |
+| **zone pressure** | **0.50** |
+
+**The zone has 31.3 m³/h of spare supply and its pressure is 0.50.** Every
+capacity term is comfortable and every building in the city is dry, which is the
+shape that says the reading is not about capacity at all:
+
+    P = ratio^1.3 × head_factor − break_pen
+    0.50 = 1.00 − 0.50            ← the 0.50 in the subtrahend is break_penalty_cap
+
+    -- mains not OK: 3 of 14 --
+    | main       | state  | sev  | leak m³/h | penalty | owning incident |
+    | LAT_B_3_3  | broken | 1.00 | 13.4      | 0.80    | incident:1811   |
+    | M_NORTH    | broken | 1.00 | 13.4      | 0.80    | incident:2171   |
+    | M_SOUTH    | broken | 1.00 | 13.4      | 0.80    | incident:2045   |
+    water repair jobs open = 0
+    doc-06 water_main_break incidents in incidents.snapshot() = 0
+
+**Three mains holding a doc-06 tier-5 magnitude for three incidents that do not
+exist.** 3 × 0.80 = 2.40, clamped by §2.8's `break_penalty_cap` to **0.50**, and
+that number does not move in ten simulated game-days. And the same three mains
+leak `capacity 53.5 × leak_frac 0.25 × severity 1.00 = 13.4` each — **40.1 m³/h
+charged to demand, 95 % of everything this city asks for.** Nothing in the game
+could clear either half: doc 06 owns the break (`external_main_breaks = true`),
+doc 06's incident is gone, doc 05's own job table is empty, and no player verb
+in the project could repair a main. **The player's "my volume is starting to get
+low" is 95 % of his water running into the ground.** Doc 91 A91-D-145/146/148.
+
+**The per-tile spread**, which is the second half of the sentence:
+
+| | n | min | p25 | median | max | under doc 02's 0.55 gate |
+|---|---|---|---|---|---|---|
+| fork | 89 | 0.25 | 0.35 | 0.40 | **0.50** | **89 (100 %)** |
+
+**Not one building in this city could be upgraded, for any reason, ever.** The
+highest tile pressure in it is 0.50 against a 0.55 gate.
+
+### 69.2 What the fix is worth, on the same save, in three steps
+
+Each row is the same city and the same instrument, one change at a time.
+
+| | zone P | break_pen | leak m³/h | demand m³/h | headroom | under the 0.55 gate | median tile P | `water_health_pct` |
+|---|---|---|---|---|---|---|---|---|
+| **A** fork | **0.50** | 0.50 (at the cap) | 40.1 | 42.1 | 31.3 | **89 / 89 (100 %)** | 0.40 | 83 % |
+| **B** + the hold released (RR-225) | **0.64** | 0.36 (3 × §2.8's own 0.12) | 40.1 | 42.1 | 31.4 | **46 / 89 (52 %)** | 0.51 | **100 %** |
+| **C** + $28,200 of repairs (RR-224) | **1.00** | 0.00 | **0.0** | **2.2** | **71.0** | **6 / 89 (7 %)** | **0.80** | 100 % |
+
+**Step B is free and is a bug fix**: doc 05 §2.8 authored `break_pressure_penalty
+_fallback = 0.12` for exactly the case "a broken segment with no owning doc-06
+incident", and the field that made it unreachable was a dangling id. Half the
+city can be upgraded again for nothing.
+
+**Step C is the player's purchase, and it is the whole shopping list**
+(`--shop`, every figure the owning command's own `preview = true`):
+
+    LAT_B_3_3   dmg 1.00  capital $2,288   -> $1,945   crew 1.2 h  stops a 13.4 m³/h leak
+    M_NORTH     dmg 1.00  capital $14,872  -> $12,641  crew 1.2 h  stops a 13.4 m³/h leak
+    M_SOUTH     dmg 1.00  capital $16,016  -> $13,614  crew 1.2 h  stops a 13.4 m³/h leak
+                                            = $28,200 against a treasury of $14,899,376
+
+**0.19 % of the money on the table buys this city its water back**, and before
+this wave there was no way to spend it. Doc 03's price is its own
+(`capital_value_water_main × damage_fraction × REPAIR_COST_PER_CAPITAL 0.85 ×
+M_repair`); the three capitals differ because the three mains differ in length,
+which is `tiles × main_build_cost_per_tile[service] × MAIN_REPAIR_CAPITAL_
+FRACTION`, and doc 05 asserts none of it.
+
+**The six buildings still under the gate after step C are the DISTANCE wall**,
+and they are doc 92 §67.8's finding on a second city: the zone is at pressure
+**1.00** with **71.0 m³/h** spare and those six tiles read **0.50**, i.e.
+`tile_factor 0.50`, i.e. seven tiles from the nearest live main. No amount of
+supply moves them. The verb that does is `cmd_place_water_main`, which — contrary
+to §67.9 item 2's reading of the harness — **does have a door**: see §69.5.
+
+### 69.3 The chain, walked on a growing city
+
+`tools/measure_water_chain.gd --strategy=curriculum --seeds=1337 --days=25
+--stride=5`. The table the instrument prints per game-day is §2.5's four terms,
+the two numbers they produce and the stage that binds — the read no surface in
+the project computed before this wave, and the one doc 92 §67.4 measured **118
+pumps and $5.5M** being bought for the want of.
+
+The founding city binds on **treatment** from game-day 0 and keeps binding on it:
+an L1 river intake yields **107** and an L1 treatment train passes **80.0**
+(doc 05 §2.13's own ladder), so `upstream = min(source, treatment)` **is** the
+treatment term on every city that ships with one of each. That is a RULE, and the
+volume ledger says so:
+
+    P-072-PMP: raw intake 94.2
+        −19.6  treatment throughput (§2.5 upstream = min(source, treatment)) — RULE
+        −1.0   pump rated·power·condition below upstream (§2.5) — RULE
+        −0.1   STRANDED: upstream share held by a pump that is not running
+               (§2.5 splits at TOPOLOGY time, runs at TICK time) — NO SECTION AUTHORISES THIS
+        = supply 73.5 against demand 42.1
+        +40.1  leak from broken mains, charged to DEMAND (§2.4) — RULE
+
+**Every loss in that ledger cites a section except one**, which is §69.4.
+
+### 69.4 The one loss no section authorises — filed, not fixed (A91-D-149)
+
+§2.5 splits the upstream capacity among a zone's pumps *"in proportion to
+`rated_flow_m3h`"*, and `WaterTopology._resolve_supply_chain` does it on TOPOLOGY
+change while `_solve_zone` decides whether a pump runs on every TICK. A pump that
+is dark, tripped or inside its 5-minute restart lockout is still `is_live()`, so
+it keeps `share_m3h` and the pumps that could have used it never see it.
+
+Worked, on the tables this doc already publishes: a zone with an L1 pump (40) and
+an L3 pump (240) on 100 m³/h of upstream splits 14.3 / 85.7. Trip the L3 and the
+zone delivers **14.3** where `min(rated·power·condition, upstream)` would carry
+**40.0** — **64 % of the water the chain still has is stranded behind a pump that
+is not turning.** On the player's own save it is **0.1 m³/h**, because his two
+pumps are the same size and the split is even; that is why it is filed rather
+than fixed. `WaterSystem.supply_chain` publishes it as `stranded_m3h` so it can
+never again be lost inside a difference of two numbers.
+
+### 69.5 §67.9 item 2, corrected: `cmd_place_water_main` HAS a door
+
+Doc 92 §67.9 item 2 reads *"Nothing in `tools/playtest.gd` lays a water main …
+`cmd_place_water_main` is probed, listed and never called"*, and A91-D-123's
+closing row generalised it to *"driven by nothing"*. **The first half is true and
+the second is not.** `ui/path_tool.gd` has carried two cards for this verb since
+Wave 10 — `water_main_service` and `water_main_trunk`, on
+`CATEGORY_INFRASTRUCTURE`, geometry `l`, `min_tiles` 2 — and `PathTool.commit`
+reaches `sim.cmd_place_water_main(raw, tier, preview)` on line 654.
+
+    grep -rn "cmd_place_water_main" ui/ tools/ tests/
+      ui/path_tool.gd:654          sim.cmd_place_water_main(raw, str(entry["tier"]), preview)
+      tests/test_infra_verbs.gd:418,421,423,425,426,429,437
+
+So the **player** can lay a main and the **agent** cannot, and the two walls
+§67.8 uncovered are a harness gap rather than a product gap. Recorded here
+because a wave that opened by planning to "give `cmd_place_water_main` its door"
+would have built a second one beside the one that exists — which is the
+duplicate-surface defect this project keeps filing, arrived at from the other
+direction.
+
+### 69.6 What did NOT move, and why the MVP ladder is not raised here
+
+The brief asked for the doc 05 §6 ladder to be raised *"where the derivation
+supports it"*. **It does not, at this fork, and the arithmetic is short.**
+`data/water.json` `placeable` offers `source` and `treatment` at L1–L2 and
+`pump` / `tank` at L1–L3, and `feature_flags.levels_4_5_enabled` is off. At the
+top of that ladder, on the two seeds §67.7 measured:
+
+| term | m³/h |
+|---|---|
+| `source_river` L2 × `cond_factor` | 253.5 |
+| `treatment` L2 | 196.0 |
+| `pump` L3 × 2 | 480.0 |
+| `feed_capacity` — four `service` mains at the plant | **214.0** |
+
+Raise `treatment` to L3 (480) and the binder moves to `feed_capacity` at
+**214.0**; raise `source` to L3 (642) and it stays at **214.0**. §2.5's min-cut
+is the term that binds and it is **not a node**, so a taller intake behind the
+same service mains delivers the same 214.0 — which is exactly what §67.8
+measured seeds 1337 and 4242 ending at. **The purchase that moves it is a trunk
+main (213 per segment), and the player already has that door** (§69.5). A ladder
+change would therefore buy nothing measurable while moving every doc 92 row
+fitted to the curriculum arc, which is the re-derivation §67.10's merge addendum
+ruled a lane of its own. Filed as the open question the next lane should take:
+**raise the ladder in the same wave that teaches the agent to lay a trunk main,
+and measure the two together.**
+
+### 69.7 The four baselines: UNCHANGED
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
+| bench | `9695f7667048b55d2426fdd8741afc12be49a51d747c552a25fd96f25248a559` | `b85488059d8dcb7f4f88151fdf2985427e18bd03066d8a7cf67a52aecfbed406` |
+
+**All four are bit-identical to the fork's**, and that includes three sim
+changes. The reason is worth stating rather than assumed, because it is also the
+reason A91-D-145 survived twenty-eight waves:
+
+* **RR-224** (`cmd_repair_water_asset`) is a player verb. Neither baseline calls
+  a command; both are a boot followed by an advance.
+* **RR-225** (the terminal release) fires only when a `water_main_break` reaches
+  FAILED or ABANDONED. Neither baseline has a main break in 24 game-hours — the
+  founding city's own hazard is `0.0022/km/h` against 14 short segments — and the
+  release is a no-op on the RESOLVED path, where `set_segment_repaired` has
+  already cleared the field.
+* **RR-226**'s zero-delta arm changes what `can_upgrade_water` ANSWERS, and
+  nothing in either baseline asks it: `cmd_upgrade_building` is a command.
+
+Hash-neutral by measurement, not by construction, in all three cases — and
+`tests/test_water_chain.gd` is where the behaviour is pinned instead.

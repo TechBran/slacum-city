@@ -1105,6 +1105,62 @@ func component_near(point: Vector3, radius_m: float = -1.0) -> Dictionary:
 	return best
 
 
+## The doc-05 water variants a tap may OPEN — the same list
+## `PICKABLE_COMPONENT_KINDS` is one document over, and for the same reason: the
+## pick and the fix-router ask this array rather than either of them reading an
+## id's spelling. A `junction` is absent because §2.1 says it is not a component
+## (it is where mains meet), and a `booster` is absent because
+## `feature_flags.boosters_enabled` is off — a card that can never be placed
+## cannot be tapped either.
+const PICKABLE_WATER_VARIANTS: Array[StringName] = [
+	&"source", &"treatment", &"pump", &"tank",
+]
+
+## When one doc-02 shell hosts several doc-05 nodes — `WTR-1` hosts an intake, a
+## treatment train and a pump on one tile — this is which one the tap opens on.
+## The **reference variant first** (report 98 RR-8: doc 02 generates this
+## archetype's whole level table for `pump`, so the pump is what the shell IS),
+## then §2.5's own chain order, then the id. Deterministic on every machine, and
+## the panel lists the siblings so the other two are one tap away.
+const WATER_PICK_ORDER: Array[StringName] = [
+	&"pump", &"source", &"treatment", &"tank",
+]
+
+
+## The doc-05 node under `point`, or `{}`. **Footprint, not centre**, which is
+## the one way this differs from `component_near`: a transformer stands on one
+## tile and half a tile of tolerance is the whole of it, while a water works is
+## 2×2 or 3×3 of doc 02 shell and a tap anywhere on it is a tap on it. The
+## building pick this runs ahead of uses exactly the same test
+## (`sim_id_at_tile`), so the two can never disagree about where the site is.
+func water_node_near(point: Vector3) -> Dictionary:
+	if sim == null or sim.water == null:
+		return {}
+	var tile := BuildController.tile_at(point, tile_m)
+	var best: Dictionary = {}
+	var best_rank := WATER_PICK_ORDER.size()
+	for key: Variant in sim.water.nodes:
+		var node: WaterNode = sim.water.nodes[key]
+		if not PICKABLE_WATER_VARIANTS.has(node.variant):
+			continue
+		var size := sim.water.data.footprint_of(node.variant, node.level, node.subtype)
+		if tile.x < node.tile.x or tile.y < node.tile.y \
+				or tile.x >= node.tile.x + size.x or tile.y >= node.tile.y + size.y:
+			continue
+		var rank := WATER_PICK_ORDER.find(node.variant)
+		if rank < 0:
+			rank = WATER_PICK_ORDER.size()
+		if not best.is_empty() and (rank > best_rank
+				or (rank == best_rank and String(key) > String(best["id"]))):
+			continue
+		best_rank = rank
+		best = {"id": String(key), "kind": String(node.variant), "tile": node.tile,
+				"world_pos": Vector3((float(node.tile.x) + float(size.x) * 0.5) * tile_m,
+						0.0, (float(node.tile.y) + float(size.y) * 0.5) * tile_m),
+				"distance_m": 0.0, "domain": DOMAIN_WATER}
+	return best
+
+
 ## The roster, or `null`. The shell's binding wins; otherwise the sim is asked
 ## for a `street` member **by name**, because a statically-typed `sim.street`
 ## would not compile in a build whose `CitySim` has no such property.
@@ -1238,6 +1294,21 @@ func pick_at_ground(point: Vector3) -> Dictionary:
 		out["kind"] = PICK_COMPONENT
 		out["id"] = String(component["id"])
 		out["component"] = component
+		return out
+	# **Doc 05's nodes are components too** (Wave 28, doc 12 D-124). AHEAD of the
+	# building, and that ordering IS doc 93 §BA1's ruling made tappable: *"a
+	# `water_facility` IS the doc-05 nodes hosted on it, at their level"*, so the
+	# panel a tap on a water works should raise is the one that describes the
+	# water — the chain, the zone, the mains — and not the doc-02 shell, whose
+	# entire stat block is read out of doc 05's component table anyway. The pump
+	# ladder S5 has drawn since Wave 11 stays exactly where it is: it is reached
+	# from a goal's `Fix this →` and from the shell's own panel, both of which
+	# still resolve.
+	var node := water_node_near(point)
+	if not node.is_empty():
+		out["kind"] = PICK_COMPONENT
+		out["id"] = String(node["id"])
+		out["component"] = node
 		return out
 	var sim_id := sim_id_at_tile(tile)
 	if sim_id != "":
@@ -1913,14 +1984,51 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 ## Doc 05 §6's headroom gate, as the checklist row's parameters (PA-24). The
 ## zone's spare capacity and what the next level would draw with doc 05's own
 ## safety factor on it — both read from `WaterSystem`, which is the gate.
+##
+## **The row routes to the PURCHASE now, not to the zone** (Wave 28, doc 12
+## D-126, A91-D-147). `E_WATER_HEADROOM` has one code and doc 05 §2.11 refuses on
+## two different arms behind it, and until this wave the row could not tell them
+## apart, so it sent every refusal to the same place — the zone key, as a
+## district, which is a camera move to a pump:
+##
+##   * `capacity` — the zone genuinely has no spare water. The purchase is the
+##     rung under the stage that BINDS §2.5's chain, and `WaterSystem.
+##     supply_chain` names it. `FIX_COMPONENT` on that node opens S19, where the
+##     chain is drawn and the button is quoted. Sending the player to a PUMP
+##     when treatment binds is doc 92 §67.4's $5.5M mistake with a fix button
+##     on it.
+##   * `pressure` — the zone is fine and this BUILDING is too far from a main
+##     (doc 92 §67.8: pressure 1.00 in the zone, 0.50 at the tile, 57 m³/h
+##     spare). No amount of supply moves a tile factor. The row keeps the
+##     camera on the building's own tile and the sentence says the distance,
+##     because the answer is a main and the player lays that with the path tool.
 func _water_headroom_params(sim_id: String, b: Building,
 		next_stats: Dictionary) -> Dictionary:
 	var delta_water := float(next_stats.get("water_demand", 0.0)) \
 			- float(b.stats.get("water_demand", 0.0))
 	var verdict: Dictionary = sim.water.can_upgrade_water(sim_id, delta_water)
 	var headroom := sim.water.zone_headroom_m3h(sim_id)
-	var zone: PressureZone = sim.water.zone_at(sim.water.demand.access_tile(sim_id))
+	var tile: Vector2i = sim.water.demand.access_tile(sim_id)
+	var zone: PressureZone = sim.water.zone_at(tile)
 	var zone_key := zone.zone_key if zone != null else ""
+	var limit := String(verdict.get("limit", "capacity"))
+	var chain: Dictionary = sim.water.supply_chain_of(zone) if zone != null else {}
+	var binding := String(chain.get("binding", "none"))
+	var binding_ids: Array = chain.get("binding_ids", [])
+	var fix_kind := RequirementFormatter.FIX_NONE
+	var fix_id := ""
+	if limit == "pressure":
+		fix_kind = RequirementFormatter.FIX_BUILDING
+		fix_id = sim_id
+	elif not binding_ids.is_empty():
+		fix_kind = RequirementFormatter.FIX_COMPONENT
+		fix_id = String(binding_ids[0])
+	elif zone_key != "":
+		# A zone that binds on its MAINS has no node to raise — the answer is
+		# `cmd_place_water_main`, and the camera goes to the plant so the player
+		# can see where the trunk has to start.
+		fix_kind = RequirementFormatter.FIX_DISTRICT
+		fix_id = zone_key
 	return {
 		"deficit_m3h": float(verdict.get("deficit_m3h", 0.0)),
 		"headroom_m3h": headroom,
@@ -1930,12 +2038,18 @@ func _water_headroom_params(sim_id: String, b: Building,
 		"district_id": zone_key,
 		"at": zone_key,
 		"tile": b.origin,
-		"fix_target_id": zone_key,
-		# No zone at all is not a district the camera can fly to; the row still
-		# blocks and still says why, and it offers no button rather than one
-		# that resolves to nowhere (the failure shape PA-05 catalogued).
-		"fix_kind": RequirementFormatter.FIX_DISTRICT if zone_key != "" \
-				else RequirementFormatter.FIX_NONE,
+		# Which arm refused, and what it points at — read by the row's copy and
+		# by `FixRouter`, and published so a test can assert the two agree.
+		"limit": limit,
+		"binding": binding,
+		"pressure": float(verdict.get("pressure", sim.water.pressure_at(tile))),
+		"zone_pressure": zone.pressure if zone != null else 0.0,
+		"main_distance_tiles": sim.water.topology.distance_at_tile(tile),
+		"fix_target_id": fix_id,
+		# No zone and no node at all is not a place the camera can fly to; the
+		# row still blocks and still says why, and it offers no button rather
+		# than one that resolves to nowhere (the failure shape PA-05 catalogued).
+		"fix_kind": fix_kind,
 	}
 
 

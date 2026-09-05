@@ -10654,3 +10654,177 @@ for a building in no pressure zone (doc 91 A91-D-139). And the wall this wave
 uncovered — doc 05's MAINS, both as `feed_capacity` and as the tile factor under
 `pressure_at` — is the next lane's, with `cmd_place_water_main` sitting probed,
 listed and undriven (doc 92 §67.8).
+
+## 73. WAVE 28 — the whole water system, audited: the break nobody could clear (binding)
+
+*Forked off `a581948` (main after Waves 23–26, whose baselines are doc 92
+§67.11). The lane exists for one sentence a player said on the device, 2026-09-05:
+*"The water pumping situation. Our water capacity — we need to be able to, one,
+create a water source; two, put pumps on it to increase our volume. My volume is
+starting to get low. We've got to make sure the pump stations, the whole water
+infrastructure, is tight."**
+
+*Rulings doc 93 §BD. Measured doc 92 §69, on `tools/measure_water_chain.gd` and
+on the player's own save. Defect rows doc 91 A91-D-145..A91-D-149. Surfaces doc
+12 D-124..D-126. Doc 05 amendments in its §10.*
+
+**What was there before this lane, and it is worse than "low volume".** The
+player's city was losing **40.1 m³/h** — **95 % of everything it asked for** —
+into the ground through three water mains that had been broken for as long as the
+save had existed, each holding a doc-06 tier-5 pressure penalty for an incident
+that no longer existed. Their sum clamped to doc 05 §2.8's cap, so the zone sat
+at pressure **0.50** against doc 02's **0.55** upgrade gate: **89 of 89
+buildings in that city could not be upgraded, for any reason, ever**, while the
+zone reported **31.3 m³/h of spare supply**. No verb in the project could repair
+a water main. Doc 03 had published the price of doing it, doc 05 had published
+the damage fraction and the work content, and nothing in the middle spent either.
+The city's only surface for a main is doc 06's incident drawer, and a terminal
+incident has no row on it — so the game could not tell the player what was wrong,
+and could not have fixed it if it had.
+
+### RR-224 — a water asset is a thing you can send a crew to (§69.2, A91-D-148)
+
+**The hole.** `CostCurves.capital_value_water_main`,
+`capital_value_water_component` and `water_demolition_refund` are authored in
+`sim/economy/cost_curves.gd`, documented in doc 03 §8 with a cell-by-cell
+derivation, and `grep -rn capital_value_water` over the whole tree returned the
+definitions and nothing else. Doc 05 §2.12's ownership split — *"this doc
+supplies only `damage_fraction`"* — had a producer on each side of the seam and
+no consumer in the middle.
+
+**The verb.** `CitySim.cmd_repair_water_asset(asset_id, preview)`, which is
+`cmd_repair_grid_component`'s body one document over and shares its every seam:
+
+    E_UNKNOWN_COMPONENT → E_NOT_DAMAGED → E_ALREADY_REPAIRING → E_FUNDS/E_AUSTERITY
+    cost      = econ_curves.repair_cost(capital, damage_fraction, M_repair)   [doc 03 §2.5]
+    capital   = capital_value_water_main(tier, tiles) | capital_value_water_component(ratio, L)
+    damage    = clamp(1 − condition)  , and at least water.damage_fraction(severity, frozen)
+                when the asset is DOWN                                        [doc 05 §2.12]
+    crew_hours= repairs.work_content_minutes(kind, …) / 60                    [doc 05 §2.12]
+    job       = construction.submit(&"repair", …, heavy_equipment_crew)       [doc 02]
+    ledger    = treasury.spend(cost, &"repair")                               [doc 03, no new row]
+
+One verb for both target kinds, because doc 05's own job table already keys on
+`target_kind ∈ {edge, node}` and a second verb would be a second copy of one gate
+(doc 93 §BD4). Completion is routed in `_route_completed_jobs` ahead of
+`on_construction_completed`, for the identical reason Wave 25 routed the grid
+repair there: that function's first act is a `buildings` lookup on
+`payload.sim_id`, which a main id never is, so the job would complete silently
+with the money spent.
+
+**Measured, on the player's own save:** `$1,945` + `$12,641` + `$13,614` =
+**$28,200** against a treasury of **$14,899,376**, and the zone goes from
+pressure 0.64 to **1.00**, demand from 42.1 to **2.2 m³/h**, headroom from 31.4
+to **71.0**, and buildings under the upgrade gate from **46 to 6**.
+
+### RR-225 — the hold is released on every terminal exit, not only on resolution (§69.1, A91-D-145/146)
+
+**The reading.** Doc 05 §2.8 says two things in one paragraph: doc 06's tiered
+`zone_pressure_delta` *"is held until the incident resolves"*, and doc 05's own
+`break_pressure_penalty_fallback` fires *"only for a broken segment with no
+owning doc-06 incident"*. Doc 06's lifecycle has three exits and only RESOLVED
+ever reached `world.water_set_segment_broken(segment, 0.0)`. FAILED and ABANDONED
+run `on_fail`'s actions — which for `water_main_break` end with one last
+`zone_pressure_delta: −0.8` — set the terminal status, release the units, and
+erase the incident. `WaterEdge.owning_incident` then names nothing, `_solve_zone`
+reads its 0.80 rather than the fallback, and no exit remains that could clear it.
+
+**The ruling (doc 93 §BD3): the CLAIM is released, the BREAK is not.** The pipe
+stays broken, keeps its severity and keeps leaking — that is the consequence of
+nobody coming, and it is right that it is permanent until a crew digs it up. What
+is dropped is a magnitude keyed to a ghost.
+
+**Where.** `IncidentSystem._release_finished_units`, the one loop all three exits
+pass through — a consequence that has to be repeated at every terminal path is a
+consequence the next terminal path will not have, which is how this was made. On
+the RESOLVED path it is a no-op: `set_segment_repaired` cleared the field a few
+lines earlier. Doc 05's side is `WaterSystem.release_segment_incident`, and doc
+06's seam is `IncidentWorld.water_release_segment_incident`, whose base-class
+docstring is where the old, false comment — *"which is what keeps a FAILED break
+from parking a permanent penalty on a zone nobody can reach"* — is finally made
+true.
+
+**And every save already written carries one.** The two halves of the claim live
+in different save sections and `water` restores before `incidents`, so
+`CitySim._reconcile_water_incident_holds` runs at the end of `_restore_incidents`
+— the only line in the load where both are in memory. It drops references the
+roster cannot resolve and invents nothing. **On the player's slot: three of
+three**, and the reconciliation ALONE moves zone pressure **0.50 → 0.64**,
+`water_health_pct` **83 % → 100 %** and buildings under the upgrade gate **89 of
+89 → 46 of 89**, before a dollar is spent.
+
+**No new event.** The player-visible change is the zone's pressure, which the
+water overlay already draws, and this project counts a renderer as a consumer
+(`tests/test_event_matrix.gd`). An event nothing read would be the exact defect
+this wave was auditing for.
+
+### RR-226 — one refusal code, two remedies, and the row names the purchase (§69.2, A91-D-147, A91-D-139)
+
+Doc 05 §2.11 refuses an upgrade on either arm behind `E_WATER_HEADROOM` and
+`can_upgrade_water` returned a shape that could not tell them apart —
+`deficit_m3h` is **0.0** on the pressure arm. It now answers `limit` ∈ {`none`,
+`no_zone`, `capacity`, `pressure`}, with the zone key, the tile pressure, the
+zone pressure and the tile's distance to the nearest live main.
+
+**And a ZERO-delta upgrade is no longer refused at all** — A91-D-139, filed by
+Wave 26 as *"the fix, and it is four lines"*, and it is four lines:
+`can_upgrade_water` returns ok for `delta_water_m3h <= 0.0` before it looks for a
+zone, exactly as `PowerGrid.can_upgrade_power` has for `delta_kw <= 0.0` since
+Wave 17. Doc 02's water column is 0.0 for a `substation` and a `power_facility`,
+so a grid shell standing outside every pressure zone carried `E_WATER_HEADROOM`
+for the rest of its life, for water it does not drink.
+
+**The remedy the row used to give is deleted rather than kept** (doc 93 §BD5):
+*"Add a pumping station or a storage tank in this district"* is wrong on the
+pressure arm — no supply moves a tile factor (doc 92 §67.8) — and wrong on the
+capacity arm whenever the binding stage is not the pump (doc 92 §67.4: 118 pumps,
+$5.5M, supply unmoved). Four arm-specific strings replace it, and the
+`Fix this →` routes on the same field: `FIX_COMPONENT` at the binding node, which
+opens S19, on the capacity arm; `FIX_BUILDING` on the pressure arm.
+
+### RR-227 — the chain, computed once, where every reader can have it (§69.3)
+
+`WaterSystem.supply_chain(zone_key)` publishes doc 05 §2.5's four terms, the two
+numbers they produce, the stage that BINDS, the stage that would bind NEXT, the
+node ids that make up the binding stage (cheapest rung first), and
+`stranded_m3h`. Until this wave nothing in the project computed all four:
+`tests/balance_gate_rig.gd` summed three, `tools/playtest.gd` summed the same
+three a second time to sort its purchase order, and the game summed none — which
+is what doc 92 §67.4 measured 118 pumps and $5.5M being bought for the want of.
+Its consumers are named: the instrument, S19, the `E_WATER_HEADROOM` row and the
+fix router.
+
+**`tools/measure_water_chain.gd`** is the instrument this wave commits. It walks
+§2.1–§2.8 against `sim/water/` on a growing city or on a real save through the
+real `SaveService` (into a private `user://`, never the live one), and prints per
+game-day: the four terms, supply, demand, pressure, headroom, the binding stage,
+the per-tile pressure SPREAD inside each zone, and a volume ledger in which
+**every loss cites the section that authorises it** — the one row that cites none
+is A91-D-149, which is how that defect was found.
+
+### RR-228 — S19, the water panel (§69.2, doc 12 D-124)
+
+Doc 05 §6.1's Wave-11 ruling (doc 93 §J1) that there should be **no** water-node
+panel is overturned, on doc 93 §BD1's grounds and on doc 04's precedent: §J1 was
+a ruling about a VERB LIST, and this wave changed the list. A node now answers
+which stage of the chain binds, what the zone supplies against what it is asked
+for, which of its mains are open and what a crew costs, and which buildings the
+zone leaves too dry to upgrade — none of which is a fact about a doc-02 building.
+Doc 04's transformer had the same shape, the same ruling against it, and had it
+overturned in Wave 25 for the same reason (doc 93 §AY2: *"the wall became a
+PLACE"*).
+
+S19 is built from S18's contract exactly: `WaterPanelModel` computes,
+`ui/water_panel.gd` binds, every price is the owning command's own `preview`,
+every band is doc 05 §5.8's, every sentence is a `data/strings.en.json` key, and
+every purchase takes two taps. `BuildController.pick_at_ground` resolves a doc-05
+node ahead of the building, which is doc 93 §BA1's ruling made tappable, and the
+reference variant wins a shell that hosts three (doc 93 §BD2).
+
+**§67.9 item 2, corrected.** That row reads *"`cmd_place_water_main` is probed,
+listed and never called"* and A91-D-123's closing row generalised it to *"driven
+by nothing"*. The first half is true of `tools/playtest.gd`; the second is not
+true of the game. `ui/path_tool.gd` has carried `water_main_service` and
+`water_main_trunk` since Wave 10 and reaches the command on its line 654. The
+player can lay a main; the agent cannot. Recorded so a later wave does not build
+a second door beside the one that exists. Doc 92 §69.5.

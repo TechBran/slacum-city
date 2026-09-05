@@ -870,11 +870,29 @@ func _abandon_unanswered(inc: Incident) -> void:
 			"reason": "unanswered", "target_ref": inc.target_ref.duplicate(true)})
 
 
+## **Where an incident stops being live — and the one place doc 05's hold can be
+## released without a fourth author remembering to** (Wave 28, doc 05 §2.8,
+## A91-D-145). A `water_main_break` parks a tiered `zone_pressure_delta` on its
+## segment, and doc 05 §2.8 fires its own fallback penalty "only for a broken
+## segment with no owning doc-06 incident". `_apply_resolution_effects` hands the
+## segment back on RESOLVED; FAILED and ABANDONED did not, so a break nobody
+## answered left a −0.80 keyed to an incident that had just been erased from
+## `_active` — three of them on the player's own save, clamped to the 0.50 cap,
+## pinning a whole city under doc 02's 0.55 upgrade gate (doc 92 §69.1).
+##
+## The release goes HERE rather than in `_run_fail` and `_abandon_unanswered`
+## because this loop is the choke point all three exits pass through, and a
+## consequence that has to be repeated at every terminal path is a consequence
+## the next terminal path will not have. On RESOLVED it is already a no-op:
+## `set_segment_repaired` cleared `owning_incident` a few lines earlier.
 func _release_finished_units() -> void:
 	for incident_id in _order.duplicate():
 		var inc: Incident = _active.get(incident_id)
 		if inc == null or not inc.is_terminal():
 			continue
+		if inc.target_segment_id() != "":
+			world.water_release_segment_incident(inc.target_segment_id(),
+					String(inc.context.get("zone", "")))
 		for unit_id in inc.assigned_unit_ids():
 			var u: Vehicle = fleet.unit(int(unit_id))
 			if u == null:

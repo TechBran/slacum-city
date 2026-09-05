@@ -355,6 +355,18 @@ func water_zone_pressure_delta(_zone: String, _delta: float,
 	pass
 
 
+## **The incident is over — by any of its three exits — so doc 05 stops holding
+## its magnitude** (Wave 28, doc 05 §2.8, A91-D-145). Resolution repairs the
+## segment and clears the hold with it; FAILED and ABANDONED do not, and the
+## sentence above about "what keeps a FAILED break from parking a permanent
+## penalty" was true of nothing until this verb existed. The pipe stays broken
+## and stays leaking — that IS the consequence of nobody coming — but its
+## pressure penalty falls back to doc 05's own `break_pressure_penalty_fallback`,
+## which is what §2.8 authored for a broken segment with no owning incident.
+func water_release_segment_incident(_id: String, _zone: String = "") -> void:
+	pass
+
+
 func water_freeze_enabled() -> bool:
 	return false
 

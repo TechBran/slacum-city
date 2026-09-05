@@ -998,6 +998,16 @@ func water_zone_pressure_delta(zone: String, delta: float,
 const ZONE_HOLD_KEY := "doc06_zone"
 
 
+## Doc 05 §2.8's release, on EVERY terminal exit (Wave 28, A91-D-145). Both
+## halves, because a break can be holding either: the magnitude parked on the
+## segment, and the zone-wide key for a break with no identified main.
+func water_release_segment_incident(id: String, zone: String = "") -> void:
+	if id != "":
+		sim.water.release_segment_incident(id)
+	if zone != "":
+		sim.water.clear_zone_pressure_delta(zone, ZONE_HOLD_KEY)
+
+
 func water_freeze_enabled() -> bool:
 	return bool(sim.water.data.flag("freeze_enabled"))
 

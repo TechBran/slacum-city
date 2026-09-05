@@ -6754,3 +6754,172 @@ Closing it is one line — `plans_water = true` by default — and the whole cos
 it is the re-derivation that line forces: §17's matrix, §18b's 50-game-day dark
 share and every gate fitted to them, which is a lane of its own and not a
 footnote on this one (doc 92 §67.5).
+
+## BD. Wave-28 rulings — a water node is a thing you tap, and a claim outlives nothing (2026-09-05)
+
+*Lane B, the water audit. Resolutions report 98 §73 RR-224..RR-228. Measured
+doc 92 §69. Defect rows doc 91 A91-D-145..A91-D-149. Surfaces doc 12
+D-124..D-126. Doc 05 amendments in its §10.*
+
+### BD1. Doc 05 §6.1 ruled there should be NO water-node panel. Does that survive?
+
+**Q.** Wave 11 (doc 93 §J1) asked for a water-node screen and ruled that it
+should not exist: *"the three verbs are two verbs at two moments, and the moments
+decide the surface"* — upgrade on the doc-02 SHELL's panel (S5), isolate/restore
+on the incident drawer's row. Wave 28 adds a repair verb and a chain read. Does
+§J1 still hold?
+
+**Ruling: no, and the reason is that §J1 was a ruling about a VERB LIST.** Its
+argument is stated in its own text — *"a node's only purchase is an upgrade, and
+a water site already has a panel"* — and it is sound for that list. This wave
+changed the list, and the four things a node can now answer are not facts about
+a doc-02 building:
+
+1. **Which stage of doc 05 §2.5's chain binds this zone.** A `water_facility` is
+   a shell; the chain is a property of the pressure ZONE, which is a connected
+   component of the main graph and has no building at all.
+2. **What that zone supplies against what it is asked for**, and how much of what
+   it is asked for is a leak.
+3. **Which of its mains are open, and what a crew costs.** A main has no
+   footprint and no panel (§J1 says so, correctly) — and doc 06's incident drawer,
+   the surface §J1 gave it, **stops carrying it the moment the incident goes
+   terminal**, which is precisely the state A91-D-145 found three of on the
+   player's save. A verb whose only surface disappears exactly when the state
+   becomes permanent has no surface.
+4. **Which buildings this zone leaves too dry to upgrade**, and how far each of
+   them stands from a pipe.
+
+**The precedent is one document over and it is exact.** Doc 04's transformer had
+the same shape and the same ruling against it, and Wave 25 (doc 93 §AY2)
+overturned it on the same grounds: *"the wall became a PLACE"*. S18 is what that
+looked like; S19 is the same screen one utility over, built from the same model
+contract, on the same `PanelLayer`, with the same two-tap purchases.
+
+**What §J1 keeps.** Its two surfaces are not removed and are not duplicated:
+`ui/water_actions.gd`'s node block still draws on S5 (it is reached from a goal's
+`Fix this →` and from the shell's own panel), and the drawer's ISOLATE/RESTORE
+row is unchanged. S19 draws the same pair on a break row **because the drawer
+cannot**: a terminal incident has no row.
+
+### BD2. A tap on a water works — the shell, or the node?
+
+**Q.** `BuildController.pick_at_ground` resolves a component before a building.
+Extending it to doc-05 nodes therefore takes the tap that used to open S5 on a
+`water_facility`. Is that right?
+
+**Ruling: the node, and it is doc 93 §BA1 made tappable.** §BA1 ruled that *"a
+`water_facility` IS the doc-05 nodes hosted on it, at their level"* — every
+column doc 02 authors for the archetype is read out of doc 05's component table,
+and an instance that hosts no node is a data error the command layer was
+manufacturing. A panel for that shell is a panel about a table of another
+document's numbers; a panel for the node is a panel about the water. So the tap
+goes to the water.
+
+**Which node, when a shell hosts three.** `WTR-1` hosts an intake, a treatment
+train and a pump on one origin tile, so a footprint test matches all three. The
+order is **the reference variant first** (report 98 RR-8: doc 02 generates this
+archetype's entire level table for `pump`, so the pump is what the shell IS),
+then §2.5's own chain order, then the id —
+`BuildController.WATER_PICK_ORDER`, deterministic on every machine. The other two
+are not lost: the panel's chain block names them and the shell's own S5 block
+still lists all three.
+
+**Footprint, not centre**, which is the one way this pick differs from doc 04's.
+A transformer stands on one tile and `component_near` caps its radius at half of
+it; a water works is 2×2 or 3×3 of doc-02 shell and a tap anywhere on it is a tap
+on it. The test used is `sim_id_at_tile`'s own, so the node pick and the building
+pick it runs ahead of cannot disagree about where the site is.
+
+### BD3. When a `water_main_break` FAILS, does doc 05 keep doc 06's magnitude?
+
+**Q.** Doc 05 §2.8 says doc 06's tiered `zone_pressure_delta` *"is held until the
+incident resolves"*. Doc 06's incident has three exits. A break that nobody
+answered goes FAILED (or ABANDONED), runs `on_fail`'s last
+`zone_pressure_delta: −0.8`, and is erased. Does the −0.80 stay?
+
+**Ruling: no — the hold is released on EVERY terminal exit, and §2.8 already
+said so in its other sentence.** The same paragraph rules that doc 05's own
+`break_pressure_penalty_fallback` fires *"only for a broken segment with **no
+owning doc-06 incident**"*. An incident that has gone terminal and been pruned
+out of `_active` is not an owning incident by any reading; the field that said
+otherwise was a string nobody cleared. So the release is not a new rule — it is
+the rule §2.8 wrote, reachable at last.
+
+**What is released is the CLAIM, not the BREAK.** The pipe stays broken, keeps
+its severity, and keeps leaking `capacity × 0.25 × severity`. That IS the
+consequence of nobody coming, and it is right that it is permanent until a crew
+digs it up. What was wrong was that the permanent thing was a −0.80 keyed to a
+ghost, with doc 05's own honest 0.12 unreachable behind it, and no verb anywhere
+that could clear either.
+
+**Where the release goes: `_release_finished_units`, not `_run_fail`.** That loop
+is the choke point all three exits pass through. A consequence that has to be
+repeated at every terminal path is a consequence the next terminal path will not
+have — which is exactly how this defect was made.
+
+**And every save already written carries one.** The two halves of the claim are
+in different save sections and water restores first, so the reconciliation goes
+at the end of `_restore_incidents`: the only line in the load where both halves
+are in memory. It drops references the roster cannot resolve and invents nothing.
+
+### BD4. Who prices a water repair, and which document's verb spends it?
+
+**Q.** Doc 05 §2.12 publishes `damage_fraction` and work content and says *"the
+system exposes no cost method"*. Doc 03 §2.5 publishes
+`repair_cost = capital_value × damage_fraction × 0.85 × M_repair`, and doc 03 §8
+`water` publishes the two capitals. Neither had a caller. Who writes the verb?
+
+**Ruling: `CitySim`, exactly as it writes `cmd_repair_grid_component`, and no
+number moves.** The repair verb is a COORDINATOR: it reads doc 05's damage and
+work content, asks doc 03 for the price, submits doc 02's job and books the spend
+under the same `&"repair"` category the building and grid repairs already use, so
+doc 03's Economy ledger needs no new row and this lane authors no dollar. One
+verb serves both target kinds — a MAIN and a NODE — because doc 05's own repair
+job table already keys on `target_kind ∈ {edge, node}` and a second verb would be
+a second copy of one gate.
+
+**The floor of wear is doc 03's own and is not re-derived.** A STANDING asset is
+offered no crew below `GRID_REPAIR_MIN_DAMAGE_FRACTION` (0.05), for the reason
+Wave 25's merge gave when it added that constant: doc 03 prices a hair of wear at
+a dollar, and a dollar job that parks a heavy-equipment crew to move a condition
+by thousandths is not a purchase. A DOWN asset ignores the floor, as a FAILED
+transformer does.
+
+### BD5. One code, two refusals — does `E_WATER_HEADROOM` split?
+
+**Q.** Doc 05 §2.11 refuses an upgrade on capacity OR on the building's own tile
+pressure. Should the second become its own reason code?
+
+**Ruling: no — one code, and the ANSWER says which arm.** A new code would have
+to be added to doc 02's check order, to `RequirementFormatter.CODE_TABLE`, to
+`BuildController.UPGRADE_CHECKS` and to every fixture that walks them, to express
+a distinction the player never needs as a name — they need it as a REMEDY. So
+`can_upgrade_water` publishes `limit`, the row picks its remedy string from it,
+and the `Fix this →` routes on it: `FIX_COMPONENT` at the stage that binds
+(which opens S19) on the capacity arm, and `FIX_BUILDING` on the pressure arm,
+because the answer there is a main laid closer and the thing to look at is the
+building that is too far from one.
+
+**The old single remedy is deleted rather than kept**, and that is the ruling's
+sharpest half: *"Add a pumping station or a storage tank in this district, or
+raise an existing one a level"* is wrong on the pressure arm (no supply moves a
+tile factor — doc 92 §67.8) and wrong on the capacity arm whenever the binding
+stage is not the pump (doc 92 §67.4: 118 pumps, $5.5M, supply unmoved). A remedy
+that is wrong in both of the cases it can be shown in is worse than none.
+
+### BD6. Should doc 05 §6's MVP ladder be raised in this lane?
+
+**Q.** The brief asks for L3–L5 source/treatment and L4–L5 pumps *"where the
+derivation supports it"*.
+
+**Ruling: not here, and the derivation is what says so.** At the top of the
+shipped ladder the binding term is `feed_capacity` — **214.0 m³/h**, four
+`service` mains at the plant — and it is the one term in §2.5 that is **not a
+node**. Treatment L2 (196) is under it; treatment L3 (480) and source L3 (642)
+are both over it, so raising either moves the zone to 214.0 and stops. A ladder
+change would buy nothing measurable and would move every doc 92 row fitted to the
+curriculum arc, which doc 92 §67.10's merge addendum already ruled is a lane of
+its own. **The purchase that moves 214.0 is a trunk main, and the player already
+has that door** (`ui/path_tool.gd`'s `water_main_trunk` card, doc 92 §69.5) —
+the AGENT does not, which is a harness gap. The two belong in one wave, measured
+together. Doc 92 §69.6.

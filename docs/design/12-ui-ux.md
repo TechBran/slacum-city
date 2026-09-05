@@ -2699,3 +2699,80 @@ are all exactly as §2.7 photographs them.)*
 | # | change | reads | why |
 |---|---|---|---|
 | D-120 | **The plain `Water Facility` build card enters the doc-05 pump placement, not doc 02's bare-shell one.** `BuildController.enter("water_facility")` with no variant now routes to `enter_water_component(catalog.reference_water_variant())` — the same door `Water Facility · Pump` has always used — so the GHOST and the CONFIRM run the same twelve checks (`E_NOT_OWNED`, `E_NOT_DEVELOPED`, `E_CITY_LEVEL`, `E_FOOTPRINT`, `E_NO_WATER`, `E_NO_MAIN`, `E_UNSERVED`, `E_FUNDS`) instead of doc 02's five and doc 05's twelve respectively. The card keeps its id, its `ui_build_card_water_facility` name key, its Utility tab, its 3×3 footprint and its $45,000 price — doc 03 quotes both doors off the same `water_plant` row — so the deck stays at 83 states and no screenshot changes. | §2.7, doc 05 §6, doc 93 §BA1/§BA3 | **The ghost was green and the purchase was a lie.** Before this, tapping the plain card and confirming ran `cmd_place_building`, which stamped a `water_facility` that hosted no doc-05 node: it decayed, it was billed doc 03's `water_works` staffing, it drew 60 kW, it took 3×3 of the player's ground, and it supplied **nothing** (measured: `water.nodes.size()` 22 → 22). The ghost could not warn about that because it was checking a different set of rules from the command it was previewing — §2.7's own rule is that a ghost *asks* the command rather than re-implementing it, and the water component cards have obeyed it since Wave 11 while the building card underneath never did. The visible half of the fix is that `E_NO_MAIN` — *"no water main within reach"* — is now drawn on the ghost, in red, **before** the player pays, on exactly the sites where the old card was happy to take $45,000 for a building that could never join the network. |
+
+### 2.26 S19 — the water panel (Wave 28)
+
+*Model `ui/water_panel_model.gd`, view `ui/water_panel.gd`, tests
+`tests/test_water_chain.gd`, preview states `water`, `water_binds`,
+`water_leaking`, `water_repairing`. Rulings doc 93 §BD1/§BD2. Verbs doc 05 §2.12
+/ §6. Measured doc 92 §69, on the player's own save.*
+
+The player, 2026-09-05: *"The water pumping situation. Our water capacity — we
+need to be able to, one, create a water source; two, put pumps on it to increase
+our volume. My volume is starting to get low. We've got to make sure the pump
+stations, the whole water infrastructure, is tight."*
+
+**Doc 05 §6.1 ruled in Wave 11 that this screen should not exist** (doc 93 §J1),
+and the ruling is overturned here on doc 93 §BD1's grounds: §J1 was a ruling
+about a VERB LIST, and Wave 28 changed the list. It is the same overturning doc
+04's transformer got in Wave 25 (doc 93 §AY2), one utility over, and the panel is
+S18's contract exactly — `PanelLayer`, same width, closes its siblings and is
+closed by them (D-16), the same ✕, verbs pinned in a footer outside the scroller
+(PA-47), every target 48 dp with an accessibility name, every purchase two taps.
+
+    Pump WTR-1-PMP        ▮L1▮ · Running · 87 % condition · 40.0 m³/h · 60 kW   ✕
+    ████████░░  Zone P-072-PMP · pressure normal
+    supplies 73.5 m³/h against 42.1 m³/h · 31.3 m³/h spare · buffer — h
+    ── THE CHAIN ──
+    Intake      ███████░░  94.2 m³/h
+    Treatment   ██████░░░  74.6 m³/h  ◀ BINDS
+    Pumps       ██████░░░  73.6 m³/h
+    Mains       ██████████ 214.0 m³/h
+    ▸ Treatment is the narrowest part of this chain, at 74.6 m³/h. Raise
+      WTR-1-TRT and the zone gets more water; anything else buys none.
+    ── 3 MAINS OPEN · LOSING 40.1 m³/h ──
+    M_SOUTH · service · broken · losing 13.4 m³/h
+      [ DIG IT UP  $13,614  — stops 13.4 m³/h ]   [ VALVE IT OUT (4 min) ]
+    ── SERVING 89 BUILDINGS · 46 TOO DRY TO UPGRADE ──
+    House · 32 % · 7 tiles from a main             ›
+    …
+    [ CALL A CREW  $… ]   [ UPGRADE TO L2  $51,750  (+85 kW) ]
+    REMOVE  (+$11,250, takes 3 nodes)
+
+**Five things it shows, and the order is the argument.** Which node and what
+condition; what the ZONE supplies against what it is asked for; **which stage of
+doc 05 §2.5's chain binds it**; which of its mains are open and what a crew
+costs; who it serves and how many of them are too dry to upgrade. Then the verbs.
+
+**The chain block is the reason this screen exists.** §2.5's supply is the
+minimum of four terms and no surface in the game computed all four: doc 92 §67.4
+measured **118 pumps and $5.5M** bought against zones that were treatment-bound
+the whole time, and the zone's supply did not move. The block draws each term
+against the widest so the narrow one is visibly narrow, marks the binder with a
+glyph AND the word BINDS (A5 — colour is the third channel), and prints the
+sentence underneath: what to raise, and what would bind after it.
+
+**The MAINS OPEN block is the half nothing else can draw.** §J1 put ISOLATE /
+RESTORE on doc 06's incident drawer, which is correct while an incident exists —
+and a break whose incident has gone terminal is on no drawer at all. That is the
+state doc 92 §69.1 found **three of** on the player's own save, leaking 95 % of
+his city's water with nothing in the game able to say so. This block draws every
+main in the zone that is not OK, its leak in m³/h, the crew's price from
+`cmd_repair_water_asset`'s own preview, and §2.12's valve pair beside it.
+
+**The meter is on UTILIZATION and the band beside it is on PRESSURE**, which is
+doc 92 §67.5's argument restated: a bar on pressure reads perfectly green until
+the zone is already short, because `ratio` is 1.0 for every zone whose supply
+covers its demand. The number that moves BEFORE the wall is demand ÷ supply.
+
+**The served list caps at `data/ui.json.water.max_customer_rows` (8)** with a
+`+N more` line, and the count in the heading is not how many there are but **how
+many are under doc 02's 0.55 upgrade gate** — 89 of 89 on the player's save at
+the fork, 6 of 89 after the repairs. That is the number that says whether the
+city can grow.
+
+| id | change | reads | why |
+|---|---|---|---|
+| D-124 | **A doc-05 water node is selectable, and S19 opens on it.** `BuildController.pick_at_ground` resolves a water node ahead of the building, through `water_node_near` — a FOOTPRINT test rather than the half-tile radius `component_near` uses for a transformer, because a water works is 2×2 or 3×3 of doc-02 shell and a tap anywhere on it is a tap on it. When one shell hosts three nodes (`WTR-1` has an intake, a treatment train and a pump on one origin tile) the reference variant wins — report 98 RR-8 makes `pump` the variant doc 02 generates this archetype's whole level table for, so the pump is what the shell IS — then §2.5's chain order, then the id (`BuildController.WATER_PICK_ORDER`). `UIRoot.show_water_node` is the seam, `water_action` is the one signal for all five verbs, and `game/main.gd` takes four snippets. | §2.8, doc 05 §2.5/§2.12, doc 93 §BD1/§BD2 | **The tap used to open a panel about the wrong document.** Doc 93 §BA1 ruled that *"a `water_facility` IS the doc-05 nodes hosted on it, at their level"* — every column doc 02 authors for the archetype is read out of doc 05's component table — so S5 on a water works is a panel describing another document's table. The water is in the ZONE, which has no building at all, and until this screen nothing in the game drew it. |
+| D-125 | **The building panel gains a one-row WATER summary beside D-115's POWER row.** `WaterPanelModel.building_row(actions, sim_id)` publishes `{zone, pressure, band_state, binding, main_distance_tiles, too_far, text_key, args}` and the row says which of the two walls this building is behind: `ui_water_row` for a zone reading, `ui_water_row_far` for *"{pct} here — {tiles} tiles from the nearest main"*. It lives in the S19 model rather than in `BuildController` for `TransformerPanelModel.building_row`'s reason: it is a reading OF A ZONE shown somewhere else, and putting it there is what stops two surfaces computing the same sentence twice. | §2.9, doc 05 §2.3/§2.11 | Doc 92 §67.8 measured **six different pressures in one zone whose own pressure is 1.00**, because §2.3's per-tile factor is distance to a live main. A building panel that showed only the zone would tell a player their water is fine while doc 02 refuses their upgrade at that building's own 0.50. |
+| D-126 | **`E_WATER_HEADROOM` names the purchase, and doc 05's site refusals say how far.** The row picks one of four remedy strings from `can_upgrade_water`'s new `limit` field and routes `Fix this →` on it — `FIX_COMPONENT` at the node that binds §2.5's chain (which opens S19) on the capacity arm, `FIX_BUILDING` on the pressure arm — instead of `FIX_DISTRICT` at the zone key for both. And `ui_requirement_e_no_main`, which has asked for `{need}` and `{have}` since Wave 10, is finally supplied: `cmd_place_water_component` publishes `tap_radius_tiles` and `nearest_main_tiles` (searched over the whole map, on the refusal path only), so the sentence reads *"this site taps a main within 8 tiles and the nearest live one is 23 tiles from 41, 62"*. | §2.7, §2.9, doc 05 §2.11, doc 93 §BD5 | **The remedy was wrong in both of the cases it could be shown in.** *"Add a pumping station or a storage tank in this district"* does not move a tile factor (doc 92 §67.8) and does not move a treatment-bound zone (doc 92 §67.4: 118 pumps, $5.5M, supply unmoved). And `E_NO_MAIN` rendered as *"the nearest main is more than  tiles from tile "* — doc 12 §2.7 calls this row the single most important teaching device in the game, and it was printing two empty slots. |

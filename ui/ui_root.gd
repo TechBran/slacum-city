@@ -140,6 +140,15 @@ signal grid_action(action: StringName, component_id: String, result: Dictionary)
 signal transformer_selected(component_id: String)
 ## A row of S18's customer list was tapped: go and look at that building.
 signal transformer_customer_selected(sim_id: String, world_pos: Vector3)
+## **S19's four verbs, in one signal, for `grid_action`'s reason** (doc 12 D-124):
+## the shell does exactly one thing with every one of them — re-read the city.
+## `action` is `repair` | `upgrade` | `remove` | `isolate` | `restore`.
+signal water_action(action: StringName, asset_id: String, result: Dictionary)
+## A doc-05 node was SELECTED — by a tap on its footprint, or by a `Fix this →`
+## on an `E_WATER_HEADROOM` row whose zone binds on a node. `""` clears it.
+signal water_node_selected(node_id: String)
+## A row of S19's served list was tapped: go and look at that building.
+signal water_customer_selected(sim_id: String, world_pos: Vector3)
 ## §2.13's progression moment: the city level moved, and this is the one place
 ## that knows it before the alert row does.
 signal city_level_changed(level: int, unlocked: PackedStringArray)
@@ -218,6 +227,7 @@ var land_panel: LandPanel
 ## `_build_static()`, so a scene tree could only ever be a second description of
 ## it to keep in step by hand.
 var transformer_panel: TransformerPanel
+var water_panel: WaterPanel
 var toast_view: ToastView
 ## S0. Present in every mount and **closed in every one of them** — only
 ## `present_title()` opens it, and only `game/main.gd` calls that.
@@ -388,6 +398,15 @@ func _bind_nodes() -> void:
 		transformer_panel = TransformerPanel.new()
 		transformer_panel.name = "TransformerPanel"
 		panel_layer.add_child(transformer_panel)
+	# S19 on exactly S18's terms (doc 12 D-124): built rather than authored, on
+	# the same `PanelLayer`, so the two are siblings and `close_siblings` keeps
+	# one panel at a time without either knowing about the other.
+	water_panel = panel_layer.get_node_or_null("WaterPanel") as WaterPanel \
+			if panel_layer != null else null
+	if water_panel == null and panel_layer != null:
+		water_panel = WaterPanel.new()
+		water_panel.name = "WaterPanel"
+		panel_layer.add_child(water_panel)
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
 	tilt_slider = safe_area.get_node_or_null("HUDLayer/TiltSlider") as TiltSlider
@@ -467,6 +486,8 @@ func bring_up_screens() -> void:
 	# `game/main.gd` hands it the sim. `setup()` is idempotent.
 	if transformer_panel != null and transformer_panel.config == null:
 		transformer_panel.setup(config)
+	if water_panel != null and water_panel.config == null:
+		water_panel.setup(config)
 	if toast_view != null and toast_view.config == null:
 		toast_view.setup(config)
 	# S0 comes up like everything else — with the shared config, and CLOSED. A
@@ -495,6 +516,8 @@ func bring_up_screens() -> void:
 		land_panel.haptics = haptics
 	if transformer_panel != null:
 		transformer_panel.haptics = haptics
+	if water_panel != null:
+		water_panel.haptics = haptics
 	if street == null:
 		street = StreetModel.new(config)
 	if land_works == null:
@@ -568,6 +591,13 @@ func _connect_screens() -> void:
 		_connect(transformer_panel.demolished, _on_transformer_demolished)
 		_connect(transformer_panel.customer_selected, _on_transformer_customer)
 		_connect(transformer_panel.closed, _on_transformer_closed)
+	if water_panel != null:
+		_connect(water_panel.repaired, _on_water_repaired)
+		_connect(water_panel.upgraded, _on_water_upgraded)
+		_connect(water_panel.removed, _on_water_removed)
+		_connect(water_panel.main_valved, _on_water_valved)
+		_connect(water_panel.customer_selected, _on_water_customer)
+		_connect(water_panel.closed, _on_water_closed)
 	if land_panel != null:
 		_connect(land_panel.purchased, _on_land_purchased)
 		_connect(land_panel.developed, _on_land_developed)
@@ -2112,15 +2142,26 @@ func close_land_panel() -> void:
 ## Returns whether the panel took the tap, so the caller can fall through to its
 ## own deselect when it did not — a build whose `TransformerPanel` has no model
 ## must deselect exactly as it does today rather than eat the tap.
+## **And it is the shell's ONE seam for "the pick said component"** (Wave 28).
+## `BuildController.pick_at_ground` answers `PICK_COMPONENT` for doc 04's
+## transformers AND, since doc 12 D-124, for doc 05's water nodes; the shell has
+## a single line for that kind (`game/main.gd::_handle_tap`), and a tap that S18
+## does not take has to reach S19 rather than falling through to a deselect. So
+## this method tries the two panels in id-namespace order and answers whether
+## EITHER took it. The alternative — a second seam in the shell — would mean a
+## tap on a water works did nothing at all until `game/main.gd` grew a branch,
+## which is a regression shipped in the name of tidiness. The shell may still
+## call `show_water_node` directly, and the snippet in report 98 §73 does, so
+## the selection and the 1 Hz refresh follow the tap into the world.
 func show_transformer(component_id: String) -> bool:
 	if transformer_panel == null:
-		return false
+		return show_water_node(component_id)
 	if transformer_panel.model == null:
 		transformer_panel.model = _transformer_model()
 	if transformer_panel.model == null:
-		return false
+		return show_water_node(component_id)
 	transformer_panel.show_component(component_id)
-	return transformer_panel.is_open()
+	return transformer_panel.is_open() or show_water_node(component_id)
 
 
 ## S18's model, resolved from the controller a sibling screen is already holding
@@ -2147,9 +2188,92 @@ func _transformer_model() -> TransformerPanelModel:
 			controller.tile_m)
 
 
+## Both component panels, for `show_transformer`'s reason: the shell calls this
+## on a save load — a loaded save is a different city and neither panel may
+## outlive the one it was describing — and it has one line for it.
 func close_transformer_panel() -> void:
 	if transformer_panel != null:
 		transformer_panel.close()
+	close_water_panel()
+
+
+# ---------------------------------------------------------------------------
+# S19 water panel (doc 12 D-124, Wave 28)
+# ---------------------------------------------------------------------------
+
+## The shell's tap seam for a doc-05 node, one kind over from `show_transformer`:
+## `BuildController.pick_at_ground` said `component` and S18 did not take it, so
+## this asks whether S19 will. Returns whether the panel took the tap, so the
+## caller falls through to its own deselect when it did not.
+func show_water_node(node_id: String) -> bool:
+	if water_panel == null:
+		return false
+	if water_panel.model == null:
+		water_panel.model = _water_model()
+	if water_panel.model == null:
+		return false
+	water_panel.show_node(node_id)
+	return water_panel.is_open()
+
+
+## S19's model, resolved from the controller a sibling screen is already holding
+## — `_transformer_model`'s argument verbatim, and for its reason: without it
+## S19 would be a screen the shipped game could never open, and the defect would
+## look exactly like a tap that does nothing.
+func _water_model() -> WaterPanelModel:
+	var controller: BuildController = null
+	if building_panel != null and building_panel.controller != null:
+		controller = building_panel.controller
+	elif build_sheet != null and build_sheet.controller != null:
+		controller = build_sheet.controller
+	if controller == null or controller.sim == null:
+		return null
+	return WaterPanelModel.new(controller.sim, controller.water, config,
+			controller.tile_m)
+
+
+func close_water_panel() -> void:
+	if water_panel != null:
+		water_panel.close()
+
+
+## Re-reads the selected node. Called on the shell's HUD cadence like
+## `refresh_transformer_panel`, so a crew's bar moves, the zone's supply tracks
+## the evening peak, and a leak the player just paid to stop disappears from the
+## MAINS OPEN list the moment the crew leaves.
+func refresh_water_panel() -> void:
+	if water_panel != null and water_panel.is_open():
+		water_panel.refresh()
+
+
+func _on_water_repaired(asset_id: String, result: Dictionary) -> void:
+	water_action.emit(&"repair", asset_id, result)
+
+
+func _on_water_upgraded(node_id: String, result: Dictionary) -> void:
+	water_action.emit(&"upgrade", node_id, result)
+	# S5 has drawn the node ladder since Wave 11 and may be open behind this
+	# panel's own subject; it says the same thing, which is `_refresh_hud()`.
+	if building_panel != null:
+		building_panel.water_upgraded.emit(node_id, result)
+
+
+func _on_water_removed(node_id: String, result: Dictionary) -> void:
+	water_action.emit(&"remove", node_id, result)
+
+
+func _on_water_valved(edge_id: String, action: StringName, result: Dictionary) -> void:
+	water_action.emit(action, edge_id, result)
+
+
+func _on_water_customer(sim_id: String, world_pos: Vector3) -> void:
+	water_customer_selected.emit(sim_id, world_pos)
+
+
+## The panel closed — by the ✕, by a sibling opening over it, or by REMOVE taking
+## its subject out of the city.
+func _on_water_closed() -> void:
+	water_node_selected.emit("")
 
 
 ## S5's one-row POWER summary was tapped, or a `POWER_CAPACITY` row's
@@ -2203,9 +2327,15 @@ func _on_transformer_closed() -> void:
 ## Re-reads the selected transformer. Called on the shell's HUD cadence, like
 ## `refresh_land_panel`, so a crew's progress bar and its ETA move while the
 ## panel is open and the load meter tracks the evening peak.
+## Both component panels — the shell's HUD cadence has one line for the pick's
+## one kind, the same argument `show_transformer` and `close_transformer_panel`
+## make. On S19 this is what moves a crew's bar, tracks the zone's supply into
+## the evening peak, and takes a leak off the MAINS OPEN list the moment the
+## crew the player paid for finishes.
 func refresh_transformer_panel() -> void:
 	if transformer_panel != null and transformer_panel.is_open():
 		transformer_panel.refresh()
+	refresh_water_panel()
 
 
 ## Re-reads the selected block. Cheap, and the shell calls it on its HUD cadence
@@ -2267,10 +2397,23 @@ func _serve_transformer_fix(fix_target: Dictionary) -> bool:
 	if sim == null:
 		return false
 	var action := FixRouter.route(sim, fix_target, false)
-	if String(action["action"]) != String(FixRouter.ACTION_SHEET) \
-			or StringName(str(action.get("sheet", &""))) != FixRouter.SHEET_TRANSFORMER_PANEL:
+	if String(action["action"]) != String(FixRouter.ACTION_SHEET):
 		return false
-	if not show_transformer(str(action.get("binds_at", action.get("id", "")))):
+	var sheet := StringName(str(action.get("sheet", &"")))
+	var target := str(action.get("binds_at", action.get("id", "")))
+	# **Wave 28: the same argument, one utility over** (doc 12 D-126). The router
+	# answers `SHEET_WATER_PANEL` for an `E_WATER_HEADROOM` row whose zone is
+	# short of SUPPLY, at the node that binds doc 05 §2.5's chain — and if this
+	# root did not serve it, that answer would be correct and consumed by
+	# nothing, which is the shape the paragraph above is named after.
+	if sheet == FixRouter.SHEET_WATER_PANEL:
+		if not show_water_node(target):
+			return false
+		water_node_selected.emit(water_panel.selected_id())
+		return true
+	if sheet != FixRouter.SHEET_TRANSFORMER_PANEL:
+		return false
+	if not show_transformer(target):
 		return false
 	transformer_selected.emit(transformer_panel.selected_id())
 	return true

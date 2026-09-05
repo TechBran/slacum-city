@@ -621,6 +621,27 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 		&"E_UNSERVED":
 			args["have"] = str(p.get("have", _tile_text(p)))
 			args["need"] = str(p.get("need", ""))
+		&"E_NO_MAIN":
+			# **Wave 28 (doc 12 D-126).** `ui_requirement_e_no_main` has asked for
+			# `{need}` and `{have}` since Wave 10 and nothing ever supplied
+			# either, so doc 05's site refusal rendered as *"the nearest main is
+			# more than  tiles from tile "* — the sentence shape doc 12 §2.7
+			# calls the most important teaching device in the game, teaching
+			# nothing. `cmd_place_water_component` publishes both now:
+			# `tap_radius_tiles` is the reach the rule uses and
+			# `nearest_main_tiles` is how far the nearest live main actually is,
+			# searched over the whole map on the refusal path only.
+			args["need"] = str(p.get("need", int(p.get("tap_radius_tiles", 8))))
+			args["have"] = str(p.get("have", _tile_text(p)))
+			var main_far := int(p.get("nearest_main_tiles", -1))
+			args["distance"] = "—" if main_far < 0 else str(main_far)
+			args["at"] = str(p.get("at", _tile_text(p)))
+		&"E_NO_WATER":
+			# The other half of the same refusal: an intake off the shoreline.
+			# The tile is the answer here — there is nothing to measure, only a
+			# place to move to.
+			args["have"] = str(p.get("have", _tile_text(p)))
+			args["at"] = str(p.get("at", _tile_text(p)))
 		&"E_WATER_HEADROOM":
 			# Doc 05's own unit, and doc 05's own answer to "how short?".
 			# `can_upgrade_water` returns `deficit_m3h` and `zone_headroom_m3h`
@@ -635,6 +656,31 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 					p.get("required_m3h", water_headroom + water_deficit))))
 			args["deficit"] = RequirementFormatter.water_m3h(water_deficit)
 			args["at"] = str(p.get("at", p.get("zone", "")))
+			# **Wave 28 (A91-D-147): one code, two refusals, two remedies.** Doc
+			# 05 §2.11 refuses this upgrade on capacity OR on the per-tile
+			# pressure §2.3 derives from distance to a main, and the old remedy —
+			# *"add a pumping station or a storage tank in this district"* — was
+			# the wrong sentence for both of them at once: a tank stores water
+			# the zone never had, and a pump when TREATMENT binds raises supply
+			# by exactly zero (doc 92 §67.4 measured 118 of them and $5.5M).
+			# `WaterSystem.can_upgrade_water` now says which arm said no and
+			# `WaterSystem.supply_chain` says which stage binds, so the row can
+			# name the purchase. A caller that supplies neither still renders —
+			# the default is the capacity arm, which is what the row has always
+			# assumed.
+			var water_limit := str(p.get("limit", "capacity"))
+			var water_stage := str(p.get("binding", "none"))
+			args["stage"] = _resolve("ui_water_stage_%s" % water_stage, {}, water_stage)
+			args["tiles"] = str(p.get("main_distance_tiles", -1))
+			args["pressure"] = RequirementFormatter.percent(p.get("pressure", 0.0))
+			var advice_key := "ui_requirement_e_water_headroom_capacity"
+			if water_limit == "pressure":
+				advice_key = "ui_requirement_e_water_headroom_pressure"
+			elif water_limit == "no_zone":
+				advice_key = "ui_requirement_e_water_headroom_no_zone"
+			elif water_stage == "mains":
+				advice_key = "ui_requirement_e_water_headroom_mains"
+			args["advice"] = _resolve(advice_key, args, "")
 		&"E_UNIT_UNAVAILABLE", &"E_UNREACHABLE", &"E_UNKNOWN_INCIDENT":
 			# Doc 06's dispatch refusals (PA-52). `unit` is the vehicle's display
 			# name and `have` its `Vehicle` status string verbatim — the same
