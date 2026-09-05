@@ -417,13 +417,17 @@ func _render_customers(v: Dictionary) -> void:
 		_customers_title.text = _text("ui_transformer_serving_none", "")
 		_apply_state_color(_customers_title, HudModel.STATE_WARNING)
 		return
-	_customers_title.text = _text_args("ui_transformer_serving",
+	# A5: the COUNT of dark customers is in the words, not only in the colour —
+	# "three of these are dark right now" is the sentence a player opening this
+	# panel during an outage came for, and a tinted heading does not say it.
+	var dark := int(v["customers_dark"])
+	_customers_title.text = _text_args(
+			"ui_transformer_serving_dark" if dark > 0 else "ui_transformer_serving",
 			{"n": int(v["customer_count"]), "kw": str(v["customer_demand_text"]),
-			"dark": int(v["customers_dark"])},
+			"dark": dark},
 			str(v["customer_demand_text"]))
 	_apply_state_color(_customers_title,
-			HudModel.STATE_CRITICAL if int(v["customers_dark"]) > 0
-			else HudModel.STATE_NORMAL)
+			HudModel.STATE_CRITICAL if dark > 0 else HudModel.STATE_NORMAL)
 	for entry: Variant in rows:
 		var row: Dictionary = entry
 		var sim_id := str(row["sim_id"])
