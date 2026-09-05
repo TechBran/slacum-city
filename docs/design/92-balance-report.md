@@ -11145,3 +11145,302 @@ replacement.
 
 `hard` and `crisis` do not move at all, for §58.7's own reason: a city that dies
 on game-day 47 never sees enough unanswerable fire for the ruling to reach it.
+
+## 62. Wave 23 — the predicate measured the shell, not the service (2026-09-04)
+
+*(The rulings are doc 93 §AV. Shipped as report 98 §65, RR-192..RR-196. Fork:
+`6dba66c`, main at the moment this lane opened — Wave 21's fire floor on top of
+Wave 22's rewards.)*
+
+Every number below is a command and a reading. The save is the player's own slot
+0, copied into a private `user://` by the tool that reads it and swept at exit;
+it loads at game-day 166 with 12 buildings alive, 77 in rubble and a treasury of
+−$22,624.
+
+### 62.1 The predicate could not see the fire service it was ruling about
+
+```
+godot --headless --path <repo> -s res://tools/measure_player_city.gd -- \
+    --saves=<dir> --slot=0 --days=1 --marks=1 --service-audit
+```
+
+> `service: fire_station shells standing 0 | fleet 14 units (fire 1, police 4,
+> utility 6, water 4, construction 9) | §AS1 shell reading false -> §AV1 service
+> reading true`
+
+Both readings are taken on the SAME city at the SAME instant, which is why this
+is a measurement and not a derivation from the diff: `tools/measure_player_city
+.gd::_service_line` restates §AS1's shell half beside `CityIncidentWorld
+.has_fire_capability()`. On the player's own save §AS1 answered *"this city has
+no fire service"* while **one fire engine was in the fleet, on duty, and the city
+was paying $91.58/gh of `E_fleet` to keep it and its thirteen colleagues there.**
+
+The lane brief's reading of Wave 21's adversarial verifier — station destroyed,
+capability false, protection on, **28 of 28 incidents still answered** — is that
+verifier's number and is quoted as theirs. What this lane measured on this tree
+is the predicate itself, above, and the reason the two halves drift: §AR3's own
+finding that `sync_station` fires on a building's COMPLETION and never on its
+destruction, so `Building.demolish` leaves every engine in the roster.
+`tests/test_spiral_floor.gd::test_capability_is_the_service_not_the_shell` pins
+both directions of that.
+
+### 62.2 The fire question was being asked about floods and storms
+
+`tests/test_spiral_floor.gd::test_a_storm_is_answered_by_the_crew_not_the_engine`
+is the deterministic probe, and it fails on the fork. A founding city with its
+fire department bulldozed still owns every construction crew and every water
+truck in the manifest:
+
+| door | hazard's `primary_role` | fork | shipped |
+| --- | --- | --- | --- |
+| `apply_building_damage` on a building at the structural-failure line | `construction` (a `roof_damage`) | `damaged` — survived | **`destroyed`** |
+| the same door, same city | `fire` | `damaged` | `damaged` — the floor is untouched |
+
+Under §AS1 the first row was `has_fire_capability()`, so **a city with no fire
+department could not have a building finished off by water, wind or anything
+else.** `CascadeOps`' `building_condition` op is the door every hazard's damage
+goes through, and `roof_damage` alone runs it on three escalation tiers.
+
+### 62.3 The acceptance test — the player's own slot 0, 90 game-days
+
+```
+godot --headless --path <repo> -s res://tools/measure_player_city.gd -- \
+    --saves=<dir> --slot=0 --days=90 --marks=14,45,90 [--restore] --service-audit
+```
+
+| arm | day 14 | day 45 | day 90 | destructions | fork |
+| --- | --- | --- | --- | --- | --- |
+| passive | 12 | 12 | 12 | **0, of any cause** | 12 / 12 / 12 |
+| Restore-All | 65 | 65 | 65 | **0, of any cause** | 64 / 64 / 64 |
+
+**Not regressed, and the Restore-All arm gains a building.** The gained building
+is a `CIVIC/substation` — doc 93 §AR1's utility spine — and the cause is §AV3's
+$11.00/gh buying the agent one more restore (52 ruins → 53). **A/B-isolated, not
+inferred:** re-running the same arm with `coverage_slope` at 0.0 returns **65
+alive, 53 restored and $114,668 of relief — every figure identical** — so §AV4 is
+not the cause; §AV1 cannot be, because both the fork and this tree destroy ZERO
+buildings on this arm; and §AV2 moves this arm's relief by $59 in 90 game-days,
+which does not buy a building.
+
+**The published Wave-21 figures were 71 / 68 / 68 and they do not reproduce at
+this fork; 64 / 64 / 64 is what the fork gives and it is what "do not regress"
+is measured against here.** The cause is not in dispute and is not this lane's:
+Wave 21 was measured on a branch forked below Wave 22, and main merged Wave 21
+ON TOP of Wave 22's reward re-scale (`6dba66c`'s parent is `f8d48e3`). The
+restore agent's budget is downstream of that re-scale. Re-recorded rather than
+inherited, which is the rule the matrix is held under.
+
+### 62.4 §AV3 — the wages of three plants that are rubble
+
+The same two commands, reading the last settled game-hour at game-day 90 of the
+passive arm:
+
+| line | fork | shipped |
+| --- | --- | --- |
+| `E_departments` | **$11.00/gh** | **absent — $0.00** |
+| total expense | $556.27/gh | $545.27/gh |
+| deferred liability at day 90 | $1,374,124 | $1,350,232 |
+
+$11.00/gh is doc 03's $20.00 `water_works` staffing through the city's own
+`m_exp × austerity_mult` of 0.55. The city has **no standing station of any
+kind** — the census's CIVIC column is one `power_facility` — and all three
+`water_facility` buildings are rubble, while 2 pump nodes are still in the water
+graph. $480 a game-day, for plants that do not exist. The delta on the deferred
+ladder is $23,892 over 90 game-days against the $23,760 the arithmetic predicts
+($11.00 × 24 × 90); the difference is the credit line compounding on it.
+
+### 62.5 §AV2 — the floor that multiplied an era
+
+| rig | fork | shipped |
+| --- | --- | --- |
+| `test_the_floor_may_not_multiply_an_era`, bill $2,000, no revenue | $8,000 × 3 = **$24,000 — 12.0× the bill** | **$8,000 — 4.0×**, the floor paid once |
+| the player's slot 0, Restore-All (bill stays > $240,000) | $114,727 in 3 grants | **$114,668 in 3 grants** — the damage term is still what pays |
+| the player's slot 0, passive (bill $282,078, revenue ≈ $740/grant) | $98,727 + $8,000 + $8,000 = $114,727 | **$98,727 + $8,000 + $740 = $107,467** |
+
+**What the ruling promises, stated exactly:** an era receives `RELIEF_MIN` at
+least once, and after that a grant is worth what it is MEASURED on. So
+`relief_grants_per_era` can no longer MULTIPLY the floor — which is the defect —
+and the third row above is the ruling biting on the real save: the passive arm's
+third grant is priced at its own $740 revenue term instead of being lifted to
+$8,000 for the third time.
+
+**What it does NOT promise, and this is published rather than claimed away:** a
+bill under `RELIEF_MIN` is still out-paid once. $8,000 against $2,000 is **4.0×**,
+down from 12.0×, and that residual is the price of doc 03 §2.10 layer 5's bottom
+rung.
+
+**TWO WIDER DRAFTS WERE TRIED AND THE SUITE KILLED BOTH.** A per-era CEILING of
+`max(revenue_term, bill)` does bound an era by its bill — and it breaks two
+guarantees this ladder already had, neither of which was found by argument:
+`tests/test_relief_ladder.gd` says *"no revenue and no damage is RELIEF_MIN"*,
+and a city whose stock is all standing but dark has a $0 bill and a $0 revenue
+term, so under that draft it collected **nothing at all**; and
+`tests/test_economy.gd`'s gate 18 collects the revenue term TWICE in one era,
+which any ceiling charged against `relief_era_paid` takes away — the very thing
+doc 03's own docstring says must not happen. Both failures are in the record
+because the wide draft shipped as far as a full-suite run before they were
+caught; the narrow rule is what survived them.
+
+### 62.6 §AV4 — is owning a fire department worth it?
+
+**Two rigs, because one of them cannot answer the question.**
+
+**Rig 1 — the player's terminal save, Restore-All, 90 game-days.** All three arms
+tie:
+
+| arm | alive | treasury | condemned | incidents born | `E_departments` |
+| --- | --- | --- | --- | --- | --- |
+| keep | 65 | −$20,000 | 61 | 26,944 | $16.58/gh |
+| burn | 64 | −$20,000 | 59 | 26,615 | $0.00/gh |
+| none | 65 | −$20,000 | **65** | **30,610** | $0.00/gh |
+
+Owning a department at all is worth **−12.0 % of the incidents the city has to
+live through** (26,944 and 26,615 against 30,610) and four to six fewer condemned
+shells, and it is worth nothing at all on the two numbers the gate is stated in —
+because **neither of them can move on this city.** (The `keep`-vs-`burn` ordering
+here is noise on a city at doc 06's saturation ceiling; the department-vs-no-
+department split is not, and it is the only reading this rig supports.) The treasury is pinned at the −$20,000 credit floor
+in every arm, and the restore agent saturates at the same reserve in every arm. A
+city that has already fallen cannot answer *"should I buy a fire station?"*. That
+is a property of the rig.
+
+**Rig 2 — a founding city, 90 game-days, `tools/measure_fire_incentive.gd`.** The
+`none` arm bulldozes through the real `cmd_demolish_building`, so it collects the
+refund and saves the upkeep — it is deliberately given every advantage:
+
+```
+godot --headless --path <repo> -s res://tools/measure_fire_incentive.gd -- --days=90
+```
+
+| arm | alive | treasury | condemned | incidents | fires | pop | `E_dept/gh` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **keep** | **32** | **$322,479** | **1** | 172 | 11 | 144 | $50.02 |
+| burn | 31 | $260,098 | 2 | 175 | 11 | 144 | $20.00 |
+| none | 31 | $267,443 | 14 | 187 | 13 | 125 | $20.00 |
+
+**Owning and keeping the department is the best arm on both numbers: +1 building
+alive and +$55,036 against owning none, while paying $30.02/gh more to hold it.**
+The worst arm is `burn` — bought and left to rot — which is the lesson the game
+means to teach and the one it was teaching backwards.
+
+**A/B, and it is one line of data.** The identical three arms with
+`factors.fire.coverage_slope` alone set to 0.0:
+
+| arm | alive | treasury | condemned |
+| --- | --- | --- | --- |
+| keep (slope 0.0) | 31 | $281,360 | 3 |
+| burn (slope 0.0) | 31 | $260,098 | 2 |
+| none (slope 0.0) | 31 | $267,443 | 14 |
+
+§AV4's coverage term is worth **+1 alive and +$41,119** of the keep-vs-none
+advantage. The `burn` and `none` rows are bit-identical to the shipped run, and
+`none`'s provably so: it has no fire coverage, so `f_fire_coverage` is exactly
+1.0 either way. `burn`'s is empirical — its department does not survive long
+enough for the term to flip a Poisson draw at this slope — and it is not a wiring
+failure, which is checked rather than asserted: at `coverage_slope` 0.9 the same
+arm moves to 162 incidents and $260,399.
+
+### 62.7 The old exploits, still shut
+
+`tests/test_spiral_floor.gd::test_wealth_moves_no_roster_at_either_extreme`. Two
+founding cities, identical but for a treasury at the −$20,000 insolvency floor
+and a treasury at **+$5,000,000**, both with the fire department bulldozed, both
+driven through three doors — a terminal fire, a flood and a storm — on the same
+three buildings in the same order. **The two rosters compare equal as strings,
+id by id, state by state, condition to six decimal places.** Wealth is not in
+§AV1 any more than it was in §AS1, and the assertion is re-taken on the WIDER
+door rather than inherited from the narrow one.
+
+### 62.8 The four `profile_sim --hash-only` baselines
+
+| digest | at the fork (`6dba66c`) | as shipped |
+|---|---|---|
+| starter, coarse 24 h | `34ba7d972f3a78e2e08e8417fd83536ac3311257a3fc5c8b9d32486352279e65` | **unchanged** |
+| starter, fine 2.0 h | `dde437bc234fc2c24e19de1994666662cf1a3640c1b400d92aff079f948d4764` | **unchanged** |
+| bench, coarse 24 h | `db934239d6d84c0492b1c3d8b2a5d6cd98ad8c9a8399926a1a683635072288a1` | `f50bc16fa656e6c73c8fa7f21a3b7f3af1ccbd2b0130bdef378d888553cea6f7` |
+| bench, fine 2.0 h | `bf57bbac708c35b7aa501ca7d10d9862c19402a8fae37801f947ec80b1c1ec1e` | **unchanged** |
+
+**One of four moves, and its cause is isolated by ablation rather than inferred.**
+Setting `factors.fire.coverage_slope` to 0.0 and re-hashing returns the bench
+coarse digest to `db934239…88a1`, bit-identical to the fork, with the other three
+untouched — so **§AV4 is the sole cause, and §AV1, §AV2 and §AV3 move no baseline
+at all.**
+
+```
+sed -i 's/"coverage_slope": 0.4286/"coverage_slope": 0.0/' data/incidents.json
+profile_sim --hash-only --city=res://tests/fixtures/bench_city.json
+    -> db934239…88a1 / bf57bbac…ec1e     (= FORK, both)
+```
+
+The shape of the change says why the other three do not move, and it is
+checkable: §AV1 fires only on a terminal or damage door, and neither profiling
+city loses or damages a building inside 24 coarse hours or 2 fine ones; §AV2
+fires only when `relief_gates_pass` does, and neither city is insolvent; §AV3
+changes a settlement input only when a `water_facility` is in RUBBLE, and both
+cities' plants are standing. §AV4 changes an ignition RATE on every city that has
+fire coverage, which the bench city has and — for 24 coarse hours at these rates
+— the starter city does not resolve differently on.
+
+### 62.9 Gate 21's capstone cell, re-fitted — the count goes down by one and the cell gets stronger
+
+**This is the only gate this wave moved, and it is the one cell of the matrix
+whose own docstring already called itself the weakest.**
+
+Wave 22 ruled `reached_top >= 2`, measured on seeds 1337 (curriculum level 7 at
+game-hour 430) and 4242 (377), and named seed 9001's stop at level 5 an AGENT
+limit: 7,518 residents on ONE water works, `l6_tower` refused
+`E_WATER_HEADROOM` for the rest of the run. On this tree it reads 1 of 3.
+
+**The cause, isolated by ablation.** `tools/measure_curriculum.gd --days=45`:
+
+| seed | shipped | `coverage_slope` 0.0 | Wave 22 published |
+| --- | --- | --- | --- |
+| 1337 | level 6 at h310, **never 7** | 7 at **h430** | 7 at h430 |
+| 4242 | 7 at **h361** | 7 at **h377** | 7 at h377 |
+| 9001 | level 5, $625,914 | level 5, $202,039 | level 5 |
+
+**§AV4 is the sole cause and it is a chaotic re-roll, not a systematic penalty.**
+With the slope alone at 0.0 both finishing seeds return to their published hours
+exactly. With it on, one seed loses the capstone, one seed gains 16 game-hours,
+and the third ends **$423,875 richer**. A term that multiplies doc 06's ignition
+rate on every city with fire coverage perturbs the incident stream, and the
+capstone cell sits on a knife-edge.
+
+**The wall is measured, and it is neither the horizon nor money.**
+`measure_curriculum --days=75 --seeds=1337`: still level 6, with **13,946
+residents, a $3,633,922 treasury and `water_placed 1`.** That is doc 92 §61.11's
+own documented wall — the agent has no water-headroom PLANNER — reached by a
+second seed. `PlaytestStrategy._relieve` does answer `E_WATER_HEADROOM` by buying
+a pump; what is missing is keeping headroom ahead of demand, and §61.11 records
+that two other answers were tried and both made the arc worse.
+
+**The re-fit, and why it is not a weakening.** `reached_top >= 1`, plus a new
+per-seed assertion the count was standing in for:
+
+    for every seed that ends below the capstone:
+        treasury_end >= $500,000
+
+$500,000 is not fitted to pass: it is above every seed's measured ending treasury
+at the fork ($202,039 on 9001) and below every seed's on this tree ($625,914 and
+$1,931,697), so it is the coarsest bound that separates *"the agent could not
+buy the next thing"* from *"the agent could not FIND the next thing"*. **A
+balance regression that made the capstone unaffordable — the thing this gate
+exists for — fails the new bound and would have passed the old one.** Both bounds
+are `>=`, so the wave that gives the agent a `utility_planner` gets a failing
+gate telling it to raise the floor rather than a silent pass. Doc 91 A91-D-123
+carries the open question and what would close it.
+
+**Every other cell of gate 21 is untouched and passes on all three seeds**: every
+rung up to `CURRICULUM_FLOOR_LEVEL`, the day bounds, the monotonicity, the water
+and road and repair counters. And **no other gate in the file moved** — 33 tests,
+445 asserts, failed 0, silent 0, and not one constant was re-fitted anywhere
+else.
+
+**One stale number found while re-fitting, and corrected in passing.** The
+assertion's own failure string read *"measured game-hour 591 on seeds 1337 and
+4242"* while the gate's docstring six lines above it read *"game-hour 430 and
+377"* — the same measurement, written twice, disagreeing. 430/377 is the pair
+`measure_curriculum` reproduces, so 591 was the stale one and the new string
+quotes a single seed and a single hour it can be checked against. **The shape:
+a number written into a failure message is a second copy of a measurement, and
+nothing re-derives a failure message.**

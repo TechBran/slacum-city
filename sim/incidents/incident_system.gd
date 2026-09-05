@@ -557,6 +557,18 @@ func _accumulate_terminal_timers(inc: Incident, dt_h: float, assist: float) -> v
 ## non-lethal would cost you every dispatch, doc 03's `f_road` term on every
 ## building's tax and doc 10's whole access model — vastly more than the
 ## difference between a condemned building and a ruin.
+## **WHICH SERVICE DOES THIS HAZARD NEED?** — doc 93 §AV1. The catalogue's own
+## `primary_role` for the incident's merged row, which is the same string
+## `DispatchSystem` ranks candidates on, so "the service that would have been
+## sent" and "the service the door asks about" cannot drift apart. `""` when the
+## row names no role: the door then falls back to `answerable` alone rather than
+## exempting a hazard nobody owns.
+func incident_primary_role(inc: Incident) -> String:
+	if inc == null:
+		return ""
+	return String(catalog.type_row(inc.type, inc.subtype).get("primary_role", ""))
+
+
 func incident_was_answerable(inc: Incident) -> bool:
 	if inc == null:
 		return true
@@ -1250,7 +1262,21 @@ func _structure_fire_rates(dt_h: float, collect: bool) -> Dictionary:
 	var unpowered_mult := catalog.factor("fire", "unpowered_mult", 0.8)
 	var knee := catalog.factor("fire", "arson_stability_knee", 0.35)
 	var arson_k := catalog.factor("fire", "arson_k", 2.0)
+	# **WHAT A FIRE DEPARTMENT BUYS BESIDES A TRUCK — doc 93 §AV4.** Doc 06
+	# §2.6(a)'s crime rate has always carried `f_police = clamp(police_base −
+	# police_slope × coverage, min, max)`; the fire rate carried no coverage term
+	# at all, so a `fire_station` bought RESPONSE and nothing else — and doc 92
+	# §62.6 measures what that is worth on a city whose roads are gone: 2
+	# incidents answered in 90 game-days against 30,655 unreachable, for
+	# $16.58/gh. The same shape, the same data block, and the anchor is 1.0 so
+	# that an UNCOVERED city's rate is exactly what it has always been. See
+	# `data/incidents.json` `factors.fire` for the derivation of the slope.
+	var fire_base := catalog.factor("fire", "coverage_base", 1.0)
+	var fire_slope := catalog.factor("fire", "coverage_slope", 0.0)
+	var fire_cov_min := catalog.factor("fire", "coverage_min", 0.0)
+	var fire_cov_max := catalog.factor("fire", "coverage_max", 1.0)
 	var stability_by_district: Dictionary = {}
+	var coverage_by_district: Dictionary = {}
 	var columns := world.fire_candidate_columns()
 	var ids: PackedStringArray = columns["id"]
 	var states: Array = columns["state"]
@@ -1281,13 +1307,26 @@ func _structure_fire_rates(dt_h: float, collect: bool) -> Dictionary:
 			continue
 		var f_power := 1.0 + unpowered_mult * (0.0 if powered[i] != 0 else 1.0)
 		var district_id := districts[i]
+		# **ONE `world.district()` per district per sub-step, not two.** §AV4
+		# needs a second scalar off the same row, and asking for it separately
+		# would double the calls on a walk that already runs over the whole
+		# roster on every integrator sub-step — `CityIncidentWorld.district()`
+		# builds a Dictionary and reads the coverage index to do it. Both memos
+		# are filled from the same read, keyed on the same id.
 		if not stability_by_district.has(district_id):
+			var row := world.district(district_id)
 			stability_by_district[district_id] = clampf(
-					float(world.district(district_id).get("stability", 1.0)), 0.0, 1.0)
+					float(row.get("stability", 1.0)), 0.0, 1.0)
+			coverage_by_district[district_id] = clampf(
+					float(row.get("fire_coverage", 0.0)), 0.0, 1.0)
 		var stability: float = stability_by_district[district_id]
 		var f_arson := 1.0 + arson_k \
 				* maxf(0.0, knee - stability) / maxf(0.0001, knee)
-		var lam := base * p_ignite * dt_h * f_power * f_weather * f_arson
+		var f_fire_coverage := clampf(
+				fire_base - fire_slope * float(coverage_by_district[district_id]),
+				fire_cov_min, fire_cov_max)
+		var lam := base * p_ignite * dt_h * f_power * f_weather * f_arson \
+				* f_fire_coverage
 		if lam <= 0.0:
 			continue
 		total += lam

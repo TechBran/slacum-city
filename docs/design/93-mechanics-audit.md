@@ -5804,3 +5804,201 @@ stability, and `f_arson` is `1 + 2.0 × max(0, 0.35 − stability)/0.35`, so a c
 that cannot answer anything triples its own ignition rate and keeps it there.
 That is a doc 06 / doc 09 re-fit with its own derivation and its own gate, and
 doc 91 A91-D-117 carries it.
+
+## AV. Wave-23 rulings — the predicate measured the shell, not the service (2026-09-04)
+
+*(Measured in doc 92 §62. Shipped as report 98 §65, RR-192..RR-196. The defect
+rows are doc 91 A91-D-121, A91-D-122 and A91-D-123. This section **corrects
+§AS1** on one word and **keeps everything §AS1 bought**: the acceptance test's
+passive arm is unchanged at 12/12/12 with zero destructions of any cause, and the
+Restore-All arm improves.)*
+
+Wave 21 ruled that a fire a city could not answer CONDEMNS the building rather
+than destroying it, and the ruling is right — it is the reason the player's own
+save stops at twelve buildings instead of zero. What it got wrong is what "could
+not answer" was allowed to mean. `has_fire_capability()` asked whether a
+`fire_station` BUILDING was standing, and **the ability to answer a fire does not
+live in a building.** It lives in `FleetSystem`, and §AR3's own finding is that
+the engines outlive the shell on every destruction path there is:
+`sync_station` fires on a building's COMPLETION and never on its destruction.
+
+Wave 21's own adversarial verifier measured all four of the consequences, and
+every one of them was merged deliberately as strictly-better-than-dying. This
+wave is the bill for that:
+
+| what §AS1 read | what it produced | ruling |
+| --- | --- | --- |
+| a `fire_station` shell standing | station destroyed → capability false → protection ON, **while 1 engine was still in the fleet and answered 28 of 28 incidents** | **§AV1** — the fleet is the service |
+| the FIRE question, on every hazard's damage door | a city with no fire department could not have a building finished off by a flood or a storm | **§AV1** — a hazard is answerable by the service THAT hazard needs |
+| `under_construction` excluded from "standing" | starting an upgrade on the only station switched the protection ON | **§AV1** — the engines never left the bay |
+| owning a department made you WORSE off | 66 buildings alive against 68, plus $27–57/gh | **§AV4** — a department must buy something a city without one does not get |
+| `RELIEF_MIN` clamped outside the era cap | $8,000 × 3 = $24,000 against a $2,000 bill — **12.0×** | **§AV2** |
+| `water_works` staffing keyed on the water GRAPH | $20.00/gh billed for three plants that are rubble | **§AV3** |
+
+### AV1. Capability is the SERVICE, not the shell — and the hazard names its own service
+
+`CityIncidentWorld._could_have_answered(answerable, role)` is now
+`has_service_capability(role) and answerable`. It still reads no money anywhere.
+Two changes, and the second is as large as the first:
+
+* **The station half is deleted.** `has_service_capability(role)` is one fact: at
+  least one unit in `FleetSystem` whose `resolve_rate` answers `role` and that is
+  not parked `OFFLINE` — the same exclusion `_staffing` already applies, for its
+  reason. The two halves §AS1 named do not come apart under this reading, they
+  collapse into it. *"A garage with no engine in it is not a fire service"* is
+  still false, because a garage contributes no unit. *"An engine with no station
+  to roll out of is not a fire service"* is now TRUE, and doc 92 §62.1 is why: on
+  the player's slot 0 the station is rubble, and the engine that outlived it
+  answered **28 of 28** incidents while the predicate said the city had no fire
+  service.
+* **`role` is the hazard's own `primary_role`** (`IncidentSystem
+  .incident_primary_role`), so `CascadeOps`' `building_condition` op — the door
+  EVERY hazard's damage goes through — asks doc 06 for a construction crew when a
+  roof comes off and for a water truck when a main breaks. Under §AS1 it asked
+  about the fire department every time, and doc 92 §62.2's probe is the
+  consequence: a city with no fire department, and every water truck in the game
+  parked next to the flood, could not lose a building to water.
+
+**Availability is not capability, and that is deliberate.** A unit on another
+call or in `REFIT` still counts. Doc 06 reads `dispatch_blocked_no_units` as
+ANSWERABLE precisely because fleet size is a PURCHASE; a predicate that exempted
+a city whose only engine was busy would pay it for under-buying engines. "Could
+this one have been reached?" is the `answerable` half's question.
+
+**The door to the exemption is now exactly one verb.** Under §AS1 a city bought
+fire immunity by LOSING its station — a fire did it for you. Under §AV1 the only
+path that retires a unit is `FleetSystem.remove_station`, reached from doc 02
+§2.12's demolition: the player's own bulldoze. A fire cannot buy the exemption;
+only a decision can, and §AV4 is the ruling that decision has to lose.
+
+**An empty `role` reads as the fire role**, which is exactly §AS1's behaviour. It
+is unreachable from the shipped catalogue — every merged row carries a
+`primary_role` and a subtype inherits its parent's, asserted by
+`test_every_hazard_names_the_service_that_answers_it` — so it is the branch a
+future row that forgets to name a service takes, and it fails toward the FLOOR
+rather than through it.
+
+### AV2. `RELIEF_MIN` is inside the era ceiling, or the heading is false
+
+§AS4 charged the DAMAGE term against `relief_era_paid` and left `clampi(…,
+RELIEF_MIN, RELIEF_MAX)` outside it. A floor is not a term: it does not shrink,
+so `RELIEF_MIN × relief_grants_per_era` = $8,000 × 3 = **$24,000 of relief an era
+pays whatever it was measured against**, and every bill under ~$24,615 was
+out-paid — a $2,000 bill drew 12.0× itself. §AS4's own heading says an era may
+never out-pay its bill, and the body disclosed the floor as an exception. **The
+ruling, and it is one `if`:**
+
+    payable = max(revenue_term, damage_term)
+    if payable < RELIEF_MIN and relief_era_paid < RELIEF_MIN:
+        payable = RELIEF_MIN          # the bottom rung, once per era
+
+**THE FLOOR IS AN ERA'S GUARANTEE, NOT A GRANT'S.** An era receives `RELIEF_MIN`
+at least once; after that a grant is worth what it is MEASURED on, so
+`relief_grants_per_era` can no longer multiply the floor. Doc 92 §62.5 measures
+it: the $2,000 rig falls from **$24,000 (12.0×) to $8,000 (4.0×)**, and on the
+player's own slot 0 the passive arm's third grant is priced at its own $740
+revenue term instead of being lifted to $8,000 for the third time —
+$114,727 → $107,467, while the Restore-All arm, where the damage term is still
+what pays, moves $114,727 → $114,668.
+
+**What it does not promise, published rather than claimed away:** a bill under
+`RELIEF_MIN` is still out-paid once. That is the price of doc 03 §2.10 layer 5's
+bottom rung, and the bottom rung is not negotiable.
+
+**TWO WIDER DRAFTS WERE TRIED AND THE SUITE KILLED BOTH, which is the reason
+this ruling is narrow.** A per-era CEILING of `max(revenue_term, bill)` does
+bound an era by its bill, and it breaks two guarantees the ladder already had:
+`tests/test_relief_ladder.gd` says *"no revenue and no damage is RELIEF_MIN"* —
+a city whose stock is all standing but dark has a $0 bill and a $0 revenue term
+and collected **nothing** under that draft, a hole in the floor Waves 20 and 21
+exist to close — and `tests/test_economy.gd`'s gate 18 collects the revenue term
+TWICE in one era, which any ceiling charged against `relief_era_paid` removes.
+Neither was found by argument. Both were found by the suite, after the wide draft
+had already been written up as correct.
+
+An ask that prices to zero is not paid and does not spend one of the era's three
+rescues; it does stamp the cooldown, because `outstanding_restore_cost` is an
+O(roster) walk and without that stamp this branch would re-price the whole roster
+every settled game-hour.
+
+### AV3. §AR3's remainder: the staffing follows the plant, not the graph
+
+`CitySim.build_settlement_inputs` says of itself *"one guard, one place: this
+loop is the sole author of both arrays"*, and it was not. The `water_works` row
+is appended by a SECOND loop over `water.nodes`, keyed on a pump existing in the
+GRAPH. A demolished `water_facility` takes its nodes with it
+(`_take_building_off_the_map` → `_retire_water_nodes`); one that BURNS DOWN does
+not — so the hole opens on exactly the path §AR3's own hole opened on. On the
+player's slot 0, with all three water plants in rubble and 2 pump nodes still in
+the graph, `E_departments` billed **$20.00/gh — $480 a game-day of wages for
+plants that do not exist**. A pump node's `power_ref` IS its host shell (doc 05
+§2.6), so the staffing now follows the plant. A node with no host is billed
+exactly as it was.
+
+### AV4. A department has to be worth owning, and coverage is what it buys
+
+§AV1 makes the predicate honest and **that alone makes the incentive worse, not
+better**: with the exemption keyed on not owning a service, the cheapest fire
+insurance in the game is still to have no fire service. Doc 92 §62.6 measures the
+three arms and says so.
+
+The lever is the asymmetry doc 06 has carried since §2.6(a): **the crime rate
+reads `police_coverage` and the fire rate read no coverage at all.** A fire
+station bought RESPONSE and nothing else — and on a city whose roads are gone
+that is 2 incidents answered in 90 game-days against 30,655 unreachable, for
+$16.58/gh. So the fire generator gains the term the crime generator already has,
+in the same file, the same data block and the same shape:
+
+    f_fire_coverage = clamp(coverage_base − coverage_slope × fire_coverage,
+                            coverage_min, coverage_max)
+
+**No new magic number.** The slope is crime's own full-coverage reduction —
+`police_slope / police_base` = 0.6 / 1.4 = **0.4286** — re-anchored at 1.0 so an
+UNCOVERED city's fire rate is exactly what it has always been. Crime's ladder
+anchors at 1.4 and RAISES the uncovered rate; doing that to fire would make every
+city harder for a ruling that is about departments, so it is not done.
+`coverage_min` is `coverage_base − coverage_slope`.
+
+**This is not the farm §AS1 refused.** §AS1 rightly refused to gate the CONDEMN
+predicate on `coverage_fire(tile)`, because that makes "build far from the
+station" a fireproofing strategy. Coverage in the IGNITION rate runs the other
+way: building far from the station gives you MORE fires, not fewer. The two
+readings point in opposite directions and only one of them is farmable.
+
+Doc 92 §62.6, 90 game-days on a founding city, three arms that differ in the fire
+department and in nothing else — and the `none` arm is *paid* to divest, because
+it bulldozes through the real command and collects the refund:
+
+| arm | alive | treasury | condemned | incidents | fires | pop |
+| --- | --- | --- | --- | --- | --- | --- |
+| keep (maintained) | **32** | **$322,479** | **1** | 172 | 11 | 144 |
+| burn (bought and forgotten) | 31 | $260,098 | 2 | 175 | 11 | 144 |
+| none (bulldozed, refund taken) | 31 | $267,443 | 14 | 187 | 13 | 125 |
+
+Owning and keeping the department is the best arm on both numbers the ruling is
+judged on: **+1 building alive and +$55,036** against owning none, while paying
+$30/gh more in `E_departments` for the privilege. The lesson the arms teach is
+the one the game means: the worst arm is `burn` — bought and left to rot, paying
+the upkeep and getting the wear.
+
+**A/B, one cause, one line of data.** Re-running the identical three arms with
+`coverage_slope` alone set to 0.0 returns keep to **31 alive / $281,360 / 3
+condemned**: §AV4 is worth +1 alive and +$41,119 of the advantage. The `none` arm
+is bit-identical under the ablation, and provably so — it has no coverage, so
+`f_fire_coverage` is exactly 1.0 either way.
+
+### AV5. What this wave did NOT rule, and why
+
+* **`E_fleet` still bills engines whose garage is rubble** — $91.58/gh on the
+  player's save, for 14 units housed in 6 destroyed stations. Under §AS1 that was
+  a defect of the same family as §AR3. Under §AV1 it is CORRECT: those units are
+  the city's fire, police and utility service, they answer calls, and the
+  predicate now says so. The line was left alone deliberately and the reason is
+  recorded here rather than in a defect row.
+* **The condemn floor still cannot be earned on a city whose roads are gone.**
+  Doc 92 §62.6's second rig is the player's own terminal save, and there all
+  three arms tie at 65 buildings alive with the treasury pinned at the −$20,000
+  credit floor: a city that has already fallen cannot answer "should I buy a fire
+  station?", because neither number it would be answered on can move. That is a
+  property of the rig, not of the ruling, and it is why §AV4 is measured on a
+  founding city. Doc 91 A91-D-123 carries the open question.

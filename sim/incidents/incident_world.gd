@@ -178,8 +178,14 @@ static func state_fire_mult_value(state: Variant) -> float:
 ## could not get a unit to this incident, and doc 02 §2.6's damage floor is then
 ## absolute rather than conditional. Defaults to `true`, so an adapter or a
 ## caller that predates the ruling behaves exactly as it did.
+##
+## `role` is doc 93 §AV1: the doc-06 `primary_role` of the hazard doing the
+## damage, so the adapter asks whether the city owns the service THAT hazard
+## needs rather than asking about the fire department every time. Defaults to
+## the fire role for the same reason `answerable` defaults to `true` — a caller
+## that predates the argument behaves exactly as it did.
 func apply_building_damage(_id: String, _fraction: float,
-		_answerable: bool = true) -> void:
+		_answerable: bool = true, _role: String = "fire") -> void:
 	pass
 
 
@@ -206,15 +212,19 @@ func suppress_building_fire(_id: String, _residual_damage_fraction: float) -> vo
 ## `answerable` is doc 93 §AS1 (Wave 21, replacing §AR2's draft): could the city
 ## have got a unit to this incident? `IncidentSystem.incident_was_answerable`
 ## computes it, an adapter is free to narrow it with facts only it holds
-## (`CityIncidentWorld` also asks whether the city owns a fire service at all),
-## and it defaults to `true` so an adapter or a caller that predates the ruling
-## behaves exactly as it did.
+## (`CityIncidentWorld` also asks whether the city owns the `role` service at
+## all), and it defaults to `true` so an adapter or a caller that predates the
+## ruling behaves exactly as it did.
+##
+## `role` is doc 93 §AV1: the hazard's own `primary_role`, so the question the
+## adapter asks is *"does this city own the service THIS hazard needs?"*.
 ##
 ## **RETURNS WHETHER THE BUILDING WAS ACTUALLY DESTROYED**, because under §AS1 it
 ## may not have been, and the caller publishes a different event either way. The
 ## stand-in answers `true`: a world that models no roster cannot condemn, so
 ## "the op ran" and "the building died" are the same statement there.
-func destroy_building(_id: String, _cause: String, _answerable: bool = true) -> bool:
+func destroy_building(_id: String, _cause: String, _answerable: bool = true,
+		_role: String = "fire") -> bool:
 	return true
 
 

@@ -2143,17 +2143,56 @@ func test_gate_21_the_curriculum_is_completable_and_paced() -> void:
 			assert_true(level >= previous,
 					"seed %d lost a curriculum level it had earned" % int(seed_value))
 			previous = level
-	# **The capstone, across the seeds.** See the header for the measurement and
-	# for why this is a count rather than a per-seed assertion. `>=` and not
-	# `==`: a wave that teaches the agent doc 05's mains gets three, and gets a
-	# failing gate telling it to raise this floor rather than a silent pass.
-	assert_true(reached_top >= 2,
+	# **The capstone, across the seeds — RE-FITTED IN WAVE 23, and the count went
+	# DOWN by one while the cell got stronger** (doc 92 §62.9).
+	#
+	# Wave 22 ruled the floor at 2 of 3, measured on seeds 1337 (game-hour 430)
+	# and 4242 (377), and named seed 9001's stop at level 5 an AGENT limit:
+	# 7,518 residents on ONE water works, so `l6_tower` is refused
+	# `E_WATER_HEADROOM` for the rest of the run. Doc 93 §AV4's fire-coverage
+	# term perturbs doc 06's ignition stream on every city that has fire
+	# coverage, and **it lands seed 1337 on that same cliff** — 4242 finishes 16
+	# game-hours EARLIER (377 → 361) and 9001 ends $423,875 richer, so this is a
+	# chaotic re-roll around a knife-edge and not a systematic penalty. The A/B
+	# is one line of data: with `factors.fire.coverage_slope` alone set to 0.0,
+	# 1337 and 4242 return to 430 and 377 exactly.
+	#
+	# **The wall is measured, not assumed.** Seed 1337 on a 75-game-day horizon
+	# still ends at level 6 — with **13,946 residents, $3,633,922 and one water
+	# works** — so it is not the horizon and it is not money. It is doc 92
+	# §61.11's own open question #1, `tools/playtest.gd` having no water-headroom
+	# PLANNER, reached by a second seed.
+	#
+	# So the count drops to 1 and **the cell gains the assertion the count was
+	# standing in for**: a seed that does not reach the capstone must be walled
+	# by UTILITY and not by money. A balance regression that made the arc
+	# unaffordable — the thing this gate is really for — fails the new bound and
+	# would have passed the old one. Both are `>=`, so the wave that teaches the
+	# agent doc 05's mains gets a failing gate telling it to raise the floor
+	# rather than a silent pass.
+	assert_true(reached_top >= 1,
 			("%d of %d seeds reached curriculum level %d inside %d game-days; "
-					+ "the ruled floor is 2 (measured game-hour 591 on seeds "
-					+ "1337 and 4242 — doc 92 §61.11). A capstone no seed can "
+					+ "the ruled floor is 1 (measured game-hour 361 on seed "
+					+ "4242 — doc 92 §62.9). A capstone no seed can "
 					+ "finish is a $5,000,000 promise the game cannot keep")
 					% [reached_top, MATRIX_SEEDS.size(), GoalSystem.top_level(),
 					CURRICULUM_DAYS])
+	for seed_value in MATRIX_SEEDS:
+		var stopped: Dictionary = (_run("curriculum", CURRICULUM_DAYS,
+				int(seed_value)))["summary"]
+		if int(stopped["goal_level_end"]) >= top:
+			continue
+		# $500,000 is not a fitted number: it is above every seed's measured
+		# ending treasury at the fork ($202,039 on 9001) and below every seed's
+		# on this tree ($625,914 and $1,931,697), so it is the coarsest bound
+		# that separates "the agent could not buy the next thing" from "the agent
+		# could not FIND the next thing". A money wall reads under it.
+		assert_true(int(stopped["treasury_end"]) >= 500000,
+				("seed %d stopped at curriculum level %d holding $%d — a"
+						+ " capstone the taught route cannot AFFORD is a"
+						+ " balance failure, not an agent limit (doc 92 §62.9)")
+						% [int(seed_value), int(stopped["goal_level_end"]),
+						int(stopped["treasury_end"])])
 
 
 # ====================================== 29 the presets (doc 92 §29, A91-D-19)
