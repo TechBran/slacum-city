@@ -13424,7 +13424,7 @@ supplying 129.2. The term is now what the pumps actually DELIVER
 one arithmetic and the advice line names a purchase that moves the number.
 
 **The four baselines do not move**, by the argument above and by measurement
-(§69.7). The arc DOES move — seed 1337 ends at 4,564 residents and $28,146,258
+(§69.8). The arc DOES move — seed 1337 ends at 4,564 residents and $28,146,258
 against the fork's 4,919 and $26,977,275 over 25 game-days — and that is a
 city with more water in it spending differently, not a re-fit.
 
@@ -13476,7 +13476,26 @@ ruled a lane of its own. Filed as the open question the next lane should take:
 **raise the ladder in the same wave that teaches the agent to lay a trunk main,
 and measure the two together.**
 
-### 69.7 The four baselines: UNCHANGED
+### 69.7 What the suite said
+
+`tools/run_suite.sh` on this branch: **158 files, 2,910 tests, 596,841 asserts,
+failed 0, silent 0.** (2,888 → 2,910 is this wave's twenty-two new tests, all in
+`tests/test_water_chain.gd`.) **No gate is re-fitted and no bound moves** — gate
+21's capstone cell, which §67.12 turned green, is still green with the water
+system supplying a third more on the arc it measures, and every gate whose
+assertion reads `sim.water` passes at its published bound.
+
+One existing test had to move, and it is the same shape as §67.12's:
+`test_build_controller.gd::test_no_real_checklist_row_falls_through_silently`
+validated a `FIX_COMPONENT` target by asking `PowerGrid.component(id)` alone,
+while `RequirementFormatter.FIX_COMPONENT`'s own docstring has read *"a doc 04
+grid component **or a doc 05 water component**"* since Wave 18 and
+`WorldLocator.locate_component` has asked both namespaces since then. Doc 12
+D-126 makes the `E_WATER_HEADROOM` row route to a water node, which that arm
+would have called unroutable — a row the router resolves perfectly well. It now
+asks the water system too, which is this test's own failure mode inverted.
+
+### 69.8 The four baselines: UNCHANGED
 
 | city | coarse 24 h | fine 2.0 h |
 |---|---|---|
