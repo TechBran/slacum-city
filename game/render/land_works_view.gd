@@ -60,15 +60,35 @@ extends Node3D
 ## is the same on every device and after every load, and the sim's state hash
 ## cannot move because this view exists (constitution §3).
 ##
-## Integration (`main.gd` owns the wiring — see report 98 §69 RR-211):
+## **WAVE 27 — AND NOW IT MOVES** (doc 11 §2.19, ruling doc 93 §BB). The
+## paragraph above used to end *"this layer animates nothing"*, and the player
+## said so: *"the construction crews, big bulldozers and things like that, need
+## to go to clear the land … we need to actually show MOVEMENT over there."*
+## This view now owns a `LandMotionView` child — machines that cross the block,
+## crews that walk beside them, and a paver-and-roller pass over a road the
+## player has laid.
+##
+## The motion layer is a CHILD rather than a sibling the shell wires, because the
+## two halves have to agree: **the brush that is gone is the brush the dozers
+## have driven over**, and **the base that is down is the base the paver has
+## passed**. `LandMotion` owns both rules as static functions and this view reads
+## them, so a machine can never float over its own strip. The three places that
+## used to turn a progress fraction straight into a count now go through it:
+## `_scatter_brush` (a clump stands while `sweep_of` is ahead of the dozers),
+## `_lay_pave` (a slab appears once `pave_state` says the screed has passed it)
+## and `_lay_trench` (the cut stops at the trencher, and the staged pipe is
+## consumed behind it).
+##
+## Integration (`main.gd` owns the wiring — see report 98 §69 RR-211, §71 RR-217):
 ##   view.setup(render_data)
 ##   view.set_preset(preset, render_data)
 ##   view.bind(sim.world, sim.development, sim.construction)
 ##   view.set_plant(construction_plant)      # optional; no plant without it
-##   view.adopt()                            # blocks already in flight at boot
+##   view.set_roads(sim.roads)               # optional; no road-crew pass without it
+##   view.adopt()                            # blocks and road jobs already in flight
 ##   view.feed_events(batch)                 # once per tick, with the drain
 ##   view.set_focus(camera_focus)            # optional distance gate
-##   view.refresh(delta)                     # every frame
+##   view.refresh(delta, night, gm_per_s, game_minutes)   # every frame
 
 ## Plant-site ids handed to `ConstructionVehicleView`, which is keyed on the
 ## BUILDING grid id space. Ids there come off a high-water mark starting at 1
@@ -99,7 +119,10 @@ const DEF_TILE_M := 8.0
 const DEF_BRUSH_PER_BLOCK := 40
 const DEF_SPOIL_PER_BLOCK := 6
 const DEF_STAKES := 8
-const DEF_PAVE_SEGMENTS := 6
+## Segments a template run is laid in. **`LandMotion` owns the number**, because
+## it is what turns the paver's position into a count of slabs; a second constant
+## here would be a second answer to the same question.
+const DEF_PAVE_SEGMENTS := LandMotion.PAVE_SEGMENTS
 const DEF_TRENCH_SEGMENTS := 8
 ## A pipe bundle beside every OTHER trench segment. Derived, not authored:
 ## a second constant for the stack count would only ever have to agree with
@@ -122,10 +145,12 @@ const PRESETS := {
 }
 
 const TILES_PER_BLOCK := 16
-## Doc 10's own template: the block boundary is AVENUE and local index 7 carries
-## the collector cross. Read from `RoadNetwork` rather than restated, so the
-## base this layer lays is exactly where the street lands two phases later.
-const COLLECTOR_INDEX := RoadNetwork.TEMPLATE_COLLECTOR_INDEX
+## Doc 10 job kinds this layer sends a road crew to. Only a BUILD: an upgrade
+## and a repair are also `&"road"` jobs with crew-hours and would draw perfectly
+## well, but the player's sentence was *"building roads"* and a lane that also
+## animated repairs would be shipping something nobody asked to see. Filed as
+## doc 11 §2.19's open q2.
+const RUN_JOB_KIND := "build"
 
 var tile_m := DEF_TILE_M
 var visible_radius := DEF_VISIBLE_RADIUS_M
@@ -147,11 +172,16 @@ var trench_color := Color("#241F1A").srgb_to_linear()
 var pipe_color := Color("#6E8A72").srgb_to_linear()
 var kerb_color := Color("#9AA0A6").srgb_to_linear()
 
+## Doc 11 §2.19's motion layer, owned rather than wired: see the class docs.
+var motion: LandMotionView = null
+
 var _world: WorldMap = null
 var _development: DevelopmentController = null
 var _construction: ConstructionQueue = null
 var _plant: ConstructionVehicleView = null
+var _roads: RoadNetwork = null
 var _sites: Dictionary = {}          # block_id -> Site
+var _runs: Dictionary = {}           # road job id -> true
 var _layers: Dictionary = {}         # key -> Layer
 var _focus := Vector3.ZERO
 var _has_focus := false
@@ -201,6 +231,9 @@ func setup(render_data: Dictionary = {}) -> void:
 	pipe_color = _col(cfg, "pipe_color", "#6E8A72")
 	kerb_color = _col(cfg, "kerb_color", "#9AA0A6")
 	_build_layers()
+	_ensure_motion()
+	motion.setup(render_data)
+	motion.set_spoil_slots(spoil_budget)
 	# Re-apply whatever preset is standing. `setup()` reads `data/render.json`'s
 	# authored counts, so a `setup()` AFTER a `set_preset()` — which is what a
 	# settings change followed by a re-configure looks like — would silently put
@@ -229,6 +262,15 @@ func set_plant(plant: ConstructionVehicleView) -> void:
 	_plant = plant
 
 
+## Doc 10's live network, read-only and optional. Without it a block still gets
+## its machines and its crews; what is lost is the **player-laid road run** —
+## `RoadNetwork.job_record` is where the tiles of an in-flight build live, and a
+## crew sent to a run whose tiles nobody knows would be a crew standing at the
+## origin.
+func set_roads(roads: RoadNetwork) -> void:
+	_roads = roads
+
+
 ## Preset swap from the settings sheet (doc 12 §2.13). Two knobs, and they are
 ## the two that scale with the block's AREA — the scatter counts. A block on
 ## `performance` still gets stakes, tape, a graded plane, base, a trench and
@@ -241,7 +283,19 @@ func set_preset(name: String, render_data: Dictionary = {}) -> void:
 	brush_budget = int(overrides.get("brush", row.get("brush", DEF_BRUSH_PER_BLOCK)))
 	spoil_budget = int(overrides.get("spoil", row.get("spoil", DEF_SPOIL_PER_BLOCK)))
 	max_blocks = int(overrides.get("blocks", row.get("blocks", DEF_MAX_BLOCKS)))
+	if motion != null:
+		motion.set_preset(name, render_data)
+		motion.set_spoil_slots(spoil_budget)
 	_dirty = true
+
+
+## Doc 11 §2.13's ladder, forwarded. The motion layer is the only half of this
+## pair with anything to give up — the dressing is fixed geometry — and the
+## order it gives it up in is published in doc 11 §2.19: crews first, the second
+## machine next, the machine doing the work never.
+func apply_governor(knobs: Dictionary) -> void:
+	if motion != null:
+		motion.apply_governor(knobs)
 
 
 ## Camera focus for the distance gate. Optional — with no focus pushed nothing
@@ -258,10 +312,19 @@ func feed_events(batch: Array) -> void:
 		if not (entry is Dictionary):
 			continue
 		var event: Dictionary = entry
+		var kind := StringName(String(event.get("type", "")))
+		if kind == &"road_build_started":
+			# Doc 10 does not stamp a road instantly: `CitySim.cmd_place_road`
+			# submits an ordinary `road_crew` job with crew-hours and the tiles
+			# sit at `under_construction_seed` under a `construction_new` closure
+			# until it finishes. So the crew pass is that job's own progress,
+			# drawn — not a decoration over an instant edit.
+			_enter_run(int(event.get("job_id", 0)))
+			continue
 		var block_id := String(event.get("block", event.get("block_id", "")))
 		if block_id == "":
 			continue
-		match StringName(String(event.get("type", ""))):
+		match kind:
 			&"development_phase_started":
 				_enter(block_id, StringName(String(event.get("phase", ""))))
 			&"development_phase_completed":
@@ -290,22 +353,35 @@ func feed_events(batch: Array) -> void:
 ## is the one moment it has no active set to walk instead; it runs once per
 ## bring-up and never per frame (doc 93 §AZ4).
 func adopt() -> void:
-	if _world == null:
+	if _world != null:
+		for block_id: String in _world.block_ids_sorted():
+			var block := _world.block(block_id)
+			if block == null or block.is_ready():
+				continue
+			if not PHASES.has(block.development_state):
+				continue
+			_enter(block_id, block.development_state)
+	# Road runs already under way. Same reason as the blocks above: a city
+	# resumed mid-build has no `road_build_started` left to hear.
+	if _construction == null:
 		return
-	for block_id: String in _world.block_ids_sorted():
-		var block := _world.block(block_id)
-		if block == null or block.is_ready():
+	for job: Dictionary in _construction.active_jobs():
+		if StringName(String(job.get("kind", ""))) != &"road":
 			continue
-		if not PHASES.has(block.development_state):
+		var payload: Dictionary = job.get("payload", {})
+		if String(payload.get("roads_kind", "")) != RUN_JOB_KIND:
 			continue
-		_enter(block_id, block.development_state)
+		_enter_run(int(job.get("job_id", 0)))
 
 
 func clear() -> void:
 	for block_id: String in _sites.keys():
 		_drop_plant(block_id)
 	_sites.clear()
+	_runs.clear()
 	_dirty = true
+	if motion != null:
+		motion.clear()
 	for key: String in _layers:
 		var layer: Layer = _layers[key]
 		layer.used = 0
@@ -315,15 +391,22 @@ func clear() -> void:
 			layer.node.visible = false
 
 
-## One rendered frame. `night` is doc 11's day/night scalar and is accepted for
-## symmetry with the other prop layers; nothing on this layer glows, so it is
-## currently unused and the parameter exists so the shell's call site does not
-## have to change when a work lamp arrives.
-func refresh(delta: float, _night: float = -1.0) -> void:
+## One rendered frame.
+##
+## `night` is doc 11's day/night scalar; nothing on the DRESSING glows, but the
+## motion layer's beacons and the crew's reflective bands read it. `gm_per_s` is
+## the sim speed — 0 while paused, which parks every machine exactly where it
+## stands — and `game_minutes` is the sim's own clock, which pins the layer to
+## the save so a load or a catch-up puts the machines where the save says. Both
+## default to "free-run", which is what a preview harness with no sim wants.
+func refresh(delta: float, night: float = -1.0, gm_per_s: float = -1.0,
+		game_minutes: float = -1.0) -> void:
 	_ensure_setup()
-	if _sites.is_empty():
+	if _sites.is_empty() and _runs.is_empty():
 		if _dirty:
 			_upload()
+		motion.set_gate(_focus, visible_radius if _has_focus else 0.0, max_blocks)
+		motion.refresh(delta, night, gm_per_s, game_minutes)
 		return
 	_poll_accum += delta
 	if _poll_accum >= POLL_INTERVAL_S:
@@ -331,6 +414,12 @@ func refresh(delta: float, _night: float = -1.0) -> void:
 		_poll()
 	if _dirty:
 		_upload()
+	# The motion layer runs EVERY frame, not on the 4 Hz poll: the poll is what
+	# re-reads the sim, and a machine that only moved four times a second would
+	# be the still this wave exists to close. Its own inputs — the phase, the
+	# progress and the clock — are pushed by `_poll` and by the shell.
+	motion.set_gate(_focus, visible_radius if _has_focus else 0.0, max_blocks)
+	motion.refresh(delta, night, gm_per_s, game_minutes)
 
 
 func site_count() -> int:
@@ -354,11 +443,24 @@ func active_buffers() -> int:
 	return n
 
 
-## Live instance census, for the tests and doc 11's table.
+## Draw calls the DRESSING and the MOTION cost together this frame — the number
+## doc 11 §2.19's combined table publishes, and the one a device budget is
+## measured against, because a player looking at a block being dug out is paying
+## for both halves at once.
+func total_buffers() -> int:
+	return active_buffers() + (0 if motion == null else motion.active_buffers())
+
+
+## Live instance census, for the tests and doc 11's table. The dressing's own
+## counts, plus `motion` as a nested census so §2.18's table and §2.19's stay
+## separately readable.
 func census() -> Dictionary:
-	var out := {"blocks": _sites.size(), "buffers": active_buffers()}
+	var out := {"blocks": _sites.size(), "buffers": active_buffers(),
+			"runs": _runs.size()}
 	for key: String in _layers:
 		out[key] = (_layers[key] as Layer).used
+	out["motion"] = {} if motion == null else motion.census()
+	out["total_buffers"] = total_buffers()
 	return out
 
 
@@ -371,6 +473,22 @@ static func plant_id_of(block_id: String) -> int:
 
 static func is_plant_id(id: int) -> bool:
 	return id >= PLANT_ID_BASE
+
+
+## **A HARNESS SEAM, and only that.** `tools/land_works_preview.gd`,
+## `tools/measure_land_motion.gd` and the budget tests all have to read a phase
+## at an EXACT progress — a real pipeline never sits still on 0.55, and a phase
+## photographed at whatever the clock happened to reach would be a picture of
+## the harness rather than of the phase. Nothing in a running game calls it:
+## `_poll` is the only writer of progress in a live city, and it is the reason
+## this is a named seam instead of three callers reaching into `_sites`.
+func force_progress(block_id: String, progress: float) -> void:
+	var site: Site = _sites.get(block_id)
+	if site == null:
+		return
+	site.progress = clampf(progress, 0.0, 1.0)
+	_sync_motion(site)
+	_dirty = true
 
 
 ## What one block is showing right now — phase, progress and whether its plant
@@ -405,6 +523,7 @@ func _enter(block_id: String, phase: StringName) -> void:
 	site.progress = 0.0
 	_dirty = true
 	_sync_plant(site)
+	_sync_motion(site)
 
 
 func _remove(block_id: String) -> void:
@@ -412,7 +531,56 @@ func _remove(block_id: String) -> void:
 		return
 	_drop_plant(block_id)
 	_sites.erase(block_id)
+	if motion != null:
+		motion.motion.drop_site(block_id)
 	_dirty = true
+
+
+## A player-laid road run enters the layer. The tiles come from doc 10's own
+## DURABLE record (`job_record`) rather than from the queue payload, because
+## `_serialize_jobs` writes those as `[x, y]` pairs and a payload copy survives a
+## save as the text `"(3, 4)"` (report 98 A91-D-47). The payload is the fallback
+## for a caller with no road network wired.
+func _enter_run(job_id: int) -> void:
+	if job_id <= 0 or motion == null or _construction == null:
+		return
+	if _construction.job(job_id).is_empty():
+		return
+	var tiles: Array = []
+	if _roads != null:
+		var record := _roads.job_record(job_id)
+		if String(record.get("kind", "")) == RUN_JOB_KIND:
+			tiles = record.get("tiles", [])
+	if tiles.is_empty():
+		var payload: Dictionary = _construction.job(job_id).get("payload", {})
+		if String(payload.get("roads_kind", "")) == RUN_JOB_KIND:
+			tiles = payload.get("tiles", [])
+	if tiles.is_empty():
+		return
+	_runs[job_id] = true
+	motion.motion.set_run(job_id, tiles, _construction.progress(job_id))
+
+
+## Phase, progress and the frontage frame, pushed into the motion model. Called
+## on every membership change and on every poll — the model holds no clock of its
+## own, so this is the whole of what it is told.
+func _sync_motion(site: Site) -> void:
+	if motion == null:
+		return
+	var index := PHASES.find(site.phase)
+	if index < 0:
+		motion.motion.drop_site(site.block_id)
+		return
+	motion.motion.set_site(site.block_id, site.centre, index, site.progress)
+	# The ARRIVAL is drawn on doc 11 §2.16's own street-true route to this
+	# block's frontage. Held as a reference rather than copied: the plant layer
+	# resolves routes two a frame and re-resolves them after a road edit, and a
+	# copy taken at registration would be the route the city had before the
+	# player laid a street.
+	var plant_site: ConstructionActivity.Site = null
+	if _plant != null and site.plant_added:
+		plant_site = _plant.activity.sites.get(plant_id_of(site.block_id))
+	motion.motion.set_site_plant(site.block_id, plant_site)
 
 
 ## Progress for the blocks THIS VIEW already knows about, and nothing else — the
@@ -422,6 +590,7 @@ func _remove(block_id: String) -> void:
 func _poll() -> void:
 	if _development == null or _construction == null:
 		return
+	_poll_runs()
 	for block_id: String in _sites.keys():
 		var site: Site = _sites[block_id]
 		var live := _development.active_view(block_id)
@@ -451,6 +620,25 @@ func _poll() -> void:
 		if absf(p - site.progress) > 0.004:
 			site.progress = p
 			_dirty = true
+		# The motion model is told on EVERY poll, dirty or not: the dressing
+		# only re-uploads when a count moved, but a machine's position is
+		# continuous in progress and a 0.004 threshold on it would be a stutter.
+		_sync_motion(site)
+
+
+## Road runs, polled on the same 4 Hz cadence and for the same reason: a job's
+## progress is on no event. A job that has left the queue — finished, cancelled
+## or rejected — is dropped here rather than on `road_built`, because that one
+## event covers a repair too and a cancel emits nothing at all.
+func _poll_runs() -> void:
+	if motion == null:
+		return
+	for job_id: int in _runs.keys():
+		if _construction.job(job_id).is_empty():
+			motion.motion.drop_run(job_id)
+			_runs.erase(job_id)
+			continue
+		motion.motion.set_run(job_id, [], _construction.progress(job_id))
 
 
 # ------------------------------------------------------------------ plant
@@ -503,6 +691,17 @@ func _drop_plant(block_id: String) -> void:
 func _ensure_setup() -> void:
 	if not _configured:
 		setup({})
+
+
+## The motion layer is a CHILD of this one — see the class docs for why. Built
+## on the first `setup()` so a view that is never configured still has one, and
+## never twice.
+func _ensure_motion() -> void:
+	if motion != null:
+		return
+	motion = LandMotionView.new()
+	motion.name = "LandMotion"
+	add_child(motion)
 
 
 func _build_layers() -> void:
@@ -581,41 +780,62 @@ func _upload() -> void:
 
 
 ## Everything one block shows at its current phase and progress.
+##
+## **The three things a MACHINE lays or removes are measured with
+## `LandMotion.pass_progress`, and nothing else is.** That function pays for the
+## arrival out of the phase — the first `ARRIVE_FRAC` is the plant driving up the
+## street and turning onto the lot — so the brush cannot start disappearing
+## before the dozers have reached it and the base cannot appear before the paver
+## has arrived. The graded plane and the spoil heaps keep the raw progress:
+## they are the STATE OF THE GROUND, not something a machine is dragging behind
+## it, and holding them back would leave a block that had visibly started
+## looking untouched.
 func _dress(site: Site) -> void:
 	var index := PHASES.find(site.phase)
 	if index < 0:
 		return
 	var half := float(TILES_PER_BLOCK) * tile_m * 0.5
+	var raw := clampf(site.progress, 0.0, 1.0)
+	var pass_q := LandMotion.pass_progress(raw)
 	# SURVEY and CLEARING: the lot is pegged out.
 	if index <= 1:
 		_lay_stakes(site, half)
-	# Brush stands until CLEARING takes it, and CLEARING takes it as it runs.
+	# Brush stands until CLEARING takes it, and CLEARING takes it **where the
+	# dozers have been** — see `_scatter_brush`. −1 on SURVEY is "not even the
+	# first clump", because nothing has been cleared at all.
 	if index <= 1:
-		var keep := 1.0 if index == 0 else (1.0 - clampf(site.progress, 0.0, 1.0))
-		_scatter_brush(site, half, keep)
+		_scatter_brush(site, half, -1.0 if index == 0 else pass_q)
 	# The graded plane appears with GRADING and stays until the block is ground.
 	if index >= 2:
-		_lay_graded(site, half, 1.0 if index > 2 else clampf(site.progress, 0.0, 1.0))
+		_lay_graded(site, half, 1.0 if index > 2 else raw)
 	# Spoil: raised by the cut, still there through the trench, gone in the tidy.
 	if index == 2:
-		_heap_spoil(site, half, clampf(site.progress, 0.0, 1.0))
+		_heap_spoil(site, half, raw)
 	elif index == 3:
 		_heap_spoil(site, half, 1.0)
 	elif index == 4:
-		_heap_spoil(site, half, 1.0 - 0.5 * clampf(site.progress, 0.0, 1.0))
+		_heap_spoil(site, half, 1.0 - 0.5 * raw)
 	elif index == 5:
-		_heap_spoil(site, half, 1.0 - clampf(site.progress, 0.0, 1.0))
-	# Base and blacktop, laid along doc 10's own template.
-	if index == 3:
-		_lay_pave(site, half, clampf(site.progress, 0.0, 1.0), false)
-	elif index > 3:
-		_lay_pave(site, half, 1.0, false)
-	# The trench, open down the collector line to the block centre.
+		_heap_spoil(site, half, 1.0 - raw)
+	# Base and blacktop, laid along doc 10's own template — segment by segment
+	# BEHIND the paver, which is what `pave_state` returns from the same walk
+	# that places the machine.
+	if index >= 3:
+		var runs := _template_runs(site, half)
+		var legs := LandMotion.legs_of(runs)
+		var total := LandMotion.legs_total(legs)
+		if index == 3:
+			_lay_pave(site, runs, int(LandMotion.pave_state(legs, total,
+					DEF_PAVE_SEGMENTS, pass_q)["laid"]), false)
+		else:
+			_lay_pave(site, runs, runs.size() * DEF_PAVE_SEGMENTS, false)
+		# Kerbs go in last, and they are the only thing FINAL_DEVELOPMENT adds.
+		if index == 5:
+			_lay_pave(site, runs, int(LandMotion.pave_state(legs, total,
+					DEF_PAVE_SEGMENTS, pass_q)["laid"]), true)
+	# The trench, cut down the collector line toward the block centre.
 	if index == 4:
-		_lay_trench(site, half, clampf(site.progress, 0.0, 1.0))
-	# Kerbs go in last, and they are the only thing FINAL_DEVELOPMENT adds.
-	if index == 5:
-		_lay_pave(site, half, clampf(site.progress, 0.0, 1.0), true)
+		_lay_trench(site, half, pass_q)
 
 
 func _lay_stakes(site: Site, half: float) -> void:
@@ -636,12 +856,22 @@ func _lay_stakes(site: Site, half: float) -> void:
 				stake_color)
 
 
-func _scatter_brush(site: Site, half: float, keep: float) -> void:
-	var total := maxi(0, brush_budget)
-	var live := int(round(float(total) * clampf(keep, 0.0, 1.0)))
-	for i in live:
-		var x := lerpf(-half + 5.0, half - 5.0, _hash01(site.salt, 101 + i * 7))
-		var z := lerpf(-half + 5.0, half - 5.0, _hash01(site.salt, 211 + i * 13))
+## **CONSUMED BY POSITION, NOT BY FRACTION** (doc 11 §2.19, ruling doc 93 §BB1).
+##
+## Wave 25 kept the first `budget × (1 − progress)` clumps by INDEX, which meant
+## the scrub left the block in hash order: a field that thinned evenly all over
+## while two dozers were, by then, plainly working one corner. A clump now stands
+## exactly while `LandMotion.sweep_of` — its place in the two dozers' serpentine
+## — is still ahead of them.
+##
+## The count that falls out is therefore not a straight line in progress and is
+## not meant to be. It is the count of clumps the machines have not reached, and
+## doc 11 §2.19's table publishes what that comes to.
+func _scatter_brush(site: Site, half: float, cleared: float) -> void:
+	for i in maxi(0, brush_budget):
+		var local := LandMotion.brush_local(site.salt, i, half)
+		if LandMotion.sweep_of(local, half) <= cleared:
+			continue
 		# 2.6–5.4 m: scrub and the odd small tree, at the scale a 128 m block
 		# has to be read at. Below about two metres a clump is a speck and
 		# CLEARING looks like nothing happening.
@@ -653,7 +883,8 @@ func _scatter_brush(site: Site, half: float, keep: float) -> void:
 		# multiplies the tint, so an even lerp between scrub and stump renders a
 		# field of brown lumps. At 0.45 the stumps are the minority they are.
 		var tint := brush_color.lerp(stump_color, _hash01(site.salt, 509 + i) * 0.45)
-		_push("brush", Transform3D(basis, site.centre + Vector3(x, 0.0, z)), tint)
+		_push("brush", Transform3D(basis,
+				site.centre + Vector3(local.x, 0.0, local.y)), tint)
 
 
 func _lay_graded(site: Site, half: float, fill: float) -> void:
@@ -668,8 +899,11 @@ func _lay_graded(site: Site, half: float, fill: float) -> void:
 func _heap_spoil(site: Site, half: float, amount: float) -> void:
 	var live := int(round(float(maxi(0, spoil_budget)) * clampf(amount, 0.0, 1.0)))
 	for i in live:
-		var x := lerpf(-half + 12.0, half - 12.0, _hash01(site.salt, 601 + i * 11))
-		var z := lerpf(-half + 12.0, half - 12.0, _hash01(site.salt, 701 + i * 17))
+		# `LandMotion` owns where a heap goes, because the GRADING excavator
+		# stands at the one it is currently building.
+		var local := LandMotion.spoil_local(site.salt, i, half)
+		var x := local.x
+		var z := local.y
 		var s := lerpf(3.2, 6.4, _hash01(site.salt, 809 + i))
 		var basis := Basis.from_euler(Vector3(0.0, _hash01(site.salt, 907 + i) * TAU, 0.0)) \
 				.scaled_local(Vector3(s, s * 0.42, s))
@@ -679,11 +913,13 @@ func _heap_spoil(site: Site, half: float, amount: float) -> void:
 ## The base course, laid along the SIX runs doc 10's template will stamp — four
 ## boundary avenues and the two collector lines at local index 7. `kerb` draws
 ## the same runs as a thin edge instead, which is what FINAL_DEVELOPMENT adds.
-func _lay_pave(site: Site, half: float, fill: float, kerb: bool) -> void:
-	var runs := _template_runs(site, half)
+##
+## **`laid` is a COUNT and it comes from the machine** (`LandMotion.pave_state`),
+## not from a fraction re-derived here. That is the whole of why the strip is
+## behind the paver rather than near it — including the joins, where the machine
+## is repositioning from one run to the next and the count does not move at all.
+func _lay_pave(site: Site, runs: Array[Dictionary], laid: int, kerb: bool) -> void:
 	var segments := maxi(1, DEF_PAVE_SEGMENTS)
-	var total := runs.size() * segments
-	var laid := int(round(float(total) * clampf(fill, 0.0, 1.0)))
 	var made := 0
 	for run: Dictionary in runs:
 		var a: Vector3 = run["a"]
@@ -721,10 +957,11 @@ func _lay_pave(site: Site, half: float, fill: float, kerb: bool) -> void:
 ## story and a second draw call for six boxes would be a bad trade.
 func _lay_trench(site: Site, half: float, fill: float) -> void:
 	var segments := maxi(1, DEF_TRENCH_SEGMENTS)
-	var dug := int(round(float(segments) * clampf(fill, 0.0, 1.0)))
-	var start := site.centre + Vector3(-half + 1.0, 0.0, _collector_offset())
-	var end := site.centre + Vector3(0.0, 0.0, _collector_offset())
-	for seg in dug:
+	var dug := LandMotion.trench_dug(segments, fill)
+	var line := LandMotion.trench_line(site.centre, half, tile_m)
+	var start: Vector3 = line[0]
+	var end: Vector3 = line[1]
+	for seg in segments:
 		var t0 := float(seg) / float(segments)
 		var t1 := float(seg + 1) / float(segments)
 		var p0 := start.lerp(end, t0)
@@ -732,9 +969,18 @@ func _lay_trench(site: Site, half: float, fill: float) -> void:
 		var mid := (p0 + p1) * 0.5
 		var length := (p1 - p0).length()
 		mid.y = 0.0
-		_push("trench", Transform3D(Basis.IDENTITY.scaled_local(
-				Vector3(length, 1.0, 2.2)), mid), trench_color)
-		if seg % TRENCH_PIPE_EVERY == 0:
+		# The cut, open only where the trencher has been.
+		if seg < dug:
+			_push("trench", Transform3D(Basis.IDENTITY.scaled_local(
+					Vector3(length, 1.0, 2.2)), mid), trench_color)
+		# **The pipe is STAGED and then CONSUMED.** Wave 25 drew a bundle beside
+		# every other DUG segment, so the pipe appeared with the trench — which
+		# reads as pipe being conjured out of the hole. The whole run is stacked
+		# along the line from the moment the phase starts, and a bundle goes as
+		# the machine reaches it: it went in the ground. Monotone DOWN in
+		# progress, which is the opposite direction from the cut and is what
+		# `tests/test_land_motion.gd` pins.
+		elif seg % TRENCH_PIPE_EVERY == 0:
 			var side := mid + Vector3(0.0, 0.0, 2.8)
 			side.y = 0.0
 			_push("trench", Transform3D(Basis.IDENTITY
@@ -743,33 +989,10 @@ func _lay_trench(site: Site, half: float, fill: float) -> void:
 
 ## The six runs of doc 10's block template, in world space: four boundary
 ## avenues (2 tiles wide at the block edge) and the two collector lines.
+## **`LandMotion` owns the geometry** — the paver's pass and the base it lays
+## have to be the same six lines or the machine floats over its own strip.
 func _template_runs(site: Site, half: float) -> Array[Dictionary]:
-	var c := site.centre
-	var edge := half - tile_m * 0.5
-	var collector := _collector_offset()
-	var avenue_w := tile_m
-	var street_w := tile_m * 0.75
-	var out: Array[Dictionary] = []
-	out.append({"a": c + Vector3(-edge, 0.0, -edge), "b": c + Vector3(edge, 0.0, -edge),
-			"w": avenue_w})
-	out.append({"a": c + Vector3(edge, 0.0, -edge), "b": c + Vector3(edge, 0.0, edge),
-			"w": avenue_w})
-	out.append({"a": c + Vector3(edge, 0.0, edge), "b": c + Vector3(-edge, 0.0, edge),
-			"w": avenue_w})
-	out.append({"a": c + Vector3(-edge, 0.0, edge), "b": c + Vector3(-edge, 0.0, -edge),
-			"w": avenue_w})
-	out.append({"a": c + Vector3(-edge, 0.0, collector), "b": c + Vector3(edge, 0.0, collector),
-			"w": street_w})
-	out.append({"a": c + Vector3(collector, 0.0, -edge), "b": c + Vector3(collector, 0.0, edge),
-			"w": street_w})
-	return out
-
-
-## Metres from the block centre to the collector line. `TEMPLATE_COLLECTOR_INDEX`
-## is a LOCAL tile index (7 of 0..15), so the offset is measured from the
-## block's own middle rather than restated as a number.
-func _collector_offset() -> float:
-	return (float(COLLECTOR_INDEX) + 0.5 - float(TILES_PER_BLOCK) * 0.5) * tile_m
+	return LandMotion.template_runs(site.centre, half, tile_m)
 
 
 func _block_centre(grid: Vector2i) -> Vector3:

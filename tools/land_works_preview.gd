@@ -16,12 +16,32 @@ extends SceneTree
 ## `data/render.json` for everything, and nothing in `sim/`, `game/` or `ui/`
 ## imports it.
 ##
+## **WAVE 27 — THREE FRAMES, NOT ONE** (doc 11 §2.19). The player's whole point
+## was that this layer read as a still, so one photograph per phase can no longer
+## settle it. Every phase is now shot at THREE game-minutes from **the same
+## camera** — `t`, `t + 15` and `t + 45` by default — and the work advances with
+## the clock, exactly as it does in the running game: the first frame keeps
+## Wave 25's filename (`<phase>.png`) and the other two are `<phase>_t15.png`
+## and `<phase>_t45.png`. Put them side by side and the dozer is in a different
+## strip, the brush behind it is gone, the paver has moved on and the strip
+## behind it is longer. A verifier who cannot see motion in three stills should
+## fail this lane, and these are the three stills.
+##
+## `--phase-gm` is the one HARNESS convention in the file. Doc 09 §2.3 prices a
+## phase in crew-hours against the queue's crewing, so there is no single "a
+## phase takes M minutes" to read out of the sim; 300 game-minutes is five game
+## hours, the order of a real one, and it is used for nothing except deciding how
+## far the WORK advances between the three frames.
+##
 ## Usage (needs a display — this renders):
 ##   ~/.local/bin/godot --path "/home/bbx/Slacum City game" \
 ##       -s res://tools/land_works_preview.gd -- --out=DIR [options]
 ##
-##   --out=DIR          where the PNGs go (one per phase, `<phase>.png`)
+##   --out=DIR          where the PNGs go (`<phase>.png`, `<phase>_t15.png`, …)
 ##   --phases=1,3,5     which phases, 1-based in doc 09 §2.3 order (default all)
+##   --frames=0,15,45   game-minute offsets photographed        (default 0,15,45)
+##   --phase-gm=M       game-minutes a whole phase takes, for the
+##                      progress advance between frames           (default 300)
 ##   --progress=P       how far into each phase, 0..1              (default 0.55)
 ##   --hour=H           hour of day, 0..24                         (default 13)
 ##   --gm=M             game-minute the plant layer is wound to    (default auto)
@@ -89,14 +109,18 @@ func _process(delta: float) -> bool:
 			"block": _block_id, "phase": phase}])
 	# The harness sets progress directly: a real pipeline never sits still on
 	# 0.55, and a phase photographed at whatever the clock happened to reach
-	# would be a picture of the harness rather than of the phase.
-	_works._sites[_block_id].progress = float(_opts["progress"])
-	_works._dirty = true
+	# would be a picture of the harness rather than of the phase. The OFFSET is
+	# what makes the three frames a proof rather than three copies — the clock
+	# and the work advance together, which is what they do in the game.
+	_works.force_progress(_block_id, float(shot["progress"]))
 	_plant.set_game_minutes(float(shot["gm"]))
+	_works.motion.set_game_minutes(float(shot["gm"]))
 	var hour := float(_opts["hour"])
 	_env.apply(hour, delta)
 	_works.set_focus(_centre)
-	_works.refresh(delta, _env.last_night)
+	# `gm_per_s = 0` and an explicit clock: the layer is PINNED to the game-minute
+	# this frame is of, so eight settle frames of real time cannot drift it.
+	_works.refresh(delta, _env.last_night, 0.0, float(shot["gm"]))
 	_plant.set_focus(_centre)
 	_plant.refresh(delta, _env.last_night, 0.0)
 	_settle += 1
@@ -105,13 +129,20 @@ func _process(delta: float) -> bool:
 	_settle = 0
 	if bool(_opts["census"]):
 		var census := _works.census()
-		var keys: Array = census.keys()
-		keys.sort()
+		var motion: Dictionary = census["motion"]
 		var parts: Array[String] = []
-		for key: String in keys:
+		for key: String in ["stake", "brush", "graded", "spoil", "pave", "trench"]:
 			parts.append("%s %d" % [key, int(census[key])])
-		print("%-18s calls %d  %s" % [phase, _works.active_buffers(),
-				", ".join(PackedStringArray(parts))])
+		var machines: Array[String] = []
+		for key: String in ["dozer", "excavator", "tipper", "paver", "roller",
+				"crew", "barrier"]:
+			if int(motion.get(key, 0)) > 0:
+				machines.append("%s %d" % [key, int(motion[key])])
+		print("%-18s t+%-3d calls %d (%d dress + %d motion)  %s | %s"
+				% [phase, int(shot["offset"]), int(census["total_buffers"]),
+				_works.active_buffers(), _works.motion.active_buffers(),
+				", ".join(PackedStringArray(parts)),
+				", ".join(PackedStringArray(machines))])
 	var image := root.get_texture().get_image()
 	if image != null:
 		image.save_png(String(shot["path"]))
@@ -127,6 +158,8 @@ func _plan() -> void:
 			LandWorksView.plant_id_of(_block_id))
 	var period := site.period_gm if site != null else 46.0
 	var leg := _plant.activity.leg_gm(site) if site != null else 8.0
+	var phase_gm := float(_opts["phase_gm"])
+	var base := float(_opts["progress"])
 	for index in (_opts["phases"] as Array):
 		var i := int(index)
 		if i < 0 or i >= PHASES.size():
@@ -137,8 +170,17 @@ func _plan() -> void:
 			# for is in frame rather than an empty street.
 			gm = site.offset_gm + period * (5.0 * float(i + 1)) + leg \
 					+ _plant.activity.dump_gm * 0.45 if site != null else 0.0
-		_shots.append({"phase": PHASES[i], "gm": gm,
-				"path": dir.path_join("%s.png" % String(PHASES[i]).to_lower())})
+		var name := String(PHASES[i]).to_lower()
+		for offset: float in (_opts["frames"] as Array):
+			# The first frame keeps Wave 25's filename, so the comparison a
+			# reviewer already knows how to make still works; the others carry
+			# the offset they were taken at.
+			var file := "%s.png" % name if is_zero_approx(offset) \
+					else "%s_t%d.png" % [name, int(offset)]
+			_shots.append({"phase": PHASES[i], "gm": gm + offset,
+					"offset": offset,
+					"progress": clampf(base + offset / maxf(phase_gm, 1.0), 0.0, 1.0),
+					"path": dir.path_join(file)})
 
 
 func _build() -> void:
@@ -180,9 +222,24 @@ func _build() -> void:
 	_works = LandWorksView.new()
 	stage_root.add_child(_works)
 	_works.setup(_render_data)
-	_works.bind(_sim.world, _sim.development, _sim.construction)
+	# **THE PIPELINE IS DELIBERATELY NOT BOUND**, and it is a fix rather than a
+	# shortcut. `LandWorksView._poll` re-reads `DevelopmentController.active_view`
+	# every `POLL_INTERVAL_S` and is the ONLY writer of a block's phase and
+	# progress in a running city — which is correct there and fatal here, because
+	# this harness is the writer instead. With the controller bound, the poll
+	# fired every fifteenth frame, found a block the pipeline had not started a
+	# job for yet, and put the site back to whatever the SIM said: the six
+	# per-phase shots Wave 25 published were, intermittently, six photographs of
+	# SURVEY. (Caught by diffing `survey.png` against `clearing.png` — two pixels
+	# apart out of 921,600.) `_world` is still bound, because `_enter` needs it
+	# to resolve a block id to a grid square.
+	_works.bind(_sim.world, null, null)
 	_works.set_plant(_plant)
-	for _step in 8:
+	# Doc 11 §2.19's road-crew pass needs doc 10's live network to find the tiles
+	# of an in-flight build. This harness lays no road, but wiring it here is what
+	# keeps the preview the same stack `main.gd` builds.
+	_works.set_roads(_sim.roads)
+	for _step in 16:
 		_plant.refresh(0.0, 0.0, 0.0)
 
 	_camera = Camera3D.new()
@@ -249,6 +306,7 @@ func _parse(args: PackedStringArray) -> Dictionary:
 	var out := {"out": "", "progress": 0.55, "hour": 13.0, "gm": -1.0,
 			"resolution": Vector2i(1600, 900), "dist": 150.0, "height": 88.0,
 			"swing": 30.0, "census": false,
+			"frames": [0.0, 15.0, 45.0] as Array, "phase_gm": 300.0,
 			"phases": [0, 1, 2, 3, 4, 5]}
 	for raw: Variant in args:
 		var arg := String(raw)
@@ -268,6 +326,13 @@ func _parse(args: PackedStringArray) -> Dictionary:
 			out["swing"] = float(arg.substr(8))
 		elif arg == "--census":
 			out["census"] = true
+		elif arg.begins_with("--frames="):
+			var offs: Array = []
+			for part in arg.substr(9).split(",", false):
+				offs.append(float(part))
+			out["frames"] = offs
+		elif arg.begins_with("--phase-gm="):
+			out["phase_gm"] = maxf(1.0, float(arg.substr(11)))
 		elif arg.begins_with("--phases="):
 			var picked: Array = []
 			for part in arg.substr(9).split(",", false):

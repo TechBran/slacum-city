@@ -633,42 +633,13 @@ func _build_layers(cfg: Dictionary) -> void:
 
 	var excavator := ConstructionRigMesh.excavator()
 	excavator.uv_tile_m = tile
-	var exc_mat := _rig_material(shader, steel_page, stock_page, cfg)
-	exc_mat.set_shader_parameter("rig_mode", 0.0)
-	exc_mat.set_shader_parameter("joint_axis", _v4(ConstructionRigMesh.EXC_AXES))
-	exc_mat.set_shader_parameter("joint_min", Vector4(
-			ConstructionRigMesh.EXC_SLEW_RANGE.x, ConstructionRigMesh.EXC_BOOM_RANGE.x,
-			ConstructionRigMesh.EXC_ARM_RANGE.x, ConstructionRigMesh.EXC_BUCKET_RANGE.x))
-	exc_mat.set_shader_parameter("joint_range", Vector4(
-			ConstructionRigMesh.EXC_SLEW_RANGE.y - ConstructionRigMesh.EXC_SLEW_RANGE.x,
-			ConstructionRigMesh.EXC_BOOM_RANGE.y - ConstructionRigMesh.EXC_BOOM_RANGE.x,
-			ConstructionRigMesh.EXC_ARM_RANGE.y - ConstructionRigMesh.EXC_ARM_RANGE.x,
-			ConstructionRigMesh.EXC_BUCKET_RANGE.y - ConstructionRigMesh.EXC_BUCKET_RANGE.x))
-	exc_mat.set_shader_parameter("pivot_1",
-			Vector3(0.0, ConstructionRigMesh.EXC_SLEW_Y, 0.0))
-	exc_mat.set_shader_parameter("pivot_2", ConstructionRigMesh.EXC_BOOM_PIVOT)
-	exc_mat.set_shader_parameter("pivot_3", ConstructionRigMesh.EXC_ARM_PIVOT)
-	exc_mat.set_shader_parameter("pivot_4", ConstructionRigMesh.EXC_BUCKET_PIVOT)
-	exc_mat.set_shader_parameter("load_joint", -1.0)
-	_add_layer("excavator", excavator, exc_mat, 16.0)
+	_add_layer("excavator", excavator,
+			excavator_material(shader, steel_page, stock_page, cfg), 16.0)
 
 	var tipper := ConstructionRigMesh.dump_truck()
 	tipper.uv_tile_m = tile
-	var tip_mat := _rig_material(shader, steel_page, stock_page, cfg)
-	tip_mat.set_shader_parameter("rig_mode", 1.0)
-	tip_mat.set_shader_parameter("joint_axis", _v4(ConstructionRigMesh.TIP_AXES))
-	tip_mat.set_shader_parameter("joint_min",
-			Vector4(ConstructionRigMesh.TIP_RANGE.x, 0.0, 0.0, 0.0))
-	tip_mat.set_shader_parameter("joint_range", Vector4(
-			ConstructionRigMesh.TIP_RANGE.y - ConstructionRigMesh.TIP_RANGE.x,
-			0.0, 0.0, 0.0))
-	tip_mat.set_shader_parameter("pivot_1", ConstructionRigMesh.TIP_HINGE)
-	tip_mat.set_shader_parameter("pivot_2", Vector3.ZERO)
-	tip_mat.set_shader_parameter("pivot_3", Vector3.ZERO)
-	tip_mat.set_shader_parameter("pivot_4", Vector3.ZERO)
-	tip_mat.set_shader_parameter("load_joint", ConstructionRigMesh.JOINT_2)
-	tip_mat.set_shader_parameter("load_floor_y", ConstructionRigMesh.TIP_LOAD_FLOOR_Y)
-	_add_layer("tipper", tipper, tip_mat, 16.0)
+	_add_layer("tipper", tipper,
+			tipper_material(shader, steel_page, stock_page, cfg), 16.0)
 
 	# The yard props read no joint and need no shader: `PropSurface` is the same
 	# material the hoarding and the crane already stand in.
@@ -684,8 +655,15 @@ func _build_layers(cfg: Dictionary) -> void:
 	set_preset(preset)
 
 
-func _rig_material(shader: Shader, steel_page: Texture2D, stock_page: Texture2D,
-		cfg: Dictionary) -> ShaderMaterial:
+## **The plant material recipe, and the one place it is written.** Public and
+## static since Wave 27 (doc 11 §2.19): `LandMotionView` puts its own excavator
+## and its own tipper on the block rather than at the frontage, and a second copy
+## of the pages, the beacon rate and the lamp energy would be a second machine
+## that only looked like this one. It takes the pages as arguments rather than
+## fetching them so a caller that has already resolved `PropSurface` does not
+## resolve it twice.
+static func rig_material(shader: Shader, steel_page: Texture2D,
+		stock_page: Texture2D, cfg: Dictionary) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	if steel_page != null and stock_page != null:
@@ -699,6 +677,53 @@ func _rig_material(shader: Shader, steel_page: Texture2D, stock_page: Texture2D,
 	mat.set_shader_parameter("beacon_hz", _num(cfg, "beacon_hz", 1.35))
 	mat.set_shader_parameter("beacon_energy", _num(cfg, "beacon_energy", 3.2))
 	mat.set_shader_parameter("lamp_energy", _num(cfg, "lamp_energy", 2.2))
+	return mat
+
+
+## The excavator's chain: four live joints, the envelopes `ConstructionRigMesh`
+## publishes and `ConstructionActivity.dig_pose` normalises against. Written
+## once here so a bucket means the same thing on a building site and on a land
+## block.
+static func excavator_material(shader: Shader, steel_page: Texture2D,
+		stock_page: Texture2D, cfg: Dictionary) -> ShaderMaterial:
+	var mat := rig_material(shader, steel_page, stock_page, cfg)
+	mat.set_shader_parameter("rig_mode", 0.0)
+	mat.set_shader_parameter("joint_axis", _v4(ConstructionRigMesh.EXC_AXES))
+	mat.set_shader_parameter("joint_min", Vector4(
+			ConstructionRigMesh.EXC_SLEW_RANGE.x, ConstructionRigMesh.EXC_BOOM_RANGE.x,
+			ConstructionRigMesh.EXC_ARM_RANGE.x, ConstructionRigMesh.EXC_BUCKET_RANGE.x))
+	mat.set_shader_parameter("joint_range", Vector4(
+			ConstructionRigMesh.EXC_SLEW_RANGE.y - ConstructionRigMesh.EXC_SLEW_RANGE.x,
+			ConstructionRigMesh.EXC_BOOM_RANGE.y - ConstructionRigMesh.EXC_BOOM_RANGE.x,
+			ConstructionRigMesh.EXC_ARM_RANGE.y - ConstructionRigMesh.EXC_ARM_RANGE.x,
+			ConstructionRigMesh.EXC_BUCKET_RANGE.y - ConstructionRigMesh.EXC_BUCKET_RANGE.x))
+	mat.set_shader_parameter("pivot_1",
+			Vector3(0.0, ConstructionRigMesh.EXC_SLEW_Y, 0.0))
+	mat.set_shader_parameter("pivot_2", ConstructionRigMesh.EXC_BOOM_PIVOT)
+	mat.set_shader_parameter("pivot_3", ConstructionRigMesh.EXC_ARM_PIVOT)
+	mat.set_shader_parameter("pivot_4", ConstructionRigMesh.EXC_BUCKET_PIVOT)
+	mat.set_shader_parameter("load_joint", -1.0)
+	return mat
+
+
+## The tipper: one hinge, plus the load carrier the shader squashes to the bed
+## floor as the fill drops.
+static func tipper_material(shader: Shader, steel_page: Texture2D,
+		stock_page: Texture2D, cfg: Dictionary) -> ShaderMaterial:
+	var mat := rig_material(shader, steel_page, stock_page, cfg)
+	mat.set_shader_parameter("rig_mode", 1.0)
+	mat.set_shader_parameter("joint_axis", _v4(ConstructionRigMesh.TIP_AXES))
+	mat.set_shader_parameter("joint_min",
+			Vector4(ConstructionRigMesh.TIP_RANGE.x, 0.0, 0.0, 0.0))
+	mat.set_shader_parameter("joint_range", Vector4(
+			ConstructionRigMesh.TIP_RANGE.y - ConstructionRigMesh.TIP_RANGE.x,
+			0.0, 0.0, 0.0))
+	mat.set_shader_parameter("pivot_1", ConstructionRigMesh.TIP_HINGE)
+	mat.set_shader_parameter("pivot_2", Vector3.ZERO)
+	mat.set_shader_parameter("pivot_3", Vector3.ZERO)
+	mat.set_shader_parameter("pivot_4", Vector3.ZERO)
+	mat.set_shader_parameter("load_joint", ConstructionRigMesh.JOINT_2)
+	mat.set_shader_parameter("load_floor_y", ConstructionRigMesh.TIP_LOAD_FLOOR_Y)
 	return mat
 
 
