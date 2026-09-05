@@ -45,6 +45,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from decimal import Decimal as D, ROUND_HALF_UP, getcontext
@@ -234,6 +235,21 @@ BUILDING_RULES: Dict[str, Any] = {
                  " the city the upkeep of every building it does not own, and doc"
                  " 93 sec Y1 retires it.",
         "classes": ["residential", "commercial", "industrial", "tech"],
+        # **RESTORED, Wave 28.** Waves 19 and 20 wrote these two rulings straight
+        # into data/building_rules.json, which THIS SCRIPT overwrites: it is the
+        # sole writer of that file and it did not know about them, so the first
+        # regeneration after them dropped both. `Building.wear_may_demolish`
+        # defaults to TRUE, so the drop silently re-armed the exact physics doc
+        # 93 sec AP1 and sec AR1 exist to stop. Report 98 sec 72 RR-222,
+        # and verify_invariants() now refuses to write a file that drops a key
+        # the shipped one carries, so the next wave cannot repeat it.
+        "_wear_may_demolish_ruling": "NEW, Wave 19 (doc 93 sec AP1, measured in doc 92 sec 56.1). MAY ORDINARY WEAR TAKE A PRIVATE BUILDING ALL THE WAY TO `destroyed`? No. tools/measure_catastrophe.gd ran 45 game-days x 4 presets x 2 session kinds and found that EVERY destruction in the game comes through condition.structural_failure_p_per_hour -- 42 of 42 on standard, 0 from incident damage, 0 from fire -- and that the chain feeding it is not a disaster at all: a city that outgrows its own generation leaves ~30% of its stock permanently dark (74-107 of 251 buildings from game-day 24), the sec Y1a service clause lifts the ownership floor for exactly those, they fall unbounded to 0.10, and the 0.02/gh roll then deletes nine of them on a bad game-day -- one every 2.7 real minutes. That is the player's 2026-09-03 report, reproduced. The ruling is sec Y1's own sentence read to its end: it is THEIR asset, and an owner whose building is condemned boards it up rather than bulldozing it. So wear CONDEMNS private stock and stops; the building sits at the threshold in `damaged`, where doc 02 sec 2.12 already charges output_mult 0.40 / coverage_mult 0.25 and doc 03's f_condition pays 0.46. Neglect still costs a city roughly four fifths of its income and it is still the player's job to fix; it no longer deletes the capital they bought. NOT A SHIELD: burn_down (an unanswered tier-5 fire), doc 06's explicit destroy_building op, an event landing on a building already at the threshold (sec AP2), and this same roll on the city's OWN civic and utility stock all still demolish. Set this true to restore the pre-Wave-19 physics exactly.",
+        "wear_may_demolish": False,
+    },
+    "utility_spine": {
+        "_ruling": "NEW, Wave 20 (doc 93 sec AR1, measured in doc 92 sec 58.3). MAY ORDINARY WEAR TAKE THE CITY'S OWN GENERATION AND WATER? No. Wave 19 sec AP1 stopped wear demolishing PRIVATE stock and listed, as a deliberate exception, `this same roll on the city's OWN civic and utility stock`. That exception is the hole the player fell through: on their slot 0 the city had already lost both power plants, all three water facilities and both substations, and with no generation every remaining lot is dark forever, the sec Y1a service clause lifts the ownership floor for the WHOLE city, and there is no way back because restoring a plant costs money an insolvent city does not have. sec AP1's own argument applies here with MORE force, not less: an owner boards up a condemned building rather than bulldozing it, and the city is the owner of this one. So wear CONDEMNS the spine and stops -- the plant sits at condition.structural_failure_threshold in `damaged`, where doc 02 sec 2.12 still pays output_mult 0.40, so a neglected city browns out to two fifths of its generation and NEVER goes dark forever. THE LINE IS DRAWN AT THE SPINE AND NOT AT ALL CIVIC STOCK, and that is the ruling: a lost police station costs coverage, which is a loss the player can see, price and recover from by rebuilding one; a lost LAST power plant costs every building in the city its power, which is not recoverable at all while the treasury is negative. Generation, distribution and water are the three the city cannot function without and cannot rebuy while insolvent; police, fire and the construction yard stay losable, so neglect still takes buildings off the map. NOT A SHIELD, for the spine either: burn_down (an unanswered tier-5 fire), doc 06's explicit destroy_building cascade op and doc 07's terminal outcomes all still demolish a power plant -- a disaster still MATTERS. Set wear_may_demolish true here to restore the pre-Wave-20 physics exactly.",
+        "archetypes": ["power_facility", "substation", "water_facility"],
+        "wear_may_demolish": False,
     },
     "condition": {
         "start": D("1.00"),
@@ -805,6 +821,44 @@ def verify(archetype: str, rows: List[Dict[str, Any]]) -> None:
                  % (archetype, row["level"], row["decay_per_hour"]))
 
 
+def verify_no_shipped_block_is_dropped(out_dir: str) -> None:
+    """**This script is the SOLE writer of `data/building_rules.json`, and it
+    used to overwrite blocks it had never heard of.**
+
+    Waves 19 and 20 wrote two rulings — `owner_maintenance.wear_may_demolish`
+    and the whole `utility_spine` block — straight into the JSON without adding
+    them here, so the first regeneration after them silently deleted both. That
+    is not a formatting loss: `Building.wear_may_demolish` defaults to **true**,
+    so the drop re-armed exactly the physics doc 93 §AP1 and §AR1 exist to stop
+    (ordinary wear demolishing private stock, and the city's own generation).
+    Found in Wave 28 by diffing a regeneration against the fork; report 98 §72
+    RR-222.
+
+    So: a regeneration may ADD a top-level block and may change a value, and it
+    may never REMOVE one. A block that has to go must be deleted from this file
+    first, deliberately, which is a diff a reviewer can see.
+    """
+    path = os.path.join(out_dir, "building_rules.json")
+    if not os.path.exists(path):
+        return                      # a fresh tree, or --out-dir somewhere new
+    with open(path, encoding="utf-8") as handle:
+        shipped = json.load(handle)
+    dropped = [k for k in shipped if k not in BUILDING_RULES]
+    for key in dropped:
+        fail("building_rules.json ships block '%s' and this generator would drop"
+             " it -- add it to BUILDING_RULES or delete it on purpose" % key)
+    for block, value in shipped.items():
+        if not isinstance(value, dict) or block in dropped:
+            continue
+        mine = BUILDING_RULES.get(block)
+        if not isinstance(mine, dict):
+            continue
+        for field in value:
+            if field not in mine:
+                fail("building_rules.json ships %s.%s and this generator would"
+                     " drop it" % (block, field))
+
+
 def verify_invariants() -> None:
     """The cross-cutting claims doc 02 makes about the family itself."""
     tax_growth = BUILDING_RULES["demand_growth_invariant"]["must_exceed_value"]
@@ -1073,6 +1127,7 @@ def main() -> int:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = args.out_dir or os.path.join(repo_root, "data")
 
+    verify_no_shipped_block_is_dropped(out_dir)
     verify_invariants()
     buildings = build_buildings_doc()
 

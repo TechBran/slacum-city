@@ -6851,8 +6851,9 @@ first level servable from the bottom of the ladder. `data_center` failed it at
 the fork (its L1 needed rung **4**, a $6,900 transformer on day one, which is
 what *"I haven't even upgraded it past level two"* feels like from the inside).
 
-**And it is now SAID.** The building panel's power row, S18's customer block and
-the fix router's POWER row all carry `PowerActions.rung_needed` — the smallest
+**And it is now SAID.** The building panel's power row, S18's customer block (in every state
+that has customers at all) and the fix router's POWER row all carry
+`PowerActions.rung_needed` — the smallest
 rung whose nameplate carries the host transformer's post-upgrade PEAK load. Doc
 12 D-123. `needs_rung == 0` is kept as its own answer rather than clamped to the
 top rung, because *"nothing you can buy fixes this"* is a different sentence from

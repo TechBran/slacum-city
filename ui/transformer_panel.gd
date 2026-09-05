@@ -450,10 +450,13 @@ func _render_customers(v: Dictionary) -> void:
 	# doc 93 §BC-3). S18's whole promise is "everything about this transformer in
 	# one place", and the decision a player opens it to make is whether to
 	# re-rate it — which is a question about the customers, not about the pad.
-	# The line is drawn in every state: silence when nothing needs a bigger unit
-	# reads as "the panel does not know", and the point of the row is that it
-	# does. `customer_stranded` wins, because "no rung carries this" is a wall
-	# and the row above it would send the player shopping for nothing.
+	# The line is drawn in every state THAT HAS CUSTOMERS: silence when nothing
+	# needs a bigger unit reads as "the panel does not know", and the point of the
+	# row is that it does. A pad serving NOBODY returned above, where the title
+	# already says so, because "nothing under this wants a bigger pad" is a
+	# strange thing to tell a player about an empty one. `customer_stranded`
+	# wins over the rung line, because "no rung carries this" is a wall and the
+	# row above it would send the player shopping for nothing.
 	var stranded := str(v.get("customer_stranded", ""))
 	var needs_key := "ui_transformer_customers_fit"
 	var needs_state := HudModel.STATE_NORMAL

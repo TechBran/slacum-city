@@ -246,7 +246,10 @@ func _customer_row(sim_id: String) -> Dictionary:
 		"sim_id": sim_id,
 		"exists": true,
 		"archetype": String(b.archetype),
-		"next_level": needs,
+		# The three scalars this file's own summary and S18 read — not the whole
+		# `next_level` block. A customer row is built up to seventeen times per
+		# panel open (doc 92 §65.1) and a field nobody reads is seventeen
+		# dictionaries of nothing.
 		"needs_rung": int(needs.get("needs_rung", 0)),
 		"needs_bigger": bool(needs.get("needs_bigger", false)),
 		"no_rung_carries": bool(needs.get("no_rung_carries", false)),
@@ -393,7 +396,7 @@ func _next_level_block(sim_id: String, b: Building, top: int) -> Dictionary:
 ## at §5.3's ceiling — the whole load, siblings and streetlights included,
 ## because that is what the gate is actually judged on.
 ##
-## `{host_transformer, host_level, host_capacity_kw, after_kw, needs_rung,
+## `{host_transformer, host_level, after_kw, needs_rung,
 ## needs_capacity_kw, needs_bigger, no_rung_carries}`. `after_kw` is the reading
 ## the rung is CHOSEN from — the pad's peak plus the delta — and it is published
 ## so `tools/measure_envelope.gd` can print the input beside the answer; a rung
@@ -412,14 +415,13 @@ func _next_level_block(sim_id: String, b: Building, top: int) -> Dictionary:
 static func rung_needed(sim: CitySim, sim_id: String, delta_kw: float,
 		headroom: Dictionary) -> Dictionary:
 	var host := String(sim.grid.attachment_of(sim_id))
-	var out := {"host_transformer": host, "host_level": 0, "host_capacity_kw": 0.0,
+	var out := {"host_transformer": host, "host_level": 0,
 			"after_kw": 0.0, "needs_rung": 0, "needs_capacity_kw": 0.0,
 			"needs_bigger": false, "no_rung_carries": false}
 	if host == "" or not sim.grid.has_component(host):
 		return out
 	var c := sim.grid.component(host)
 	out["host_level"] = int(c["level"])
-	out["host_capacity_kw"] = float(c["capacity_kw"])
 	# The transformer hop of the gate's own walk, so the panel and the refusal
 	# are reading one number. `path` is empty for a zero-delta upgrade and for an
 	# unserved building; the peak table is the fallback, never the live trough.

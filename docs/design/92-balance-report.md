@@ -13515,6 +13515,16 @@ here with its number so it cannot be discovered later as a surprise.
    fell by 12,670 kW at L5** (§68.4). Whether `tax_class: tech` should give some
    of that back is doc 03's ruling; this lane published the number and changed no
    dollar.
-6. **Doc 02 §2.3's `data_center` L5 row still prints `—` for `Upg gh`** while
+6. **How many other generated files has a later wave hand-edited?**
+   `tools/gen_buildings.py` is the sole writer of `data/building_rules.json` and
+   it silently dropped two rulings Waves 19 and 20 had written straight into that
+   JSON — caught here, fixed here, and guarded here
+   (`verify_no_shipped_block_is_dropped`, report 98 §72 RR-222). The same trap is
+   open wherever the pattern repeats: `tools/gen_building_economy.py`,
+   `tools/gen_bench_city.py`, `tools/gen_building_shapes.py` and
+   `tools/gen_starter_city.py` all write files that later waves have amended, and
+   none of them carries the guard. Running each with `--check` against the
+   shipped file would answer it in minutes; this lane ran only its own.
+7. **Doc 02 §2.3's `data_center` L5 row still prints `—` for `Upg gh`** while
    §2.14 says that row gained `upgrade_time_hours 185`. Pre-existing, untouched
    by this wave, and named here because the L5 row was edited beside it.

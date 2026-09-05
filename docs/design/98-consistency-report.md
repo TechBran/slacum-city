@@ -10732,6 +10732,37 @@ of `data/buildings.json` and `data/building_rules.json`:
    **(55.4, 135]** kW; 100 is the round number in it and keeps the data centre
    the largest first-level draw in the roster.
 
+**A regression this wave caused and caught, kept on the page because the shape
+matters more than the escape.** `tools/gen_buildings.py` is the SOLE writer of
+`data/building_rules.json` — it rewrites the whole file — and Waves 19 and 20
+had written two rulings straight into that JSON without adding them to the
+generator: `owner_maintenance.wear_may_demolish` (doc 93 §AP1) and the entire
+`utility_spine` block (doc 93 §AR1). The first regeneration after them, which is
+this one, **deleted both**. That is not a formatting loss:
+`Building.wear_may_demolish` defaults to **true**, so the drop re-armed the exact
+physics those two rulings exist to stop — ordinary wear demolishing private
+stock, and ordinary wear demolishing the city's own generation, which is the
+player's 2026-09-03 report. Neither hash moved (a 24-hour run never reaches
+`structural_failure_threshold`), so the four baselines said nothing; it was found
+by diffing the regenerated file against the fork key by key, and
+`tests/test_spiral_floor.gd` would have caught it at the suite. **Fixed** by
+moving both blocks into `BUILDING_RULES` verbatim (asserted identical to the
+fork's, key for key) and by `verify_no_shipped_block_is_dropped()`, which now
+refuses to write a file that loses a top-level block or a field of one:
+
+```
+$ python3 tools/gen_buildings.py --check      # with a block the generator does not know
+gen_buildings: 2 failure(s), nothing written
+  FAIL building_rules.json ships block '_wave_29_ruling' and this generator would drop it
+  FAIL building_rules.json ships owner_maintenance._a_future_flag and this generator would drop it
+```
+
+The only cosmetic change that survives is `utility_spine.archetypes`, which the
+generator's own encoder renders block-form because `archetypes` is in its
+`FORCE_BLOCK` set; the parsed value is identical. **The shape to look for
+elsewhere:** a generated file that a later wave hand-edited, where the generator
+has not been run since.
+
 **Seven cells moved**, against nine that had no transformer: `data_center` L1–L6
 (400/1,020/2,600/6,630/16,900/43,150 → 100/255/650/1,660/4,230/6,070) and
 `high_rise` L6 (9,700 → 4,160, the clamp's only bite). **`k_dem` did not move**
