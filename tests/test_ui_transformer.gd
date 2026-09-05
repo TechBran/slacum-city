@@ -536,3 +536,38 @@ func test_a_transformer_removed_from_its_own_panel_closes_it_and_clears_the_sele
 	assert_true(cleared.has(""),
 			"the shell is told to drop the world highlight, or it rings empty ground")
 	_unmount(root)
+
+
+func test_s18_opens_in_a_shell_that_never_hands_it_a_model() -> void:
+	# **The defect this test exists for.** `bring_up_screens()` builds every
+	# screen against one shared `UIConfig` and no sim; the shell builds the
+	# `BuildController` afterwards and hands it to S5 and the build sheet, and
+	# has no reason to hand anything to a screen that did not exist last wave.
+	# Without `UIRoot._transformer_model()` S18 would be a panel the shipped game
+	# could never open — `show_transformer` returning `false` for ever — and it
+	# would look exactly like a tap that does nothing, which is the defect this
+	# wave was opened on.
+	var sim := _sim()
+	var root := _mount()
+	var controller := BuildController.new(sim)
+	# The shell's real sequence, and NOTHING else: S5 gets the controller, S18
+	# gets nothing at all.
+	root.building_panel.setup(root.config, controller)
+	assert_true(root.transformer_panel.model == null,
+			"the shell hands S18 no model — this is the shipped boot order")
+	var id := _busiest(sim)
+	assert_true(root.show_transformer(id),
+			"…and it opens anyway, off the controller S5 is holding")
+	assert_eq(root.transformer_panel.selected_id(), id)
+	assert_true(root.transformer_panel.model != null)
+	assert_true(root.transformer_panel.model.sim == sim,
+			"on the SAME sim the rest of the deck is reading")
+	_unmount(root)
+
+
+func test_a_root_with_no_controller_anywhere_stays_inert_rather_than_half_opening() -> void:
+	var root := _mount()
+	assert_false(root.show_transformer("T-01"),
+			"a fixture mount with no sim opens nothing and reports so")
+	assert_false(root.transformer_panel.is_open())
+	_unmount(root)

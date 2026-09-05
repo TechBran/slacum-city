@@ -1989,10 +1989,38 @@ func close_land_panel() -> void:
 ## own deselect when it did not — a build whose `TransformerPanel` has no model
 ## must deselect exactly as it does today rather than eat the tap.
 func show_transformer(component_id: String) -> bool:
-	if transformer_panel == null or transformer_panel.model == null:
+	if transformer_panel == null:
+		return false
+	if transformer_panel.model == null:
+		transformer_panel.model = _transformer_model()
+	if transformer_panel.model == null:
 		return false
 	transformer_panel.show_component(component_id)
 	return transformer_panel.is_open()
+
+
+## S18's model, resolved from the controller a sibling screen is already holding
+## — the same argument `bind_water_actions`' resolver makes one section down, and
+## for the same reason.
+##
+## `bring_up_screens()` builds every screen against one shared `UIConfig` and NO
+## sim; the shell builds the `BuildController` afterwards and hands it to S5 and
+## to the build sheet. Without this, S18 would be a screen the shipped game could
+## never open — `show_transformer` would return `false` for ever because nothing
+## in the boot sequence had a reason to hand it a model, and the defect would look
+## exactly like a tap that does nothing, which is the defect this wave exists to
+## remove. A shell that binds explicitly still wins (it sets `model` first); a
+## fixture mount with no controller anywhere stays inert, which is correct.
+func _transformer_model() -> TransformerPanelModel:
+	var controller: BuildController = null
+	if building_panel != null and building_panel.controller != null:
+		controller = building_panel.controller
+	elif build_sheet != null and build_sheet.controller != null:
+		controller = build_sheet.controller
+	if controller == null or controller.sim == null:
+		return null
+	return TransformerPanelModel.new(controller.sim, controller.power, config,
+			controller.tile_m)
 
 
 func close_transformer_panel() -> void:

@@ -9482,6 +9482,19 @@ computes nothing — the same split `LandPanelModel` / `LandPanel` uses, and the
 reason the whole surface is under `tests/test_ui_transformer.gd` rather than
 under a screenshot.
 
+**And one seam that would otherwise have made the whole screen inert.**
+`UIRoot.bring_up_screens()` builds every panel against one shared `UIConfig` and
+NO sim; the shell builds the `BuildController` afterwards and hands it to S5 and
+the build sheet, and has no reason to hand anything to a screen that did not
+exist last wave. `UIRoot._transformer_model()` therefore resolves S18's model
+from the controller a sibling is already holding — the same argument
+`bind_water_actions`' resolver makes for the incident drawer, and for the same
+reason. Without it `show_transformer` would return `false` for ever in the
+shipped game and the failure would look exactly like *a tap that does nothing*,
+which is the defect this wave was opened on.
+`test_s18_opens_in_a_shell_that_never_hands_it_a_model` drives the shipped boot
+order and nothing else.
+
 ### RR-208 — the building panel diet (docs 12 §2.9 D-115/D-116, 92 §65.4, 93 §AY3)
 
 Wave 17's POWER section — header, draw line, shed line, N hop rows each with a
