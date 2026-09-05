@@ -12627,6 +12627,34 @@ develops a block during its run — so gates 18b, 20, 21 and 29 are re-recorded
 against the new digests, not re-fitted. The magnitude a re-fit would have to
 absorb, if one is ever wanted, is the $8.65/gh in §66.4 and only while a pipeline
 is actually running.
+
+### 66.7 Merge record — the four baselines as COMPOSED on main after Waves 23, 24 and 25 (2026-09-05)
+
+Each lane published its hashes against its own fork (`6dba66c`). Main is now the
+composition — Wave 23's `coverage_slope` (§62.8), Wave 24's grant ledger (§63.8)
+and this lane's four key groups (§69.3 in report 98) — and no lane could have
+measured that. Taken on `91724ce` at the merge, `tools/profile_sim.gd --hash-only`:
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
+| bench (`tests/fixtures/bench_city.json`) | `9695f7667048b55d2426fdd8741afc12be49a51d747c552a25fd96f25248a559` | `b85488059d8dcb7f4f88151fdf2985427e18bd03066d8a7cf67a52aecfbed406` |
+
+These are the values the next lane forks from. **The composed suite is 2,880
+tests with ONE red, and it is the one §62.9's addendum said would go red:** gate
+21's capstone cell — 0 of 3 seeds reach level 7 in 45 game-days on main, where
+each lane reached it alone. The 45-day arc on main arrives at levels 1–6 on
+exactly the hours §63.6 published (h14/46/76/100/164/234 on seed 1337), then
+never at 7, with $18.6M–$22.2M in the treasury: eleven of the twelve level-7
+rows are done and the twelfth, the high-rise, is refused `E_POWER_HEADROOM` at
+its transformer (PT-053, L3, `r_after` 1.009 — with the pool at 19 % load) and
+`E_WATER_HEADROOM` in a zone with two L1 pumps for 9,000 residents. PT-053's
+upgrade previews OK at $6,900 and the agent never buys it; every water-node
+upgrade is refused for power at its own transformer; pump placement has no site
+on a full map. That is A91-D-123, the utility planner, and per §62.9 the bound is
+not re-fitted for it — Wave 26 (the next section of report 98) is the fix, and main is not
+pushed until it lands.
+
 ## 65. Wave 25 — the transformer is a thing you tap: what a repair costs, who is behind the pad, and what the building panel was carrying (2026-09-04)
 
 *(Rulings doc 93 §AY. Resolutions report 98 §68 RR-205..RR-208. Defect rows doc
