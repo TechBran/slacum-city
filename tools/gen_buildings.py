@@ -1186,7 +1186,15 @@ def _encode(value: Any, indent: int, key: Optional[str]) -> str:
         if not value:
             return "{}" if isinstance(value, dict) else "[]"
         compact = _compact(value)
-        if key not in FORCE_BLOCK and len(compact) + len(pad) <= MAX_INLINE:
+        # `FORCE_BLOCK` names the big MAPPINGS whose rows must each get a line —
+        # `archetypes`, `levels`, `seed_rows`. A LIST that happens to share one
+        # of those names is not one of them: `utility_spine.archetypes` is three
+        # strings, and blocking it re-wrote a hand-authored one-liner into four
+        # lines the first time this generator ran over Wave 20's ruling. Keeping
+        # it inline makes the regenerated file byte-identical to the one the
+        # ruling shipped, which is what makes `git diff` a review tool here.
+        forced = key in FORCE_BLOCK and (isinstance(value, dict) or key != "archetypes")
+        if not forced and len(compact) + len(pad) <= MAX_INLINE:
             return compact
         if isinstance(value, dict):
             parts = ["%s%s: %s" % (inner, _scalar(str(k)), _encode(v, indent + 1, str(k)))

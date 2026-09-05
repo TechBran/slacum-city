@@ -57,11 +57,7 @@
   },
   "utility_spine": {
     "_ruling": "NEW, Wave 20 (doc 93 sec AR1, measured in doc 92 sec 58.3). MAY ORDINARY WEAR TAKE THE CITY'S OWN GENERATION AND WATER? No. Wave 19 sec AP1 stopped wear demolishing PRIVATE stock and listed, as a deliberate exception, `this same roll on the city's OWN civic and utility stock`. That exception is the hole the player fell through: on their slot 0 the city had already lost both power plants, all three water facilities and both substations, and with no generation every remaining lot is dark forever, the sec Y1a service clause lifts the ownership floor for the WHOLE city, and there is no way back because restoring a plant costs money an insolvent city does not have. sec AP1's own argument applies here with MORE force, not less: an owner boards up a condemned building rather than bulldozing it, and the city is the owner of this one. So wear CONDEMNS the spine and stops -- the plant sits at condition.structural_failure_threshold in `damaged`, where doc 02 sec 2.12 still pays output_mult 0.40, so a neglected city browns out to two fifths of its generation and NEVER goes dark forever. THE LINE IS DRAWN AT THE SPINE AND NOT AT ALL CIVIC STOCK, and that is the ruling: a lost police station costs coverage, which is a loss the player can see, price and recover from by rebuilding one; a lost LAST power plant costs every building in the city its power, which is not recoverable at all while the treasury is negative. Generation, distribution and water are the three the city cannot function without and cannot rebuy while insolvent; police, fire and the construction yard stay losable, so neglect still takes buildings off the map. NOT A SHIELD, for the spine either: burn_down (an unanswered tier-5 fire), doc 06's explicit destroy_building cascade op and doc 07's terminal outcomes all still demolish a power plant -- a disaster still MATTERS. Set wear_may_demolish true here to restore the pre-Wave-20 physics exactly.",
-    "archetypes": [
-      "power_facility",
-      "substation",
-      "water_facility"
-    ],
+    "archetypes": ["power_facility", "substation", "water_facility"],
     "wear_may_demolish": false
   },
   "condition": {

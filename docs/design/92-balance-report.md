@@ -13663,3 +13663,16 @@ was over the ceiling on any pad with normal street load. At 5,830 it sits at
 the nameplate.
 
 **Hashes: none moved.** See §68.4's fix-pass row and its isolation.
+
+**And one nit the verifier logged, closed.** `data/building_rules.json` was
+*value*-identical to the fork on the two Wave 19/20 rulings the generator had
+silently dropped, but not *byte*-identical: `FORCE_BLOCK` names the big MAPPINGS
+whose rows each get a line (`archetypes`, `levels`, `seed_rows`), and a LIST that
+happens to share one of those names was being blocked too, so
+`utility_spine.archetypes` came back as four lines where the ruling had written
+one. The encoder now forces a block only for a mapping under those keys, and the
+shipped rules file differs from `a581948`'s in **exactly two** ways again — the
+added `service_envelope` block and `seed_rows.data_center.power_kw` 400 → 100 —
+which is what makes `git diff` a review tool on a generated file. `data/buildings.json`
+is byte-unchanged by it, and `gen_buildings.py --check` with a block or a field
+injected still prints `2 failure(s), nothing written` and exits 1.
