@@ -98,7 +98,11 @@ const DEF_SPOIL_PER_BLOCK := 6
 const DEF_STAKES := 8
 const DEF_PAVE_SEGMENTS := 6
 const DEF_TRENCH_SEGMENTS := 8
-const DEF_PIPE_STACKS := 5
+## A pipe bundle beside every OTHER trench segment. Derived, not authored:
+## a second constant for the stack count would only ever have to agree with
+## this one, and the first draft's `DEF_PIPE_STACKS = 5` was a ceiling that
+## eight segments could never reach — a number with no reader.
+const TRENCH_PIPE_EVERY := 2
 const DEF_VISIBLE_RADIUS_M := 640.0
 const DEF_MAX_BLOCKS := 8
 ## Seconds between progress reads. Four a second is far finer than a stump
@@ -727,7 +731,7 @@ func _lay_trench(site: Site, half: float, fill: float) -> void:
 		mid.y = 0.0
 		_push("trench", Transform3D(Basis.IDENTITY.scaled_local(
 				Vector3(length, 1.0, 2.2)), mid), trench_color)
-		if seg % 2 == 0 and seg < DEF_PIPE_STACKS * 2:
+		if seg % TRENCH_PIPE_EVERY == 0:
 			var side := mid + Vector3(0.0, 0.0, 2.8)
 			side.y = 0.0
 			_push("trench", Transform3D(Basis.IDENTITY
@@ -786,7 +790,8 @@ func _reserve() -> void:
 		# TWICE the runs: FINAL_DEVELOPMENT draws the finished base AND the
 		# kerbs going in along it, out of the same buffer.
 		"pave": 12 * DEF_PAVE_SEGMENTS,
-		"trench": DEF_TRENCH_SEGMENTS + DEF_PIPE_STACKS,
+		"trench": DEF_TRENCH_SEGMENTS
+				+ (DEF_TRENCH_SEGMENTS + TRENCH_PIPE_EVERY - 1) / TRENCH_PIPE_EVERY,
 	}
 	for key: String in _layers:
 		var layer: Layer = _layers[key]

@@ -215,8 +215,12 @@ func works_view(block: LandBlock, d: float, m_dev: float) -> Dictionary:
 		"low": HudModel.money_exact(int(band["low"])),
 		"high": HudModel.money_exact(int(band["high"])),
 	})
-	rows.append({"id": "typical", "label_key": "ui_land_works_typical",
-			"value": typical, "state": HudModel.STATE_NORMAL})
+	# A band of `$0 – $0` is what a data file with no `works_yield` block
+	# produces, and a row that says nothing is worse than no row: the whole band
+	# is dropped there and the panel is exactly what it was before Wave 25.
+	if int(band["high"]) > 0:
+		rows.append({"id": "typical", "label_key": "ui_land_works_typical",
+				"value": typical, "state": HudModel.STATE_NORMAL})
 	if block.is_owned():
 		rows.append({"id": "recovered", "label_key": "ui_land_works_recovered",
 				"value": HudModel.money_exact(block.works_yield_total)
