@@ -92,7 +92,32 @@ static func run(strategy_id: String, seed_value: int, days: int,
 		## `tools/measure_utility_plan.gd` driving its own loop, which would make
 		## it a second harness measuring a different city.
 		"zones": _zone_facts(sim),
+		## What the doc 02 §2.11 gate refuses, per archetype, as the run left it
+		## (Wave 26, doc 92 §67.6). Same shape and same reason as `zones`: a
+		## capstone that did not land has a REASON, and the run document was the
+		## only place that could still be asked for it once the sim was gone.
+		"blocked": _blocked_facts(sim, api),
 	}
+
+
+## One row per archetype the upgrade gate refuses, in doc 09 §2.14.2's own
+## roster order, through `Api.blocked_upgrade` — the same door the agent asked.
+static func _blocked_facts(sim: CitySim, api: Playtest.Api) -> Array:
+	var out: Array = []
+	for archetype: String in ["house", "store", "apartment", "office", "high_rise",
+			"data_center", "police_station", "fire_station", "power_facility",
+			"substation", "water_facility", "construction_yard"]:
+		var row := api.blocked_upgrade(archetype)
+		if row.is_empty():
+			continue
+		var sim_id := String(row["sim_id"])
+		var tile: Vector2i = sim.water.demand.access_tile(sim_id)
+		row["archetype"] = archetype
+		row["water_pressure_at_tile"] = sim.water.pressure_at(tile)
+		row["water_zone"] = api.zone_key_of(sim_id)
+		row["water_headroom_m3h"] = sim.water.zone_headroom_m3h(sim_id)
+		out.append(row)
+	return out
 
 
 ## The §2.5 supply chain of every live zone, in `zone_key` order: what it

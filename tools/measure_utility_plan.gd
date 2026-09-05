@@ -106,6 +106,17 @@ func _one(strategy: String, seed_value: int, days: int, everything: bool) -> voi
 	for key: Variant in keys:
 		print("    %-40s %d" % [String(key), int(refusals[key])])
 
+	print("  --- what the upgrade gate still refuses ---")
+	for raw_block: Variant in (doc.get("blocked", []) as Array):
+		var blocked: Dictionary = raw_block
+		print("  %-18s %-10s %-18s $%-9s power_at %-8s %-11s | zone %-10s press %.2f head %.1f"
+				% [String(blocked["archetype"]), String(blocked["sim_id"]),
+				String(blocked["blocker"]), str(blocked.get("cost", 0)),
+				String(blocked.get("power_at", "")), String(blocked.get("power_kind", "")),
+				String(blocked.get("water_zone", "")),
+				float(blocked.get("water_pressure_at_tile", 0.0)),
+				float(blocked.get("water_headroom_m3h", 0.0))])
+
 	print("  --- pressure zones at the end ---")
 	print("  %-12s %8s %8s %8s %8s  %s" % ["zone", "supply", "demand", "press", "head",
 			"source / treatment / pump rated"])

@@ -6735,7 +6735,10 @@ and made the planner's own measurement unreadable underneath them.
 So `plans_water` joins `maintains` and `tax_target` as KNOB 3, on the same
 controlled-pair discipline `disaster_neglect` and `tax_squeezer` are built on:
 one agent differs from `balanced` in exactly one field, and any difference
-between their rows is that field and nothing else. **What this defers**, filed
+between their rows is that field and nothing else. **What this defers**, stated
 rather than hidden: `balanced` still has no water planner, so doc 92's matrix
-still measures a city that answers water refusals instead of preventing them —
-doc 91 A91-D-139.
+still measures a city that answers water refusals instead of preventing them.
+Closing it is one line — `plans_water = true` by default — and the whole cost of
+it is the re-derivation that line forces: §17's matrix, §18b's 50-game-day dark
+share and every gate fitted to them, which is a lane of its own and not a
+footnote on this one (doc 92 §67.5).

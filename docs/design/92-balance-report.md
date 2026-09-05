@@ -12958,8 +12958,9 @@ game-days on the three matrix seeds, against the fork's own row:
 **A hundred and eighteen pumps, five and a half million dollars, and the zone's
 supply did not move**, because the zone was treatment-bound the whole time.
 Worse: each pump is a 3×3 `water_facility` shell drawing doc 05's 60 kW, so the
-draft bought roughly **2.3 MW of new load** and 39 sites on a map that was
-already full — and seed 4242 lost a whole curriculum rung to it. So §61.4's
+draft bought roughly **2.3 MW of new load** (39 × doc 05's 60 kW L1 pump) and 39
+sites on a map that was already full — and seed 4242 lost a whole curriculum
+rung to it, while every seed lost 649 to 1,778 residents. So §61.4's
 sentence is corrected here rather than repeated: **taller before wider, and only
 the term that binds.** The upgrade door goes first in both the proactive rule and
 in `_relieve`; a new component is what answers a chain whose every node is already
@@ -12986,13 +12987,17 @@ constant, two utilities, no third invented number — the same derivation
 `GENERATION_RELIEF_RATIO` was given in §63.3.
 
 **The cooldown is one game-day and its clock starts on the ATTEMPT**, which is
-the opposite of `_relieve`'s rule and is a cost argument rather than a doctrinal
+the opposite of `_relieve`'s rule and is a COST argument rather than a doctrinal
 one. `_relieve` starts on the purchase because a failed relief buys nothing and
-there is nothing to wait for (§61.4's own measurement). `_lead_water`'s failed
-attempt is not free: the site scan prices every free footprint on every READY
-block, and a scan that found nothing this game-hour finds nothing the next one —
-the map cannot change until a construction job completes. Retrying it hourly took
-the 45-game-day three-seed run past twice its wall-clock and changed no purchase.
+there is nothing to wait for (§61.4's own measurement, and it is not changed
+here). `_lead_water`'s failed attempt is not free: the site scan prices every
+free footprint on every READY block, and a scan that found nothing this game-hour
+finds nothing the next one — the map cannot change until a construction job
+completes, which takes doc 02's hours. **What the difference costs is visible in
+the shipped run's own refusal counts**: `_lead_water` is capped at 45 attempts
+over 45 game-days, while `_relieve` — still on the purchase clock — logs **918
+`water/E_NO_SITE` rows on seed 9001** (§67.7). Both numbers are the same scan;
+one of them is bounded.
 
 **`WATER_SITE_PREVIEWS` 96 → 4,096**, for the other half of the same problem: 96
 was fitted to a young city where the first free footprint in the first READY block
@@ -13001,3 +13006,192 @@ looked at a second block. A 16-block city has at most `16 × (16 − 3 + 1)² = 
 candidate origins for a 3×3 pump. The `E_NO_SITE` log row now carries `previews`,
 `blocks` and whether the cap was hit, so the constant is checkable rather than
 trusted.
+
+### 67.6 The arc, after — `tools/measure_curriculum.gd --days=45`, three seeds
+
+| level | 1337 | 4242 | 9001 | (fork) 1337 | 4242 | 9001 |
+|---|---|---|---|---|---|---|
+| 1 | 14 | 13 | 17 | 14 | 13 | 17 |
+| 2 | 46 | 43 | 50 | 46 | 43 | 50 |
+| 3 | 76 | 78 | 75 | 76 | 78 | 57 |
+| 4 | 100 | 102 | 100 | 100 | 102 | 85 |
+| 5 | 164 | 168 | 174 | 164 | 168 | 156 |
+| 6 | 212 | 179 | 229 | 234 | 184 | 223 |
+| **7** | **593** | **301** | — | — | — | — |
+| treasury | $32,278,710 | $34,025,307 | $24,598,410 | $18,557,136 | $22,084,602 | $22,173,578 |
+| population | 8,981 | 8,910 | 8,188 | 9,137 | 9,068 | 8,629 |
+| `water_placed` | 3 | 2 | 4 | 2 | 1 | 1 |
+| `water_spend` | $1,072,107 | $856,110 | $1,110,543 | $694,537 | $98,180 | $141,650 |
+
+**0 of 3 seeds reach the capstone at the fork; 2 of 3 reach it here**, at
+game-hour 593 and 301 (game-day 24.7 and 12.5), against
+`CURRICULUM_TOP_LEVEL_DAYS` = 40. **Levels 1 and 2 are bit-identical on all three
+seeds** and levels 3–5 are bit-identical on two of them, which is the shape the
+change has to have: nothing in this wave runs before a pressure zone goes amber,
+and `upgrade_archetype` — the only objective kind `_relieve` serves — exists
+only at level 7. Seed 9001's middle moves (3 at h57 → h75, 5 at h156 → h174)
+because its zone crosses `WATER_RELIEF_RATIO` earliest and the planner starts
+spending there first; every beat still lands inside gate 21's published bands.
+
+**The capstone is not the only thing that got better.** Every seed ends richer
+than at the fork — **+73.9 %**, **+54.1 %** and **+10.9 %** — on **1.7 %**,
+**1.7 %** and **5.1 %** fewer residents. The two seeds that reach the capstone
+collect the rung-7 grant the fork never paid, and all three stop pouring surplus
+into stock whose water the city could not supply: the fork's money was sitting
+still because there was nothing the agent knew how to buy with it.
+
+### 67.7 What the planner bought — `tools/measure_utility_plan.gd --days=45`
+
+| | 1337 | 4242 | 9001 |
+|---|---|---|---|
+| taps and feeders (`cmd_place_grid_component`) | 311 · $595,850 | 282 · $527,700 | 326 · $587,700 |
+| **re-rated grid components** (`grid_upgrade`) | **9 · $53,500** | **11 · $91,010** | **10 · $73,500** |
+| water components placed | 3 · $290,162 | 2 · $168,868 | 4 · $336,878 |
+| **water nodes raised** (`water_upgrade`) | **7 · $781,945** | **7 · $687,242** | **7 · $773,665** |
+| total capacity spend | **$1,721,457** | **$1,474,820** | **$1,771,743** |
+| refusals: `water/E_NO_SITE` | 171 | 25 | 918 |
+| refusals: `water_upgrade/E_NO_SITE` | 173 | 26 | 921 |
+
+**Nine to eleven grid components re-rated per run, on a door that answered
+`E_NO_VERB` every time it was called at the fork.** The whole capacity programme
+costs **$1.5M–$1.8M** against ending treasuries of **$24.6M–$34.0M** — 5–7 % of
+the money on the table, which is what "the wall was not money" looks like once
+the agent can spend it.
+
+**The zone, before and after** (doc 05 §2.5's chain; the fork row is seed 1337 at
+game-day 25, the rest are the state each run ended in):
+
+| | supply | demand | pressure | headroom | source / treatment / pump rated |
+|---|---|---|---|---|---|
+| fork, 1337 | 77.8 | 127.3 | **0.21** | 0.0 | 105.1 / **78.1** / 80.0 |
+| 1337 | 214.0 | 215.2 | **1.00** | 0.0 | 253.5 / 570.7 / 480.0 |
+| 4242 | 214.0 | 183.0 | **1.00** | 31.0 | 253.5 / 378.5 / 480.0 |
+| 9001 | 254.1 | 197.0 | **1.00** | 57.1 | 253.5 / 571.9 / 720.0 |
+
+Pressure **0.21 → 1.00** on every seed; supply **77.8 → 214.0–254.1** against a
+demand that also grew. Doc 05 §5.8 bands 0.21 CRITICAL and 1.00 NORMAL, so the
+zone the level-7 high-rise drinks from went from the bottom band to the top one.
+
+
+### 67.8 Where the wall is NOW — and it is DISTANCE, not supply
+
+**This is worth more than the arrival table**, and every figure is read straight
+off `tools/measure_utility_plan.gd --days=45 --seeds=9001,1337`, which prints
+what the doc 02 §2.11 gate still refuses at the end of the run beside the zone it
+refused in.
+
+**Seed 9001, the seed that stops at level 6 holding $24,598,410.** Its one live
+pressure zone ends at **supply 254.1 / demand 197.0 / pressure 1.00 / headroom
+57.1**. There is no shortage anywhere in it. And the high-rise is still refused
+`E_WATER_HEADROOM`:
+
+    high_rise P-066  E_WATER_HEADROOM  $29,900 | zone P-058-PMP  press 0.50  head 57.1
+    house     H-002  E_POWER_HEADROOM  $58,350 | zone P-058-PMP  press 0.80  head 57.1
+    store     P-041  E_POWER_HEADROOM  $19,442 | zone P-058-PMP  press 0.60  head 57.1
+    apartment APT-001 E_POWER_HEADROOM $133,480 | zone P-058-PMP  press 1.00  head 57.1
+
+**Six different pressures — 0.50, 0.60, 0.70, 0.80, 0.90, 1.00 — in ONE zone
+whose own pressure is 1.00.** `WaterSystem.pressure_at(tile)` is
+`zone.pressure × topology.factor_at_tile(tile)`, and that factor is doc 05
+§2.2's BFS falloff with distance from the nearest live main. So the last water
+refusal in the game is **not supply at all: it is how far the building stands
+from a pipe**, and `WaterSystem.can_upgrade_water`'s second arm —
+`pressure_at(tile) < upgrade_min_pressure` (0.55) — is what says no. P-066 reads
+**0.50** against a 0.55 gate, with 57 m³/h of unused supply four tiles away.
+
+**No verb the planner drives can answer that.** More supply does not move a tile
+factor; only a main closer to the building does, and `cmd_place_water_main` is on
+the harness roster and is driven by nothing.
+
+**Seeds 1337 and 4242 hit the other one.** Both end supply-capped at exactly
+**214.0** while their nodes offer 253.5 / 570.7 / 480.0 and 253.5 / 378.5 /
+480.0 — every node term above the supply. 214.0 is `feed_capacity_m3h`, the only
+term in doc 05 §2.5's supply expression that is **not a node**: the live mains
+incident to the zone's supply tiles. It is also, exactly, the `feed_cap 214.0`
+the fork's own probe printed in §67.3. The planner has raised every term it has
+a verb for until the term it has no verb for became the binding one. Seed 9001's
+supply chain instead ends **source-capped at 253.5** — `data/water.json`'s
+`source_river` L2 yield at its condition factor, and 2 is the top rung
+`placeable.source.placeable_levels` ships — which is why its
+`water/E_NO_SITE` count is 918 against the others' 171 and 25: the term that
+binds is `source`, a river intake needs river frontage, and the map has one
+river.
+
+**So the wave's own success is what exposes the next three walls**, and all
+three are one sentence: *the pipes*. A trunk main at the plant raises
+`feed_capacity`; a service main toward the tower raises its tile factor; and
+neither is buyable by any agent in `tools/playtest.gd` today.
+
+### 67.9 Two findings this lane measured and did NOT fix, ranked
+
+**1. A zero-water-delta upgrade is refused when the building is in no pressure
+zone, and it is A91-D-53's exact shape one document over.**
+`CitySim.cmd_upgrade_building` computes `delta_water` from doc 02's own column —
+**0.0** for a `substation` and a `power_facility`, which draw no water — and then
+asks `WaterSystem.can_upgrade_water(sim_id, 0.0)`, whose first line is *"if `z ==
+null or z.dead`: BLOCKED_WATER_CAPACITY"*. A grid shell outside every pressure
+zone therefore carries `E_WATER_HEADROOM` forever. Measured on both seeds:
+
+    power_facility P-158  E_WATER_HEADROOM  $69,000 | zone (none)  press 0.00  head 0.0
+    substation     P-205  E_WATER_HEADROOM  $17,250 | zone (none)  press 0.00  head 0.0
+
+`PowerGrid.can_upgrade_power` was given exactly this fix in Wave 17 and its
+docstring still carries the reasoning — *"A zero-delta upgrade needs no headroom…
+A building that adds no load cannot overload anything"* — because doc 02's
+L1→L2 job on `SUB-A` could not be bought until it was. The twin was never
+written. **Not fixed here** because this lane already carries two sim changes and
+this one is hash-affecting and unmeasured, and because it is latent rather than
+blocking: `l7_power_facility` and `l7_substation` complete on both seeds that
+reach the capstone, through instances that do stand in a zone. Doc 91 A91-D-139.
+
+**2. Nothing in `tools/playtest.gd` lays a water main**, which is §67.8's whole
+answer and is the first thing the next lane should build: `cmd_place_water_main`
+is probed, listed and never called. It wants the same shape `route_feeder` has —
+a one-tap door that picks the source and fills the polyline — and it is the only
+purchase that can move either of the two walls this wave uncovered. Carried on
+A91-D-123's closing row rather than a new id.
+
+### 67.10 Doc 93 §BA, isolated — the water works is what carries seed 1337
+
+The wave has two halves and they had to be told apart: the PLANNER (report 98
+§70 RR-213..RR-216, `tools/playtest.gd` only) and the RULING (doc 93 §BA,
+`sim/city_sim.gd` + `ui/build_controller.gd`). The A/B reverts the two sim/ui
+files to the fork and re-measures, changing nothing else:
+
+| seed 1337, 45 game-days | planner only | planner + §BA (shipped) |
+|---|---|---|
+| levels 1–6 | 14 / 46 / 76 / 100 / 164 / 212 | **14 / 46 / 76 / 100 / 164 / 212** |
+| level 7 | **—** | **593** |
+| treasury | $26,087,956 | $32,278,710 |
+| population | 9,025 | 8,981 |
+| `water_placed` | 4 | 3 |
+| `water_spend` | $1,344,290 | $1,072,107 |
+| `state_hash` | `71d444c5…` | `c1f0670b…` |
+
+**Levels 1 through 6 are bit-identical and level 7 is the whole delta**, which is
+the only shape §BA can have: the ruling reaches the arc through exactly one
+objective, doc 09 §2.14.2's `l7_water_facility`, and until this wave that
+objective bought a taller building and no water. With it, the same purchase
+raises `WTR-1`'s intake, its treatment train and its pump together — and that is
+what clears the level-7 high-rise on this seed. **The planner alone carries seed
+4242 (h301); the planner and the ruling together carry 1337 as well.**
+
+### 67.11 The four `profile_sim --hash-only` baselines: UNCHANGED
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
+| bench | `9695f7667048b55d2426fdd8741afc12be49a51d747c552a25fd96f25248a559` | `b85488059d8dcb7f4f88151fdf2985427e18bd03066d8a7cf67a52aecfbed406` |
+
+**All four are bit-identical to §66.7's composed fork values**, and that includes
+the wave's sim change. The planner lives in `tools/playtest.gd`, which `sim/`
+never imports (constitution §3), so its half is hash-neutral by construction.
+Doc 93 §BA's half is hash-neutral by MEASUREMENT rather than by construction, and
+the reason is worth stating because it is also the reason nobody found the defect
+for twenty waves: `cmd_place_building("water_facility", …)`,
+`cmd_upgrade_building` on a water shell and `_rerate_water_nodes` are reached
+only when a water works is placed or upgraded, and neither baseline does either
+— both cities are booted from an authored manifest whose plants already host
+their nodes at their own level, and neither a 24-game-hour coarse advance nor a
+2-game-hour fine one starts a job on one. The arc measurements in §67.6 and
+§67.10 are where that change is visible, and they are where it is measured.
