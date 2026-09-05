@@ -10379,6 +10379,32 @@ nothing (constitution §3).
 | tax_squeezer | 4242 | 5,008.9 | 5,043,673 | 13 | 2.40 | 0 | 0 | 0.698 | 0.698 | 0.881 | 0.04 | **3,184** |
 | tax_squeezer | 9001 | 4,821.3 | 4,959,819 | 14 | 2.60 | 0 | 0 | 0.691 | 0.691 | 0.884 | 0.07 | **3,143** |
 
+**And the same command on the FORK arm**, produced by checking `data/economy.json`
+and `tools/playtest.gd` out at `6dba66c` and back again — the two files that carry
+the whole of this wave's behaviour change, and therefore an A/B rather than a
+recollection. (`floored cond` reads −1.000 there because the key does not exist
+yet; the instrument prints the sentinel rather than inventing a value.)
+
+| strategy | seed | net/gh | value created | repaired | repair/net % | damaged | destroyed | min cond | mean cond | pop |
+|---|---|---|---|---|---|---|---|---|---|---|
+| balanced | 1337 | **2,304.3** | 1,047,478 | 13 | **5.27** | 0 | 0 | 0.719 | 0.890 | 1,414 |
+| balanced | 4242 | 2,941.8 | 1,297,313 | 12 | **3.90** | 1 | 0 | 0.706 | 0.878 | 1,744 |
+| balanced | 9001 | 2,246.3 | 1,019,162 | 13 | **5.41** | 0 | 0 | 0.696 | 0.890 | 1,468 |
+| disaster_neglect | 1337 | 1,844.0 | 836,933 | 0 | 0.00 | 0 | 69 | 0.359 | 0.846 | 1,131 |
+| disaster_neglect | 4242 | 2,051.7 | 931,705 | 0 | 0.00 | 5 | 0 | 0.357 | 0.808 | 1,516 |
+| disaster_neglect | 9001 | 1,985.6 | 898,350 | 0 | 0.00 | 5 | 0 | 0.297 | 0.808 | 1,399 |
+| tax_squeezer | 1337 | 3,517.4 | 1,569,593 | 11 | 3.12 | 0 | 0 | 0.727 | 0.877 | 1,600 |
+| tax_squeezer | 4242 | 3,670.0 | 1,628,818 | 12 | 3.14 | 1 | 0 | 0.730 | 0.885 | 1,487 |
+| tax_squeezer | 9001 | 3,355.6 | 1,496,935 | 12 | 3.41 | 0 | 0 | 0.724 | 0.881 | 1,409 |
+
+**`disaster_neglect` is bit-identical across the two arms — every cell, all three
+seeds — and it is the control this section rests on.** That agent completes no
+curriculum objective, so it is paid no celebration grant, and `_lead_generation`
+is a method on `Balanced` while `DisasterNeglect` extends `Strategy` directly. The
+two files that were swapped therefore reach `balanced` and `tax_squeezer` and
+nothing else, which is what makes every delta below attributable rather than
+merely coincident with the wave.
+
 **(1) Gate 4 — `damaged_end` → `destroyed_end`. A statistic replaced, not a
 bound lowered.** The line read `maintained.damaged_end <= neglected.damaged_end`
 and *meant* *the maintained city is in better shape*. `damaged` is a TRANSIT
@@ -10432,8 +10458,10 @@ vs 0.846 on the mean.
 
 **(4) Gate 12b — `TAX_SQUEEZE_POP_MAX_RATIO` 1.05 → 0.93. A bound RESTORED, not
 loosened.** This is the one number in the file Wave 22 loosened, and it loosened
-it because the statistic had stopped being fittable: a per-seed spread of
-0.85–1.13 around a mean of 0.97. **It is fittable again, and decisively**,
+it because the statistic had stopped being fittable — and the fork table above
+reproduces exactly that: **1,600/1,414 = 1.131, 1,487/1,744 = 0.853,
+1,409/1,468 = 0.960, mean 0.972.** A spread of 0.28 around a mean of 0.97 is a
+statistic with no bound in it. **It is fittable again, and decisively**,
 because the money moved the binding constraint on growth from MONEY to
 ATTRACTIVENESS — at the fork a city could not grow faster than it could pay, so
 `TAX_RATE_GROWTH_COEFF`'s 0.44× at the top detent barely bound; at this scale
