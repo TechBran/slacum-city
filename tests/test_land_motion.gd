@@ -489,6 +489,59 @@ func test_a_load_puts_the_layer_where_the_save_says() -> void:
 	sim.dispose()
 
 
+func test_every_new_body_is_inside_its_own_shaders_joint_array() -> void:
+	# The shaders index a fixed uniform array off a per-vertex joint code, and an
+	# out-of-range index into a uniform array is undefined behaviour rather than
+	# an error — a driver-dependent garbage read, and the shape of bug that
+	# reproduces on one phone. `tests/test_street_life.gd` pins this for the
+	# crook, the dog and the goat; these are the four bodies Wave 27 added.
+	for row: Array in [["dozer", LandMachineMesh.dozer()],
+			["paver", LandMachineMesh.paver()],
+			["roller", LandMachineMesh.roller()]]:
+		var mesh: ConstructionRigMesh = row[1]
+		assert_false(mesh.is_empty(), "%s has geometry" % String(row[0]))
+		assert_true(mesh.max_joint() <= int(ConstructionRigMesh.JOINT_4),
+				"%s carries joint %d and `construction_rig.gdshader` walks four"
+				% [String(row[0]), mesh.max_joint()])
+		assert_eq(mesh.max_joint(), int(ConstructionRigMesh.JOINT_1),
+				("%s spends exactly ONE joint — doc 11 §2.19's bargain, and the"
+				+ " reason the other three INSTANCE_CUSTOM channels are given a"
+				+ " zero range") % String(row[0]))
+	var worker := StreetLifeMesh.worker()
+	assert_false(worker.is_empty(), "the crew figure has geometry")
+	assert_true(worker.max_joint() < StreetLifeMesh.JOINT_SLOTS,
+			"the crew figure carries joint %d against %d slots"
+			% [worker.max_joint(), StreetLifeMesh.JOINT_SLOTS])
+	assert_eq(worker.max_joint(), 5,
+			"…and it is the crook's six joints in the crook's order, so one"
+			+ " animator drives both")
+	assert_eq(StreetLifeMesh.worker_pivots().size(), StreetLifeMesh.JOINT_SLOTS)
+	assert_eq(StreetLifeMesh.worker_sel().size(), StreetLifeMesh.JOINT_SLOTS)
+
+
+func test_a_crew_figure_never_flashes_or_leaves() -> void:
+	# `street_life.gdshader` reads COLOR.a as the COLLECT flash and channel `.a`
+	# as the leaving animation. A crew member is neither collected nor expired,
+	# and a hi-vis vest that went white-hot would be a man being arrested.
+	var sim := _sim()
+	var stack := _stack(sim)
+	var view: LandWorksView = stack["view"]
+	var block_id := _some_block(sim)
+	for phase: StringName in PHASES:
+		_pose(stack, block_id, phase, 0.5)
+		view.motion.refresh(0.0, 0.0, 0.0)
+		var m := view.motion.motion
+		assert_true(m.crew_used > 0)
+		for i in m.crew_used:
+			var pose: ConstructionActivity.Pose = m.crew_poses[i]
+			assert_almost_eq(pose.tint.a, 0.0, 0.0001,
+					"%s: a crew figure carries a collect flash" % phase)
+			assert_almost_eq(pose.custom.a, 0.0, 0.0001,
+					"%s: a crew figure is leaving" % phase)
+	_drop(stack)
+	sim.dispose()
+
+
 func test_the_shell_hands_the_layer_the_sims_own_clock() -> void:
 	# The two clock arguments travel from `main.gd` through `LandWorksView` into
 	# the motion layer, and the tests above drive the motion layer directly. This
