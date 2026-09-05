@@ -176,11 +176,17 @@ var roller_used := 0
 var crew_used := 0
 var barrier_used := 0
 
-## Per-preset ceilings, pushed by the view. `crew` is figures per site; when
-## `secondary` is false the layer draws only the phase's PRIMARY machine — the
-## dozer, the excavator, the paver — and drops the tipper and the roller, which
-## is the order doc 11 §2.19 publishes and the governor follows.
-var crew_budget := 3
+## **A SCALE on each phase's own want, not a ceiling.** `CREW_BY_PHASE` says how
+## many men a phase takes and the preset says how generous the device is being;
+## a flat ceiling would have made `quality` a number with no reader, because no
+## phase wants more than four and a ceiling of five could never bind (doc 93
+## §AZ2's rule about bounds, applied to a render knob). The governor multiplies
+## this further, and a site never falls below one figure — a machine on a block
+## with nobody there reads as abandoned plant.
+var crew_scale := 1.0
+## When false the layer draws only the phase's PRIMARY machine — the dozer, the
+## excavator, the paver — and drops the tipper and the roller, which is the order
+## doc 11 §2.19 publishes and the governor follows.
 var secondary := true
 ## Spoil heaps the dressing raises on a block — pushed by the view from its own
 ## `spoil_per_block` budget, because the GRADING excavator works the heap that is
@@ -691,11 +697,15 @@ func _emit_utility(site: Site, gm: float, q: float, arriving: bool) -> void:
 	pose.custom = ConstructionActivity.dig_pose(
 			fposmod(gm / dig_cycle_gm + hash01(site.salt, 61), 1.0))
 	pose.tint = _livery(site.salt, 29)
-	# Two men at the head, and the rest strung back along the open cut — the one
-	# phase where a crew is spread out rather than gathered round a machine.
-	var want := mini(CREW_BY_PHASE[4], maxi(1, crew_budget))
+	# Half at the head, the rest strung back along the open cut — the one phase
+	# where a crew is spread out rather than gathered round a machine. The men
+	# are pushed DIRECTLY rather than through `_crew_at`: the preset scale has
+	# already been applied to `want`, and running the halves through it again put
+	# six men on a four-man phase at `quality`.
+	var want := crew_want(CREW_BY_PHASE[4])
 	var at_head := maxi(1, want / 2)
-	_crew_at(site, gm, Vector3(head.x, 0.0, head.z), at_head)
+	for h in at_head:
+		_push_crew(site.salt, 200 + h * 19, gm, Vector3(head.x, 0.0, head.z), 1.0)
 	for i in (want - at_head):
 		var back := clampf(q - 0.16 * float(i + 1), 0.02, 1.0)
 		var spot := site.trench_a.lerp(site.trench_b, back)
@@ -745,8 +755,7 @@ func _emit_run(run: Run, gm: float) -> void:
 		pose.basis = basis
 		pose.tint = Color.WHITE
 		pose.custom = Color(float(i), 0.0, 0.0, 0.0)
-	var crew := mini(CREW_PER_ROAD_RUN, maxi(1, crew_budget))
-	for i in crew:
+	for i in crew_want(CREW_PER_ROAD_RUN):
 		_push_crew(run.salt, 700 + i * 23, gm, pos, 1.0)
 
 
@@ -798,9 +807,15 @@ func _push_roller_at(pos: Vector3, dir: Vector3, distance: float,
 ## small circuit; which is which is hashed, so the same block always has the
 ## same men leaning on the same shovel.
 func _crew_at(site: Site, gm: float, anchor: Vector3, count: int) -> void:
-	var want := clampi(count, 0, maxi(0, crew_budget))
-	for i in want:
+	for i in crew_want(count):
 		_push_crew(site.salt, 200 + i * 19, gm, anchor, 1.0)
+
+
+## How many of the `count` men a phase wants actually turn up on this device.
+## Never zero and never more than twice the phase's own number, so a knob cannot
+## turn a three-man gang into a crowd or into an empty site.
+func crew_want(count: int) -> int:
+	return clampi(int(round(float(count) * crew_scale)), 1, maxi(count, 1) * 2)
 
 
 func _push_crew(salt: int, index: int, gm: float, anchor: Vector3,

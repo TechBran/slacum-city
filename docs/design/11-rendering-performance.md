@@ -3945,10 +3945,21 @@ nothing is given up; below 0.50 the second machine goes; the crew thins
 continuously in between and never below one figure, because a site with a machine
 on it and nobody there reads as abandoned plant. **The machine doing the work is
 on no knob at all** — a CLEARING with no dozer on it is the still this layer
-exists to close. Presets: `performance` 2 crew / no second machine, `balanced` 4,
-`quality` 5. The crew ceiling is 4 on `balanced` rather than 3 so the one
-four-man phase (UTILITY_CORRIDOR — two at the head, two back along the open cut)
-can actually reach its number on the shipping preset.
+exists to close.
+
+**`crew` is a SCALE on `LandMotion.CREW_BY_PHASE`, not a ceiling**, and the
+distinction is a ruling rather than a style. The first draft shipped ceilings of
+2 / 4 / 5; no phase wants more than four men, so `quality`'s could never bind and
+the row was decoration — doc 93 §AZ2's own objection ("a bound must be reachable
+or it is decoration") in a render knob's clothes. Measured, one block, mid-phase
+(`test_every_preset_moves_the_crew_and_none_of_them_is_decoration` requires every
+preset to move a number some phase draws):
+
+| preset | crew scale | second machine | crew per phase | total calls per phase |
+|---|---|---|---|---|
+| performance | 0.60 | **no** | 1 / 2 / 2 / 2 / 2 / 2 | 3 / 4 / 4 / 5 / 6 / 5 |
+| balanced | 1.00 | yes | 2 / 3 / 3 / 3 / 4 / 3 | 3 / 4 / 5 / 6 / 6 / 5 |
+| quality | 1.34 | yes | 3 / 4 / 4 / 4 / 5 / 4 | 3 / 4 / 5 / 6 / 6 / 5 |
 
 #### The proof
 

@@ -54,15 +54,16 @@ const GROW := 16
 ## phase's SECOND machine — the haul tipper, the following roller — is drawn at
 ## all. The primary machine is on no knob: a CLEARING with no dozer is a phase
 ## with nothing happening in it, which is the defect this layer exists to close.
-## `crew` is a CEILING and `LandMotion.CREW_BY_PHASE` is what each phase wants,
-## so `balanced` is 4 rather than 3: at 3 the one four-man phase — UTILITY_
-## CORRIDOR, two men at the head and two back along the open cut — could never
-## have its fourth man on the shipping preset, and a per-phase table nothing can
-## reach is a table with no reader.
+## `crew` is a SCALE on `LandMotion.CREW_BY_PHASE` — how many men each phase
+## takes, times how generous the device is being — and not a ceiling. The first
+## draft made it a ceiling and `quality`'s could never bind: no phase wants more
+## than four, so a ceiling of five was a number with no reader, which is doc 93
+## §AZ2's own objection in a render knob's clothes. At these three the per-phase
+## crew is **1/2/2/2/2/2 · 2/3/3/3/4/3 · 3/4/4/4/5/4**.
 const PRESETS := {
-	"performance": {"crew": 2, "secondary": false},
-	"balanced": {"crew": 4, "secondary": true},
-	"quality": {"crew": 5, "secondary": true},
+	"performance": {"crew": 0.60, "secondary": false},
+	"balanced": {"crew": 1.00, "secondary": true},
+	"quality": {"crew": 1.34, "secondary": true},
 }
 
 ## `particle_ratio` thresholds the governor's ladder is read against (doc 11
@@ -88,7 +89,7 @@ var _focus := Vector3.ZERO
 var _radius := 0.0
 var _limit := 0
 var _configured := false
-var _preset_crew := 3
+var _preset_crew := 1.0
 var _preset_secondary := true
 
 
@@ -128,9 +129,9 @@ func set_preset(name: String, render_data: Dictionary = {}) -> void:
 	var cfg: Dictionary = render_data.get("land_motion", {}) \
 			if not render_data.is_empty() else {}
 	var overrides: Dictionary = (cfg.get("presets", {}) as Dictionary).get(name, {})
-	_preset_crew = int(overrides.get("crew", row.get("crew", 3)))
+	_preset_crew = float(overrides.get("crew", row.get("crew", 1.0)))
 	_preset_secondary = bool(overrides.get("secondary", row.get("secondary", true)))
-	motion.crew_budget = _preset_crew
+	motion.crew_scale = _preset_crew
 	motion.secondary = _preset_secondary
 	if not render_data.is_empty():
 		_read_presets(render_data)
@@ -147,10 +148,10 @@ func set_preset(name: String, render_data: Dictionary = {}) -> void:
 func apply_governor(knobs: Dictionary) -> void:
 	var ratio := clampf(float(knobs.get("particle_ratio", 1.0)), 0.0, 1.0)
 	if ratio >= RATIO_FULL:
-		motion.crew_budget = _preset_crew
+		motion.crew_scale = _preset_crew
 		motion.secondary = _preset_secondary
 		return
-	motion.crew_budget = maxi(1, int(round(float(_preset_crew) * ratio)))
+	motion.crew_scale = _preset_crew * ratio
 	motion.secondary = _preset_secondary and ratio >= RATIO_SECONDARY
 
 

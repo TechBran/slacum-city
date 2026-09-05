@@ -489,6 +489,36 @@ func test_a_load_puts_the_layer_where_the_save_says() -> void:
 	sim.dispose()
 
 
+func test_the_phase_layout_is_built_once_and_not_per_frame() -> void:
+	# Doc 11 §2.16's RR-42 discipline, applied to the one expensive derivation in
+	# this file: the six template runs, their lay/travel legs and the trench line
+	# are fixed by the PHASE, not by the clock, and rebuilding them sixty times a
+	# second at eight blocks would be hundreds of square roots a frame for
+	# numbers that had not moved.
+	var sim := _sim()
+	var stack := _stack(sim)
+	var view: LandWorksView = stack["view"]
+	var block_id := _some_block(sim)
+	_pose(stack, block_id, &"ROAD_INSTALL", 0.3)
+	var site: LandMotion.Site = view.motion.motion.sites[block_id]
+	var legs := site.run_legs
+	var total := site.run_total
+	assert_true(legs.size() > 6, "runs and the repositions between them")
+	for frame in 40:
+		view.motion.set_game_minutes(400.0 + float(frame))
+		view.motion.refresh(0.016, 0.4, 1.0, -1.0)
+		assert_true(is_same(legs, view.motion.motion.sites[block_id].run_legs),
+				"the leg table was rebuilt on frame %d" % frame)
+	assert_almost_eq(view.motion.motion.sites[block_id].run_total, total, 0.0001)
+	# …and a PHASE change is what invalidates it.
+	_pose(stack, block_id, &"UTILITY_CORRIDOR", 0.3)
+	view.motion.refresh(0.016, 0.4, 1.0, -1.0)
+	assert_false(is_same(legs, view.motion.motion.sites[block_id].run_legs),
+			"a phase change did not rebuild the layout")
+	_drop(stack)
+	sim.dispose()
+
+
 func test_every_new_body_is_inside_its_own_shaders_joint_array() -> void:
 	# The shaders index a fixed uniform array off a per-vertex joint code, and an
 	# out-of-range index into a uniform array is undefined behaviour rather than
@@ -720,6 +750,48 @@ func test_a_phone_gets_the_machine_and_fewer_men() -> void:
 	assert_eq(int(row["roller"]), 0, "the follower is")
 	assert_eq(int(row["crew"]), 2)
 	_drop(stack)
+	sim.dispose()
+
+
+func test_every_preset_moves_the_crew_and_none_of_them_is_decoration() -> void:
+	# **`crew` is a SCALE, not a ceiling**, and this is the cell that made it
+	# one. The first draft shipped ceilings of 2 / 4 / 5; no phase wants more
+	# than four, so `quality`'s could never bind and the row was decoration —
+	# doc 93 §AZ2's own objection, in a render knob's clothes. Every preset now
+	# has to move a number that some phase actually draws.
+	var sim := _sim()
+	var seen := {}
+	for preset: String in ["performance", "balanced", "quality"]:
+		var stack := _stack(sim, preset)
+		var view: LandWorksView = stack["view"]
+		var block_id := _some_block(sim)
+		var row: Array[int] = []
+		for phase: StringName in PHASES:
+			_pose(stack, block_id, phase, 0.5)
+			view.motion.refresh(0.0, 0.0, 0.0)
+			row.append(int((view.census()["motion"] as Dictionary)["crew"]))
+		seen[preset] = row
+		_drop(stack)
+	for i in PHASES.size():
+		var low: int = (seen["performance"] as Array[int])[i]
+		var mid: int = (seen["balanced"] as Array[int])[i]
+		var high: int = (seen["quality"] as Array[int])[i]
+		assert_true(low <= mid and mid <= high,
+				"%s: the presets are not ordered — %d / %d / %d"
+				% [PHASES[i], low, mid, high])
+		assert_true(low >= 1, "%s: a phone still gets a man on the site" % PHASES[i])
+	assert_ne(seen["performance"], seen["balanced"],
+			"`performance` draws the same crew as `balanced`")
+	assert_ne(seen["quality"], seen["balanced"],
+			"`quality` draws the same crew as `balanced` — the row is decoration")
+	assert_eq(seen["balanced"], [2, 3, 3, 3, 4, 3] as Array[int],
+			"`balanced` is LandMotion.CREW_BY_PHASE exactly, because its scale is 1")
+	assert_eq(seen["performance"], [1, 2, 2, 2, 2, 2] as Array[int])
+	# UTILITY_CORRIDOR splits its gang between the head of the cut and the open
+	# trench behind it, and the two halves must not each be scaled again — the
+	# first draft did, and put SIX men on a four-man phase at `quality`.
+	assert_eq(seen["quality"], [3, 4, 4, 4, 5, 4] as Array[int],
+			"the split gang was double-scaled")
 	sim.dispose()
 
 
