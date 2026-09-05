@@ -248,6 +248,18 @@ class Site extends RefCounted:
 	var pile_yaw: Array[Basis] = []
 	var barrier_xform: Array[Transform3D] = []
 	var barrier_stage := -1
+	## **Per-site override of the two things the STAGE table decides** (Wave 25,
+	## doc 11 §2.18). A BUILDING site leaves both at -1 and reads
+	## `EXCAVATORS_BY_STAGE` and `stage >= CLEANUP_STAGE` exactly as it always
+	## has — not one instance moves. A LAND WORKS site sets them per development
+	## phase, because doc 09 §2.3 names the crew for each phase and the stage
+	## ladder was written for a building rising, not for a lot being dug out:
+	## CLEARING and GRADING want two excavators AND lorries hauling spoil OUT,
+	## which is a combination no single building stage has.
+	##   `profile_excavators` -1 = use the stage table, else the count
+	##   `profile_haul_out`   -1 = use the stage table, 0 = deliver in, 1 = out
+	var profile_excavators := -1
+	var profile_haul_out := -1
 	## Where the lorry comes to rest along the frontage, measured from `edge`
 	## along `along` — the datum the plant is stood clear of.
 	var stop_u := 0.0
@@ -604,10 +616,34 @@ func pile_fill(site: Site, slot: int, delivered: float) -> float:
 	return clampf(arrived * pile_per_delivery - consumed, 0.0, 1.0)
 
 
-## Excavators a site is running at its current stage.
+## Excavators a site is running at its current stage — or the number its own
+## profile names, when it has one (see `Site.profile_excavators`). The cache in
+## `_emit_rigs` keys on this count, so a profile change invalidates itself.
 func excavator_count(site: Site) -> int:
+	if site.profile_excavators >= 0:
+		return site.profile_excavators
 	var index := clampi(site.stage - STAGE_MIN, 0, EXCAVATORS_BY_STAGE.size() - 1)
 	return int(EXCAVATORS_BY_STAGE[index])
+
+
+## Which way this site's lorries are running: `true` = leaving loaded with
+## spoil, `false` = arriving loaded with material. The stage ladder's answer
+## unless the site's own profile overrides it.
+func hauling_out(site: Site) -> bool:
+	if site.profile_haul_out >= 0:
+		return site.profile_haul_out == 1
+	return site.stage >= CLEANUP_STAGE
+
+
+## Set (or clear) one site's plant profile. `excavators < 0` and `haul_out`
+## unset both mean "use the stage table", which is what every building site
+## does and is the default a site is born with.
+func set_profile(id: int, excavators: int, haul_out: int) -> void:
+	var site: Site = sites.get(id)
+	if site == null:
+		return
+	site.profile_excavators = excavators
+	site.profile_haul_out = haul_out
 
 
 ## Live lorries for this site at `gm` — 0, 1 or 2, and never more, because a
@@ -637,7 +673,7 @@ func _emit_trucks(site: Site, gm: float) -> void:
 		return
 	var total := site.trip_min
 	var leg := site.leg_min
-	var hauling_out := site.stage >= CLEANUP_STAGE
+	var hauling_out := self.hauling_out(site)
 	var newest := _newest_trip(site, gm)
 	if newest < 0:
 		return

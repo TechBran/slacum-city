@@ -337,7 +337,7 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_nine() -> void:
+func test_the_city_section_is_on_rung_ten() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
@@ -348,8 +348,15 @@ func test_the_city_section_is_on_rung_nine() -> void:
 	# layer, and `_v8_to_v9` is the identity function for the same reason
 	# `_v6_to_v7` was: an absent block deserialises to an empty board, which is
 	# what a city that has never seen the board should restore to.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 9,
-			"the commissions board is rung 9 (doc 08 §2.8, report 98 §60 RR-170)")
+	#
+	# **Rung 10, Wave 25** (report 98 §69 RR-209): doc 03 §2.8b's excavation
+	# yield adds `works_stockpile` (one top-level integer — the materials yard),
+	# `works_yield_total` on every `world_blocks` row, and `rng.land_works`, the
+	# tenth named stream, beside two `treasury` sub-keys. `_v9_to_v10` is the
+	# identity function for exactly the reason its two predecessors were: every
+	# one of those has a documented default that is what an old save MEANS.
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 10,
+			"the excavation yield is rung 10 (doc 08 §2.8, report 98 §69 RR-209)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()

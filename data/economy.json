@@ -241,6 +241,23 @@
       "forest": [1.00, 1.90, 1.30, 1.15, 1.10, 1.00],
       "marsh":  [1.10, 1.60, 2.60, 1.90, 1.40, 1.25],
       "island": [1.30, 1.30, 1.50, 4.50, 3.20, 1.20]
+    },
+
+    "_works_yield_note": "Wave 25, doc 03 §2.8b / doc 92 §66 — the `land_works` income line, SOURCE `excavation`. What the crews find while they dig a block out, credited at the COMPLETION of CLEARING, GRADING and UTILITY_CORRIDOR. Every band is a FRACTION OF THAT PHASE'S OWN COST, which is why there is no terrain table here: doc 03 §2.8's terrain_phase_mult already says that clearing a forest costs 1.9x and grading rock costs 2.8x, so a forest block yields 1.9x the timber and a rocky one 2.8x the aggregate for free, out of a table this doc already publishes. M_dev is inside the phase cost too, so a harder difficulty charges more AND gives proportionally more back: the RATIO is invariant.",
+    "works_yield": {
+      "CEILING_FRACTION": 0.10,
+      "BONUS_CHANCE": 0.12,
+      "BONUS_MULT": 2.0,
+      "ROUNDING": 10,
+      "STOCKPILE_SHARE": 0.34,
+      "STOCKPILE_MAX_OFFSET_FRACTION": 0.25,
+      "STOCKPILE_CAP": 4125,
+      "phases": [
+        { "id": "clearing",         "material": "timber",    "low": 0.08, "high": 0.18, "stockpiles": false },
+        { "id": "grading",          "material": "aggregate", "low": 0.06, "high": 0.14, "stockpiles": true },
+        { "id": "utility_corridor", "material": "spoil",     "low": 0.05, "high": 0.11, "stockpiles": true }
+      ],
+      "bonus_material": "copper"
     }
   },
 

@@ -40,6 +40,7 @@ var ghost_view: GhostView
 var path_ghost_view: PathGhostView
 var construction_view: ConstructionSiteView
 var construction_plant: ConstructionVehicleView   # doc 11 §2.16: plant + deliveries
+var land_works: LandWorksView                     # doc 11 §2.18: land under development
 ## doc 11 §2.17: the crook, the stray, the goat and the dropped stash. A pure
 ## event consumer — three `opportunity_*` types in, four MultiMeshes out.
 var street_life: StreetLifeView
@@ -472,6 +473,22 @@ func _build_city_view(render_data: Dictionary) -> void:
 			func(id: int, side: int) -> void:
 				if construction_view != null:
 					construction_view.set_gate_side(id, side))
+	# doc 11 §2.18 — LAND UNDER DEVELOPMENT. The first render layer that has ever
+	# known doc 09 §2.3's pipeline exists. It dresses the block itself and hands
+	# the heavy plant to `construction_plant` above with a per-phase profile, so
+	# the crew type the phase names is the machine that turns up. `set_gate_side`
+	# above is a no-op on an id it does not hold, so a land site riding the same
+	# `site_frontage_changed` wire needs no guard.
+	land_works = LandWorksView.new()
+	land_works.name = "LandWorks"
+	add_child(land_works)
+	land_works.setup(render_data)
+	land_works.set_preset(render_model.preset, render_data)
+	land_works.bind(sim_host.sim.world, sim_host.sim.development,
+			sim_host.sim.construction)
+	land_works.set_plant(construction_plant)
+	# A city resumed mid-pipeline has no events left to tell this layer about it.
+	land_works.adopt()
 	# doc 11 §2.17 — STREET LIFE. The road CLASS probe is what puts a crook on a
 	# footway rather than in a traffic lane; without it the layer still draws,
 	# it just wanders the spawn tile.
@@ -623,6 +640,8 @@ func _on_sim_batch(batch: Array) -> void:
 		flood_view.feed_events(batch)   # doc 07's flood_level_changed
 	if street_life != null:
 		street_life.feed_events(batch)  # doc 11 §2.17's opportunity_* trio
+	if land_works != null:
+		land_works.feed_events(batch)   # doc 11 §2.18's phase transitions
 	for event in batch:
 		match StringName(String(event.get("type", ""))):
 			&"road_graph_changed", &"block_roads_stamped":
@@ -1494,6 +1513,8 @@ func _on_ui_setting_changed(key: StringName, _value: Variant) -> void:
 			if construction_plant != null:
 				construction_plant.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
+			if land_works != null:
+				land_works.set_preset(str(model.value("graphics")), _render_data)
 			if road_surface != null:
 				road_surface.set_preset(str(model.value("graphics")),
 						StarterCityLoader.read_json("res://data/render.json"))
@@ -1911,6 +1932,10 @@ func _resync_world_views() -> void:
 	if construction_plant != null:
 		construction_plant.clear()
 		construction_plant.set_road_network(sim.roads)
+	if land_works != null:
+		land_works.clear()
+		land_works.bind(sim.world, sim.development, sim.construction)
+		land_works.adopt()
 	if construction_view != null:
 		construction_view.clear()
 		for sim_id: String in sim.buildings:
@@ -2530,6 +2555,11 @@ func _process(delta: float) -> void:
 		construction_plant.refresh(delta, environment_controller.last_night,
 				0.0 if sim_host.paused else float(sim_host.speed),
 				float(sim_host.sim.clock.game_seconds()) / 60.0)
+	# doc 11 §2.18. No sim clock: this layer animates nothing — it re-reads its
+	# own active set at 4 Hz and re-uploads only when something moved.
+	if land_works != null:
+		land_works.set_focus(camera_state.focus)
+		land_works.refresh(delta, environment_controller.last_night)
 	# doc 11 §2.17. Same two arguments the plant takes and for the same reasons,
 	# plus the CAMERA position — the marker's angular size and the distance gate
 	# are both computed from it.
@@ -2578,6 +2608,8 @@ func _process(delta: float) -> void:
 				vehicle_view.set_preset(String(knobs["preset"]), _render_data)
 				if construction_plant != null:
 					construction_plant.set_preset(String(knobs["preset"]), _render_data)
+				if land_works != null:
+					land_works.set_preset(String(knobs["preset"]), _render_data)
 				if road_surface != null:
 					road_surface.set_preset(String(knobs["preset"]), _render_data)
 				if flood_view != null:

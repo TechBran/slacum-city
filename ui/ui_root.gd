@@ -226,6 +226,12 @@ var haptics: Haptics
 ## screen node, and `feed_events()` is the only thing that drives it.
 var street: StreetModel
 
+## Wave 25's excavation receipt (doc 03 §2.8b, doc 12 §2.8 D-117). Held here for
+## exactly `street`'s reason: a find has no screen of its own — it is felt on the
+## toast surface, the treasury chip, the event log and the land panel — and
+## `feed_events()` is the only thing that drives it.
+var land_works: LandWorksModel
+
 var current_breakpoint: Breakpoint = Breakpoint.REGULAR
 var drawer_w_dp: int = 300
 
@@ -459,6 +465,8 @@ func bring_up_screens() -> void:
 		land_panel.haptics = haptics
 	if street == null:
 		street = StreetModel.new(config)
+	if land_works == null:
+		land_works = LandWorksModel.new(config)
 	_connect_screens()
 
 
@@ -1403,6 +1411,7 @@ func feed_events(batch: Array) -> void:
 	_check_goal_events(batch)
 	_check_street(batch)
 	_check_construction(batch)
+	_check_land_works(batch)
 	if onboarding == null or not onboarding.is_active():
 		return
 	for entry: Variant in batch:
@@ -1601,6 +1610,44 @@ func _check_street(batch: Array) -> void:
 			StreetModel.EVENT_HOUR_SETTLED:
 				street.close_hour()
 				_push_side_revenue()
+
+
+## Wave 25 — the excavation receipt (doc 03 §2.8b, doc 12 §2.8 D-117).
+##
+## **Nothing to connect, again.** `land_works_find` reaches this root on the same
+## drained batch `feed_events()` already takes once per tick, so the shell needs
+## no new call: the money the crews dug up now pulses the treasury chip, sounds
+## the same coin a bounty sounds (`data/audio.json`'s rule on the event) and says
+## what it was worth — and the event log keeps it, so a player can find the
+## number again an hour later.
+func _check_land_works(batch: Array) -> void:
+	if land_works == null:
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != LandWorksModel.EVENT_FIND:
+			continue
+		report_land_works(event)
+
+
+## **The one door.** Public because the shell can reach a find outside a tick
+## batch — `game/main.gd.flush_sim_events()` drains a command's own events the
+## same frame the command ran — and because a find felt twice is worse than a
+## find felt late. `_check_land_works()` is its only caller in this file, and it
+## returns the record it spent so a test can read what the player was told.
+##
+## It takes the raw PAYLOAD rather than a command result, unlike `report_collect`
+## and `report_rush`: nobody pressed anything, so there is no result to report.
+func report_land_works(event: Dictionary) -> Dictionary:
+	if land_works == null:
+		return {}
+	var feedback := land_works.find_feedback(event)
+	if feedback.is_empty():
+		return {}
+	feedback["toast_shown"] = _spend_feedback(feedback, HudModel.STATE_NORMAL)
+	return feedback
 
 
 ## The one-time discovery mark (§2.17's machinery, not §2.17's curriculum). The

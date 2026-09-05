@@ -97,6 +97,13 @@ var lifetime: Dictionary = {
 	"lifetime_tax": 0, "lifetime_tariff": 0, "lifetime_expense": 0,
 	"lifetime_repairs": 0, "lifetime_foregone": 0, "lifetime_street": 0,
 	"lifetime_dispatch": 0, "lifetime_restores": 0, "lifetime_relief": 0,
+	# Wave 25, doc 03 §2.8b. `excavation` is a SOURCE key on the city-services
+	# line below, so unlike the three arms A91-D-37 / A91-D-100 / A91-D-108 still
+	# owe, this one is paid on the way in: `credit_city_service` passes the
+	# source to `_note_lifetime`, so an arm that did not exist here would leave
+	# `land_works` money in the balance and out of every lifetime total —
+	# exactly the always-zero counter RR-88 called worse than a missing one.
+	"lifetime_excavation": 0,
 }
 
 ## **The city-services receipt book** (doc 03 §2.5, report 98 RR-78).
@@ -125,7 +132,12 @@ var lifetime: Dictionary = {
 ## inside `state_hash()`), which is why the three LIFETIME arms doc 91 A91-D-37 /
 ## A91-D-100 / A91-D-108 owe are still deferred: they are a separate dictionary
 ## and a separate re-record, and they belong in one edit with each other.
-var hour_city_services: Dictionary = {"dispatch": 0, "street": 0, "contracts": 0}
+## `excavation` joined in Wave 25 on exactly those terms, for doc 03 §2.8b's
+## `land_works` line: a find credited between two settlements has to be on the
+## §2.5 line the settlement is about to print, or the balance and the ledger
+## disagree by whatever the crews dug up that hour.
+var hour_city_services: Dictionary = {"dispatch": 0, "street": 0, "contracts": 0,
+		"excavation": 0}
 
 var _recovery: Dictionary = {}
 var _difficulty: Dictionary = {}
@@ -672,6 +684,11 @@ func _note_lifetime(category: StringName, amount: int) -> void:
 			lifetime["lifetime_restores"] = int(lifetime["lifetime_restores"]) + amount
 		&"relief":
 			lifetime["lifetime_relief"] = int(lifetime["lifetime_relief"]) + amount
+		# Wave 25, doc 03 §2.8b. Reached through `credit_city_service`'s
+		# source key, exactly the way `street` is.
+		&"excavation":
+			lifetime["lifetime_excavation"] = \
+					int(lifetime["lifetime_excavation"]) + amount
 
 
 func _fail(reason_code: StringName, payload: Dictionary) -> Dictionary:

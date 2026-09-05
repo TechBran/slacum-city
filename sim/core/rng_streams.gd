@@ -16,9 +16,19 @@ extends RefCounted
 ## stream and moves `serialize()`'s key set, so the city section takes another
 ## rung (doc 08 §2.8 v9) and all four `profile_sim` baselines are re-recorded
 ## with the cause published (report 98 §60 RR-170).
+##
+## `land_works` joined in Wave 25 for doc 03 §2.8b's excavation yield — what the
+## crews find while they dig a block out. Same terms again, and the same
+## consequence: it perturbs no existing stream (its seed is
+## `hash(master_seed + ":land_works")`) and it moves `serialize()`'s key set, so
+## the city section takes another rung (doc 08 §2.8 v10) and all four
+## `profile_sim` baselines are re-recorded with the cause A/B-isolated
+## (report 98 §69 RR-210, doc 92 §66.6). **One draw per find** — two randf()s
+## per credited phase, the band roll and the bonus roll, in that fixed order, so
+## the sequence is a pure function of which phases completed and when.
 const STREAM_NAMES: Array[String] = [
 	"weather", "incidents", "crime", "failures", "director", "traffic",
-	"street", "contracts", "misc",
+	"street", "contracts", "land_works", "misc",
 ]
 
 var _streams: Dictionary = {}

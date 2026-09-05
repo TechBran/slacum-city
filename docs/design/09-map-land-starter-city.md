@@ -138,6 +138,26 @@ UNDEVELOPED ─▶ SURVEY ─▶ CLEARING ─▶ GRADING ─▶ ROAD_INSTALL ─
 | 6 | `FINAL_DEVELOPMENT` | 6 | 5,000 | `construction_crew` | any ×1.0 | `READY`; district auto-assignment runs (§2.6); buildable tiles unlocked |
 | | **Total** | **60 crew-hours** | | | | |
 
+**Two things a completed phase now does that this table does not have a column
+for** *(added 2026-09-04, Wave 25)*:
+
+* **Three of them pay.** `CLEARING`, `GRADING` and `UTILITY_CORRIDOR` credit doc
+  03 §2.8b's `land_works` line at COMPLETION — timber, fill and aggregate, spoil,
+  and occasionally an abandoned copper main — priced as a fraction of that
+  phase's own cost and clamped, cumulatively per block, to 10 % of the block's
+  six-phase bill. **This doc does not own a dollar of it**: the money is doc 03's
+  and the ruling is doc 93 §AZ. The crew column above IS load-bearing for it, and
+  that is the only claim made here — `heavy_equipment_crew` phases are the ones
+  that turn up material, `road_crew` and `construction_crew` phases are not.
+* **All six of them are DRAWN.** `game/render/land_works_view.gd` (doc 11 §2.18)
+  reads `development_state` and the running job's progress and dresses the block:
+  pegs at SURVEY, scrub that leaves clump by clump through CLEARING, a graded
+  plane and spoil at GRADING, base along §2.9.1's own template at ROAD_INSTALL,
+  an open trench toward the block centre at UTILITY_CORRIDOR, kerbs at
+  FINAL_DEVELOPMENT. Until Wave 25 the render layer had never heard of this state
+  machine at all (doc 91 A91-D-132).
+
+
 **Wall-clock time — every work unit multiplies `ctx.channels.construction_rate`** *(report 98 C-29)*. Doc 01 §2.7's exact integer work accumulator already does this; this doc, doc 02 and doc 10 must all call it. The channel is **absolute**, not normalized: its 24-hour mean is **0.804** with a 0.60 night floor, so authored crew-hours are always *less* than wall-clock game-hours.
 
 ```

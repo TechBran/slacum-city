@@ -44,6 +44,8 @@ var _risk_title: Label
 var _risks: VBoxContainer
 var _advantage_title: Label
 var _advantages: VBoxContainer
+var _works_title: Label
+var _works: VBoxContainer
 var _note: Label
 var _phase_title: Label
 var _phases: VBoxContainer
@@ -103,6 +105,8 @@ func _bind_nodes() -> void:
 	_risks = get_node_or_null(body + "Risks") as VBoxContainer
 	_advantage_title = get_node_or_null(body + "AdvantageTitle") as Label
 	_advantages = get_node_or_null(body + "Advantages") as VBoxContainer
+	_works_title = get_node_or_null(body + "WorksTitle") as Label
+	_works = get_node_or_null(body + "Works") as VBoxContainer
 	_note = get_node_or_null(body + "Note") as Label
 	_phase_title = get_node_or_null(body + "PhaseTitle") as Label
 	_phases = get_node_or_null(body + "Phases") as VBoxContainer
@@ -142,11 +146,12 @@ func _build_static() -> void:
 		_facts.columns = 1
 		_facts.add_theme_constant_override(&"h_separation", int(_spacing))
 		_facts.add_theme_constant_override(&"v_separation", int(_spacing))
-	for box: Node in [_risks, _advantages, _phases, _blockers]:
+	for box: Node in [_risks, _advantages, _works, _phases, _blockers]:
 		if box != null:
 			(box as Control).add_theme_constant_override(&"separation", int(_spacing))
 	for pair: Array in [[_risk_title, "ui_land_risk_title"],
 			[_advantage_title, "ui_land_advantage_title"],
+			[_works_title, "ui_land_works_title"],
 			[_phase_title, "ui_land_phase_title"]]:
 		var label: Label = pair[0]
 		if label != null:
@@ -238,6 +243,7 @@ func _render(v: Dictionary) -> void:
 	_render_facts(v)
 	_render_risks(v)
 	_render_advantages(v)
+	_render_works(v)
 	_render_phases(v)
 	_render_blockers(v)
 	_render_action(v)
@@ -307,6 +313,37 @@ func _render_advantages(v: Dictionary) -> void:
 		_advantages.add_child(row)
 
 
+## §2.8b's excavation rows: what a block of this terrain typically hands back,
+## what THIS block has handed back so far, and what is standing in the city's
+## materials yard. Labels, never tap targets — the same rule the risk profile
+## follows, because each row is a reading and a 48 dp button that does nothing is
+## worse than a line of text.
+func _render_works(v: Dictionary) -> void:
+	if _works == null:
+		return
+	UIWidgets.clear_children(_works)
+	var rows: Array = (v.get("works", {}) as Dictionary).get("rows", [])
+	if _works_title != null:
+		_works_title.visible = not rows.is_empty()
+	_works.visible = not rows.is_empty()
+	for entry: Variant in rows:
+		var row_data: Dictionary = entry
+		var row := HFlowContainer.new()
+		row.name = "Works_" + str(row_data["id"])
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_theme_constant_override(&"h_separation", int(_spacing))
+		row.add_theme_constant_override(&"v_separation", int(_spacing))
+		var label := UIWidgets.label("Label", _text(str(row_data["label_key"])))
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var value := UIWidgets.label("Value", str(row_data["value"]))
+		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		UIWidgets.paint_state(self, value, StringName(str(row_data["state"])))
+		row.add_child(value)
+		_works.add_child(row)
+
+
 ## The six phases, always all six (§2.8 item 4). The live one also draws its bar
 ## and its ETA — a done phase's bar says nothing a `✓` has not already said.
 func _render_phases(v: Dictionary) -> void:
@@ -330,6 +367,12 @@ func _render_phases(v: Dictionary) -> void:
 		row.add_child(name_label)
 		row.add_child(UIWidgets.label("Cost", str(phase["cost_text"])))
 		box.add_child(row)
+		# Ruling 93 §AZ3: a pending `road_install` or `utility_corridor` that the
+		# yard can pay towards says so under its own price, rather than charging
+		# a number the panel never quoted.
+		var offset_text := str(phase.get("stockpile_offset_text", ""))
+		if offset_text != "":
+			box.add_child(UIWidgets.label("Yard", offset_text, &"LegendRow"))
 		if StringName(str(phase["state"])) == LandPanelModel.PHASE_STATE_ACTIVE:
 			box.add_child(UIWidgets.label("Bar", str(phase["bar"]), &"LegendRow"))
 		_phases.add_child(box)

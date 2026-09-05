@@ -342,6 +342,12 @@ layout_mode = 2
 [node name="Advantages" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
 layout_mode = 2
 
+[node name="WorksTitle" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
+[node name="Works" type="VBoxContainer" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
+layout_mode = 2
+
 [node name="Note" type="Label" parent="SafeArea/PanelLayer/LandPanel/Panel/Frame/Scroll/Body"]
 layout_mode = 2
 autowrap_mode = 3

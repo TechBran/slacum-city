@@ -880,6 +880,34 @@
 				}
 			},
 			{
+				"_comment": "Wave 25, doc 03 \u00a72.8b (report 98 \u00a769 RR-210). The other direction of the same pipeline: `development_phase_charged` above is what a phase COST, this is what it FOUND. One row per credited phase \u2014 three per block, at the completion of CLEARING, GRADING and UTILITY_CORRIDOR \u2014 filed under `economy` beside the charge it partly offsets, and keyed on `block_id` so the row carries `Jump to it`. `amount` is the find's whole VALUE, cash and yard material together, because that is what the crews turned up; the split is the toast's business and the balance's. `material` resolves through `ui_land_works_material_*` for the reason `phase` resolves through `ui_land_phase_*`: `utility_corridor spoil` is not a sentence.",
+				"type": "land_works_find",
+				"category": "economy",
+				"notify_id": "land_works",
+				"state": "normal",
+				"key": "block_id",
+				"args": {
+					"material": "@lookup:ui_land_works_material_:material",
+					"block": "block",
+					"amount": "@money:value",
+					"time": "@time"
+				}
+			},
+			{
+				"_comment": "Wave 25, ruling 93 \u00a7AZ3 \u2014 the materials yard SPENDING itself. Without this row the yard is a number that silently makes an invoice smaller, which is the one thing a ledger may never do: the player would see `road_install $6,340` where doc 03 \u00a72.8 publishes $7,500 and have nowhere to find the missing $1,160. It fires only when the yard actually had something in it, so a city that has never developed a block never sees it.",
+				"type": "land_works_stockpile_spent",
+				"category": "economy",
+				"notify_id": "land_works_yard",
+				"state": "normal",
+				"key": "block_id",
+				"args": {
+					"phase": "@lookup:ui_land_phase_:phase",
+					"block": "block",
+					"amount": "@money:amount",
+					"time": "@time"
+				}
+			},
+			{
 				"_comment": "99-PA PA-33 / doc 98 RR-150. The auto-repair pass's receipt. `count` is the PAYLOAD's own number, not `@count`: one pass repaired N buildings, and the log row for that pass has to say N rather than 1.",
 				"type": "building_repair_policy_ran",
 				"category": "economy",

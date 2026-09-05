@@ -143,10 +143,17 @@ const REGISTER := {
 	"block_surveyed":
 		"covered: the land panel reads the block's development_state on the"
 		+ " HUD cadence, and block_ready announces the end of the sequence.",
-	"development_phase_started":
-		"covered: same land-panel poll; block_ready is the announced end.",
-	"development_phase_completed":
-		"covered: same land-panel poll; block_ready is the announced end.",
+	# `development_phase_started`, `development_phase_completed` and
+	# `development_paused` used to be exempt here — *"covered: same land-panel
+	# poll"* — and Wave 25 took all three exemptions away, because the poll was
+	# never the whole of what those events owed. `grep -rn
+	# "CLEARING\|GRADING\|development_state" game/` came back EMPTY at that
+	# wave's fork: doc 09 §2.3's pipeline charged the treasury six times a block
+	# and the WORLD never changed, so a block being dug out looked exactly like
+	# one nobody had touched (doc 91 A91-D-132). `game/render/land_works_view.gd`
+	# is the consumer now — membership on the two phase events, and the pause
+	# stands the machines down — and this gate's `..._no_longer_needed` half is
+	# what forced the rows out on the same commit.
 	# `development_phase_charged` used to be exempt here — *"bookkeeping: money
 	# moving. Spend belongs in the budget sheet's ledger, not in the alerts
 	# feed."* 99-PA PA-83 measured what that reasoning cost: **six debits per
@@ -155,9 +162,6 @@ const REGISTER := {
 	# dollar that reached no surface at all. It has a doc 12 log row now (report
 	# 98 §53.4) and its exemption is gone, which is exactly what this gate's
 	# `..._no_longer_needed` half exists to force.
-	"development_paused":
-		"player_initiated: cmd_pause_development. The panel that paused it is"
-		+ " showing that it is paused.",
 	"utility_corridor_extended":
 		"covered: a development phase effect; block_ready is the announced end.",
 

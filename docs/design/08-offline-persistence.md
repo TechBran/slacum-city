@@ -448,6 +448,41 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > named stream is a hash change on every city including one that never opens the
 > board. Report 98 §60 publishes the before/after for all four.
 
+> ### Shipped 2026-09-04 — `city.section_version` 9 → 10, **the excavation yield**
+>
+> A SHAPE rung, and the THIRD of this shape — but the first that is *purely*
+> shape. Doc 03 §2.8b's `land_works` line (report 98 §69 RR-209) adds:
+>
+> * `works_stockpile`, one top-level integer — the city's materials yard;
+> * `works_yield_total` on every `world_blocks` row — what that block has handed
+>   back for life, which is the CLAMP: the per-block ceiling is enforced against
+>   a cumulative total, and a counter that reset on load would let a save and a
+>   reload pay the ceiling twice;
+> * `rng.land_works`, the tenth named stream, plus
+>   `treasury.ledger_totals.lifetime_excavation` and
+>   `treasury.hour_city_services.excavation`.
+>
+> `CitySim._v9_to_v10` is the identity function for the §2.8 reason its two
+> predecessors were: **missing input means a DOCUMENTED default**, and all three
+> defaults are documented. An absent `works_stockpile` is an empty yard, which is
+> what a city that has never dug means; an absent `works_yield_total` is 0,
+> because those blocks were dug out before anyone was counting and the honest
+> answer is a fresh ceiling rather than a retro-charge for money the player was
+> never paid; `RngStreams.deserialize` leaves the new stream on the seed
+> `hash(master_seed + ":land_works")` gave it at boot.
+>
+> **Unlike rungs 8 and 9 it is not ALSO a rules rung**, and that is worth
+> recording because two in a row were. A v9 city that is never developed again
+> advances identically under v10: the yield is credited on a development phase
+> COMPLETING and on nothing else, and a city with no pipeline in flight completes
+> none. What a returning player loses is nothing; what they gain is that the next
+> block they open pays them for what comes out of it.
+>
+> **It moves the four determinism baselines on shape alone, and report 98 §69.3
+> proves exactly that**: `tools/ab_land_works.gd` digests the canonical body with
+> these four key groups stripped and the result is byte-identical to the fork's
+> published digest on both cities and both paths.
+
 > ### Shipped 2026-08-20 — `city.section_version` 4 → 5, **the upgrade-timing epoch**
 >
 > The smallest rung this ladder has and the clearest illustration of why it is a

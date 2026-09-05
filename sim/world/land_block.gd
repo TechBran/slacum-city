@@ -36,6 +36,13 @@ var survey_revealed: bool = false
 var purchase_price: int = 0
 var purchased_minute: int = 0
 var phase_crew_minutes_remaining: int = 0
+## Doc 03 §2.8b — every dollar of VALUE this block's excavation has handed
+## back, cash and yard material together, for the life of the block. Persisted
+## because it is the clamp: `CitySim._credit_land_works` caps the cumulative
+## yield at `EconomySystem.works_yield_ceiling`, and a counter that reset on
+## load would let a save/reload pay the ceiling twice. The land panel reads it
+## as `Recovered so far` (doc 12 §2.8 D-117).
+var works_yield_total: int = 0
 
 
 func usable_tiles() -> int:
@@ -132,6 +139,7 @@ func serialize() -> Dictionary:
 		"road_access": String(road_access),
 		"arterial_connections": arterial_connections,
 		"survey_revealed": survey_revealed,
+		"works_yield_total": works_yield_total,
 		"district_id": district_id,
 	}
 
@@ -145,4 +153,9 @@ func apply_save(data: Dictionary) -> void:
 	road_access = StringName(String(data.get("road_access", String(road_access))))
 	arterial_connections = int(data.get("arterial_connections", arterial_connections))
 	survey_revealed = bool(data.get("survey_revealed", false))
+	# Absent on every save written before Wave 25, and 0 is the honest reading
+	# there: those blocks were dug out before anyone was counting, so the
+	# ceiling starts fresh rather than retro-charging a city for money it was
+	# never paid.
+	works_yield_total = int(data.get("works_yield_total", 0))
 	district_id = String(data.get("district_id", district_id))
