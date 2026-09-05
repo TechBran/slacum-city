@@ -8904,7 +8904,7 @@ that the ceiling Wave 22 attributed to the city outrunning its copper was the
 city outrunning its **generation**, which nothing in this project has ever bought,
 and which was **already failing inside gate 18b's own run at the fork**. Rulings
 93 §AW. Measurements doc 92 §63. Defect rows doc 91 A91-D-124..126. Surfaces
-doc 12 §2.19 D-98/D-99.*
+doc 12 §2.19 D-112/D-113.*
 
 ### RR-197 — the celebration grant, re-scaled to the player's two anchors (docs 03 §2.5a, 92 §63.1, 93 §AW1)
 
@@ -8914,9 +8914,9 @@ doc 12 §2.19 D-98/D-99.*
 
 ### RR-198 — the wall the money found is GENERATION, and it was already there (docs 04 §2.2, 92 §63.2–§63.3, 93 §AW2)
 
-**On the unchanged agent matrix the new table takes gate 18b — *a city may not outrun its own power* — from 5.99 % of building-time dark to 37.20 % on its own seed and 37.60 % across three.** The diagnosis is measured, not assumed: `tools/probe_dark.gd` splits gate 18b's single share into doc 04's three distinct failures, and on the rich city **not one building is unattached, not one transformer is unparented, not one transformer is CRITICAL, the worst feeder ends at r = 0.25 — and `supply_kw` never moves off 8,000 kW for the whole 50-game-day run** against a demand that reaches 11,585. Every founded city has one `power_facility` at doc 04 §2.2's L1 rating, **nothing else in the game generates**, and no strategy in `tools/playtest.gd` has ever bought or upgraded generation. **THE SAME WALL IS AT THE FORK**, inside gate 18b's own run: game-day 50 reads 15.55 % dark, 166 orphaned buildings, 2 shed feeders and 9,227 kW against 8,000 — the gate's 5.99 % headline is a fifty-day MEAN over a column that ends at 15.55 %. `Balanced._lead_generation` ships the purchase the agent never made, the same family as both of Wave 6's grid fixes: it reads `capacity_summary().load_ratio`, buys at doc 04 §5.10's **WARNING** band (the authority `FEEDER_RELIEF_RATIO` already cites — no swept number), upgrades the standing plant before building a second (doc 02: **$69,000 for +10,000 kW** against **$60,000 for +8,000**), and has **no cooldown constant** because the construction job whose duration doc 02 publishes is the cooldown. **Three arms, `tools/measure_dark_share.gd --days=50`, three seeds: fork 5.99 / 20.98 / 9.52 (mean 12.16 %); money alone 37.20 / 36.47 / 39.14 (mean 37.60 %); shipped 4.61 / 20.88 / 0.55 (mean 8.68 %).** **The money leaves the city lighter than it found it**, and **not one ceiling in the gate file moves**.
+**On the unchanged agent matrix the new table takes gate 18b — *a city may not outrun its own power* — from 5.99 % of building-time dark to 37.20 % on its own seed and 37.60 % across three.** The diagnosis is measured, not assumed: `tools/probe_dark.gd` splits gate 18b's single share into doc 04's three distinct failures, and on the rich city **not one building is unattached, not one transformer is unparented, not one transformer is CRITICAL, the worst feeder ends at r = 0.25 — and `supply_kw` never moves off 8,000 kW for the whole 50-game-day run** against a demand that reaches 11,585. Every founded city has one `power_facility` at doc 04 §2.2's L1 rating, **nothing else in the game generates**, and no strategy in `tools/playtest.gd` has ever bought or upgraded generation. **THE SAME WALL IS AT THE FORK**, inside gate 18b's own run: game-day 50 reads 15.55 % dark, 166 orphaned buildings, 2 shed feeders and 9,227 kW against 8,000 — the gate's 5.99 % headline is a fifty-day MEAN over a column that ends at 15.55 %. `Balanced._lead_generation` ships the purchase the agent never made, the same family as both of Wave 6's grid fixes: it reads `capacity_summary().load_ratio`, buys at doc 04 §5.10's **WARNING** band (the authority `FEEDER_RELIEF_RATIO` already cites — no swept number), upgrades the standing plant before building a second (doc 02: **$69,000 for +10,000 kW** against **$60,000 for +8,000**), and has **no cooldown constant** because the construction job whose duration doc 02 publishes is the cooldown. **Three arms, `tools/measure_dark_share.gd --days=50`, three seeds: fork 5.99 / 20.98 / 9.52 (mean 12.16 %); money alone 37.20 / 36.47 / 39.14 (mean 37.60 %); shipped 4.61 / 20.88 / 0.55 (mean 8.68 %).** **The money leaves the city lighter than it found it**, and **not one bound on the three gates this lane holds — 18b, 20, 21 — moves.** Gate 18b instead GAINS two assertions (`supply_kw_end > FOUNDING_SUPPLY_KW`, `supply_kw_end > demand_kw_end`) that would have caught this wall five waves ago and cost nothing, because the run is already made. **Five bounds elsewhere in the gate file did move, all collateral, and doc 92 §63.7.1 derives each against a printed row of the gates' own rig** (`tools/measure_gate_row.gd`, new): gate 4's `damaged_end` → `destroyed_end` (a transit state replaced by a terminal one — 0 vs 69 where the transient read 1 vs 0); gate 4b's repair-share FLOOR 0.03 → 0.02 (the DENOMINATOR doubled, $2,304/gh → $5,039/gh; the ceiling does not move); gate 4b's `min_condition_end` → `min_condition_floored_end` (the assertion was reading the worst building of ANY kind against a floor doc 02 §2.6a exempts damaged and dark buildings from — 0.668 / 0.715 / 0.673 measured against `band_worn` 0.60); gate 12b's `TAX_SQUEEZE_POP_MAX_RATIO` 1.05 → **0.93**, which RESTORES the pre-Wave-22 bound because the statistic is fittable again (0.699 / 0.702 / 0.714, the tightest it has ever measured); and gate 33's `DIRECTOR_LAST_START_FRACTION` 0.6 → 0.5 on a statistic the FORK passed by 1.2 game-days. Gate 12c's tradeoff arm is re-stated rather than re-fitted and the finding is PUBLISHED: squeezing is now a −4.04 % loss, its cause is `tax.TAX_RATE_GROWTH_COEFF`, and re-fitting that by hand is what AC-2 forbids this lane — filed as AC-24-5.
 
-*Files: `tools/playtest.gd`, `tools/measure_dark_share.gd` (new), `tools/probe_dark.gd` (new), `tests/test_balance_gates.gd`, doc 92 §63.2–§63.3*
+*Files: `tools/playtest.gd`, `tools/measure_dark_share.gd` (new), `tools/probe_dark.gd` (new), `tools/measure_gate_row.gd` (new), `tests/test_balance_gates.gd`, doc 92 §63.2–§63.3, §63.7*
 
 ### RR-199 — retroactive back-pay: a ledger of dollars, and doc 08 city-section rung 10 (docs 03 §2.5a.1, 08 §2.8, 92 §63.4, 93 §AW3)
 
@@ -8924,9 +8924,9 @@ doc 12 §2.19 D-98/D-99.*
 
 *Files: `sim/economy/treasury.gd`, `sim/economy/cost_curves.gd`, `sim/city_sim.gd`, `data/economy.json`, `tests/test_grant_arrears.gd`, docs 03 §2.5a.1, 08 §2.8*
 
-### RR-200 — the receipt, because fourteen million dollars arriving in silence is a bug (docs 12 §2.19 D-98/D-99)
+### RR-200 — the receipt, because fourteen million dollars arriving in silence is a bug (docs 12 §2.19 D-112/D-113)
 
-**`ui_root._check_grant_arrears` pushes one toast — *"Back-pay collected — $14,922,000 for levels 1–5"* — with §2.21's payday chip flash behind it.** The rung span comes off the event's own `levels` array, so the copy cannot claim a rung the sim did not pay for. It is a SEPARATE toast from D-95's level-up toast and not a fold into it, because it is a different moment — nothing was earned, a debt was settled — and the two can never collide, since arrears are emitted inside a restore and a level-up cannot be. **D-99 is the row that ships no code:** `_pay_level_up_grant` now pays a DIFFERENCE, and D-95 already read the amount off the sim's own event rather than off `data/economy.json`, so a rung paying $3,977,500 because $22,500 was collected years ago says $3,977,500 on the toast with no change. That is D-95's own stated reason — *"a toast that predicted a payment could be right about the table and wrong about the city"* — paying off one wave later against a case that did not exist when it was written.
+**`ui_root._check_grant_arrears` pushes one toast — *"Back-pay collected — $14,922,000 for levels 1–5"* — with §2.21's payday chip flash behind it.** The rung span comes off the event's own `levels` array, so the copy cannot claim a rung the sim did not pay for. It is a SEPARATE toast from D-95's level-up toast and not a fold into it, because it is a different moment — nothing was earned, a debt was settled — and the two can never collide, since arrears are emitted inside a restore and a level-up cannot be. **D-113 is the row that ships no code:** `_pay_level_up_grant` now pays a DIFFERENCE, and D-95 already read the amount off the sim's own event rather than off `data/economy.json`, so a rung paying $3,977,500 because $22,500 was collected years ago says $3,977,500 on the toast with no change. That is D-95's own stated reason — *"a toast that predicted a payment could be right about the table and wrong about the city"* — paying off one wave later against a case that did not exist when it was written.
 
 *Files: `ui/ui_root.gd`, `data/strings.en.json`, doc 12 §2.19*
 
@@ -8987,6 +8987,25 @@ this lane.**
   is already shipped (`tools/probe_dark.gd`, plus `supply_kw_end` /
   `demand_kw_end` on the playtest summary); what remains is re-cutting the gate's
   assertion into three.
+* **AC-24-5 — `tax.TAX_RATE_GROWTH_COEFF` was fitted against a money-limited
+  city and this money removed the limit.** Gate 12c's tradeoff arm measures
+  `tax_squeezer` creating **4.04 % LESS** value than `balanced` ($4,927,506
+  against $5,135,120) where the fork measured **+39.6 %**, and the grant is not
+  what compresses it: both arms take exactly curriculum rungs 1 and 2 inside the
+  21-day horizon, and net of the identical $3,000,000 the gap is −9.7 %.
+  **Owner:** the lane that holds doc 03's tax curve. This lane publishes the
+  finding and bounds the LOSS (`TAX_SQUEEZE_VALUE_MIN_RATIO` 0.90, measured
+  0.9596) rather than re-fitting a constant it does not own, which is report 98
+  AC-2's own rule. Doc 92 §63.7.1 item (5), §63.9 AC-24-5.
+* **AC-24-6 — the Disaster Director's tail, on BOTH arms.** 23–28 game-days of a
+  60-game-day run carry no new event, with the threat pool full (40.0) and
+  nothing in flight (0 active) on the fork and on the shipped tree alike. Gate
+  33's `DIRECTOR_LAST_START_FRACTION` moves 0.6 → 0.5 because the FORK passed
+  0.6 by 1.2 game-days on a statistic whose variance is 1.6 inter-event
+  intervals; the stall assertion with teeth (`started >= 8`, fork 2, shipped 18)
+  is untouched. **Owner:** the lane that holds doc 07's cadence. The instrument
+  is `tools/probe_director.gd`, unchanged and pre-existing. Doc 92 §63.7.1 item
+  (6), §63.9 AC-24-6.
 
 **No `tests/test_event_matrix.gd` row is owed.** The one new sim event this wave
 emits, `level_up_grant_arrears_paid`, has a consumer in the same commit

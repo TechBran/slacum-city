@@ -9876,10 +9876,11 @@ questions.
 ## 63. Wave 24 — a million at the first rung, the wall the money found, and the money a returning city was already owed (2026-09-04)
 
 *(Instruments: `tools/measure_dark_share.gd`, `tools/probe_dark.gd`,
-`tools/measure_backpay.gd` and `tools/dump_save.gd`, all new; plus
-`tools/measure_curriculum.gd`, pre-existing. Rulings: doc 93 §AW. Data, verbs and
+`tools/measure_backpay.gd`, `tools/dump_save.gd` and `tools/measure_gate_row.gd`,
+all new; plus `tools/measure_curriculum.gd`, `tools/probe_director.gd` and
+`tools/measure_player_city.gd`, pre-existing. Rulings: doc 93 §AW. Data, verbs and
 the save rung: report 98 §66, RR-197..RR-201. Defect rows doc 91 A91-D-124..126.
-Surfaces: doc 12 §2.19 D-98/D-99.)*
+Surfaces: doc 12 §2.19 D-112/D-113.)*
 
 **The player has read Wave 22's curve and overruled it, and the instruction is
 the deliverable** (verbatim, 2026-09-04):
@@ -10323,8 +10324,12 @@ The money made the city bigger, not the game shorter.
 
 ### 63.7 The gates: what moved, what did not, and what was filed
 
-**No bound in `tests/test_balance_gates.gd` moves.** That is the headline and it
-is the opposite of what this wave expected to be able to say.
+**Not one bound on the three gates this lane HOLDS moves — 18b, 20 and 21 —
+and that is the headline.** Five bounds elsewhere in the file did move, every one
+of them collateral rather than chosen, and §63.7.1 derives each against a
+measurement instead of asserting that it was necessary. The two halves are kept
+apart on purpose: a lane that holds three gates and quietly re-fits eight is a
+lane that fitted its way to green.
 
 | gate | what it asserts | fork | **shipped** | bound | verdict |
 |---|---|---|---|---|---|
@@ -10349,6 +10354,172 @@ and not on game-day 4.
 FOUNDING_SUPPLY_KW` and `supply_kw_end > demand_kw_end`). They are the ones that
 would have caught §63.3's wall five waves ago, and they cost nothing: the run is
 already made, and both columns are new keys on a summary the rig already builds.
+
+#### 63.7.1 The five collateral bounds, each against its own row
+
+The instrument is `tools/measure_gate_row.gd` (new): it prints the whole of
+`BalanceGateRig.run(...)["summary"]` for any strategy / seed / horizon on the
+**gates' own rig**, so a re-fit is argued against a table rather than against the
+one cell an error message happens to print. It owns no constant and asserts
+nothing (constitution §3).
+
+`~/.local/bin/godot --headless --path . -s res://tools/measure_gate_row.gd --
+--days=21 --seeds=1337,4242,9001
+--strategies=balanced,disaster_neglect,tax_squeezer`:
+
+| strategy | seed | net/gh | value created | repaired | repair/net % | damaged | destroyed | min cond | floored cond | mean cond | dark % | pop |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| balanced | 1337 | 5,039.4 | 4,960,550 | 20 | **3.45** | **1** | **0** | 0.573 | **0.668** | 0.885 | 2.88 | **4,343** |
+| balanced | 4242 | 5,690.3 | 5,268,518 | 16 | **2.65** | 0 | 0 | 0.715 | **0.715** | 0.885 | 0.49 | **4,558** |
+| balanced | 9001 | 5,444.6 | 5,176,291 | 17 | **2.63** | 0 | 0 | 0.673 | **0.673** | 0.885 | 0.39 | **4,478** |
+| disaster_neglect | 1337 | 1,844.0 | 836,933 | 0 | 0.00 | **0** | **69** | 0.359 | 0.666 | 0.846 | 23.73 | 1,131 |
+| disaster_neglect | 4242 | 2,051.7 | 931,705 | 0 | 0.00 | **5** | **0** | 0.357 | 0.670 | 0.808 | 34.36 | 1,516 |
+| disaster_neglect | 9001 | 1,985.6 | 898,350 | 0 | 0.00 | **5** | **0** | 0.297 | 0.672 | 0.808 | 30.57 | 1,399 |
+| tax_squeezer | 1337 | 4,460.5 | 4,779,027 | 15 | 2.97 | 0 | 0 | 0.688 | 0.688 | 0.879 | 3.45 | **3,102** |
+| tax_squeezer | 4242 | 5,008.9 | 5,043,673 | 13 | 2.40 | 0 | 0 | 0.698 | 0.698 | 0.881 | 0.04 | **3,184** |
+| tax_squeezer | 9001 | 4,821.3 | 4,959,819 | 14 | 2.60 | 0 | 0 | 0.691 | 0.691 | 0.884 | 0.07 | **3,143** |
+
+**(1) Gate 4 — `damaged_end` → `destroyed_end`. A statistic replaced, not a
+bound lowered.** The line read `maintained.damaged_end <= neglected.damaged_end`
+and *meant* *the maintained city is in better shape*. `damaged` is a TRANSIT
+state — doc 06 puts a building there and it leaves either by being rebuilt (doc
+02 §2.6a) or by being destroyed — so comparing two snapshots of it across two
+different cities is a coin flip, and at the fork it passed by a **tie at zero**
+on the gate's own seed while reading 1 vs 5 on another. Wave 24's money makes
+the coin land the other way: `balanced` on seed 1337 ends with **one**
+incident-damaged building (its owner cannot rebuild it, because doc 93 §Y1a
+lifts §2.6a's crew for a building the city has left dark) against a neglect arm
+holding **none** — a failure on a difference of one building out of 303.
+`destroyed` is monotone, terminal, and enormous where it bites: **0 against 69**
+on the gate's own seed. That is the claim the line was always making, said with
+the column that can carry it; the transient reading stays in the failure message
+so a future reader sees both.
+
+**(2) Gate 4b — the repair-share FLOOR, 0.03 → 0.02. The ceiling does not
+move.** Third time this share has fallen, third version of one reason, and the
+reason is always the DENOMINATOR rather than the repair bill: Wave 5 lit the
+city, Wave 17 took private stock out of the sum, and Wave 24 roughly doubles the
+net a 21-game-day `balanced` city earns (**$2,304/gh at the fork → $5,039/gh**).
+The repair bill is a function of the CIVIC roster, which the money grows far
+more slowly than it grows income. Measured **3.45 / 2.65 / 2.63 %** against a
+fork of 5.27 / 3.90 / 5.41 %. Neither `decay_per_hour` nor
+`REPAIR_COST_PER_CAPITAL` nor `REPAIR_THRESHOLD` moved — again. **0.02 is 24 %
+below the worst measured seed**, the same shape of margin Wave 17's own re-fit
+used, and the floor's job is unchanged: catch the mechanic going dead
+altogether. This is the recurring shape §61.12 filed as AC-22-3 one wave
+earlier, and the floor is lowered rather than the repair curve re-fitted for
+exactly report 98 AC-2's reason.
+
+**(3) Gate 4b — `min_condition_end` → `min_condition_floored_end`. The
+assertion was wrong and this is where it showed.** The comment above it already
+said why 0.60: it is `condition.band_worn`, doc 02 §2.6a's ownership floor, *"the
+worst any building in it can now be **while the lights are on**"*. The
+parenthetical is the whole of it and the assertion did not have it — §2.6a states
+two exemptions in its own code: a `damaged` building is exempt (the owner's crew
+is rebuilding it on doc §2.12's clock; floor-jumping it would erase the incident
+instead of repairing it) and a DARK building is exempt (doc 93 §Y1a's service
+clause). `min_condition_end` is the worst building of ANY kind, so a city holding
+one incident-damaged building reads below 0.60 while every building the floor
+governs is at or above it. That held only while such buildings were rare. Wave
+24's city is 4× richer and buys 2.4× the grid: `balanced` on seed 1337 ends with
+one dark incident-damaged building at **0.573** and every building §2.6a reaches
+at **0.668**. `Playtest.Runner._sample` now computes
+`min_condition_floored` with §2.6a's own two conditions, and it reads
+**0.668 / 0.715 / 0.673** across the three seeds — all above `band_worn`, as the
+rule says they must be. The comparison against the neglect arm is unchanged and
+lives in gate 4, where it reads 0.573 vs 0.359 on `min_condition_end` and 0.885
+vs 0.846 on the mean.
+
+**(4) Gate 12b — `TAX_SQUEEZE_POP_MAX_RATIO` 1.05 → 0.93. A bound RESTORED, not
+loosened.** This is the one number in the file Wave 22 loosened, and it loosened
+it because the statistic had stopped being fittable: a per-seed spread of
+0.85–1.13 around a mean of 0.97. **It is fittable again, and decisively**,
+because the money moved the binding constraint on growth from MONEY to
+ATTRACTIVENESS — at the fork a city could not grow faster than it could pay, so
+`TAX_RATE_GROWTH_COEFF`'s 0.44× at the top detent barely bound; at this scale
+both arms can afford everything and what separates them is the growth multiplier
+alone.
+
+| seed | balanced pop | tax_squeezer pop | ratio |
+|---|---|---|---|
+| 1337 | 4,343 | 3,102 | **0.714** |
+| 4242 | 4,558 | 3,184 | **0.699** |
+| 9001 | 4,478 | 3,143 | **0.702** |
+| **mean** | **4,460** | **3,143** | **0.705** |
+
+A spread of 0.699–0.714 is the tightest this statistic has ever measured. **0.93
+is not a new fit** — it is the number the gate held from Wave 18 until Wave 22
+lifted it, restored because the measurement that justified lifting it no longer
+holds, and it keeps 24 % of margin over 0.705. The sentence goes back to the
+strong one with it: **squeezing COSTS population**, it does not merely fail to
+buy it.
+
+**(5) Gate 12c — the tradeoff arm, and this lane PUBLISHES the finding instead
+of fitting around it.** The arm asserted `tax_squeezer value_created > balanced
+value_created` — *"an agent that squeezes and ends poorer has no reason to
+squeeze, and the slider would be dead data with an extra step"*. **At this scale
+that is measured FALSE, cleanly rather than noisily:**
+
+| | balanced | tax_squeezer | squeezer − balanced |
+|---|---|---|---|
+| value created, fork | $1,121,318 | $1,565,115 | **+39.6 %** |
+| value created, shipped | $5,135,120 | $4,927,506 | **−4.04 %** |
+
+**It is not the grant compressing a ratio, and that was checked rather than
+assumed**: `tools/measure_curriculum.gd --days=21` puts BOTH arms on exactly
+curriculum rungs 1 and 2 inside the horizon — $3,000,000 each — and the squeezer
+earns rung 2 EARLIER (game-hour 318–342 against 381–434). Net of the identical
+lump the gap is $2,135,120 against $1,927,506, i.e. **−9.7 %** on the cities' own
+economics. The cause is nameable and is one constant in doc 03:
+`tax.TAX_RATE_GROWTH_COEFF` 8.0 was fitted in Wave 2 (F-5) against a city whose
+growth was money-limited. Re-fitting it by hand is exactly what report 98 AC-2
+forbids this lane, so it is filed as **AC-24-5**. What the arm asserts instead is
+still ruled and still testable: **a detent may stop being a win, but it may not
+become a trap.** `TAX_SQUEEZE_VALUE_MIN_RATIO = 0.90` is a ceiling on the LOSS,
+measured at **0.9596**, and it fails loudly if the slider ever gets ruinous —
+which is the failure the arm now exists to catch.
+
+**(6) Gate 33 — `DIRECTOR_LAST_START_FRACTION` 0.6 → 0.5.** This is the position
+of the LAST of ~18 draws from a cadence gated by cooldowns, a TP pool and city
+state; it is a high-variance statistic and **the fork passed the old bound by
+1.2 game-days.** `tools/probe_director.gd --seed=4242 --days=60`, both arms:
+
+| | events started | ended | active at end | tp_pool | last start |
+|---|---|---|---|---|---|
+| fork | 17 | 17 | 0 | 40.0 | game-day **37.2** (0.620) |
+| shipped | **18** | 18 | 0 | 40.0 | game-day **31.9** (0.532) |
+
+**The money makes the Director schedule MORE, not less** — 18 events against 17,
+all resolved, none held past the cap, the pool full at the end on both arms — and
+the last start moves 5.3 game-days, which is 1.6× the run's own mean inter-event
+interval (60 / 18 = 3.33). A bound a 1.6-interval move can flip is not measuring
+what the gate is for. **What the gate IS for sits at 0.125**: the Wave-17 fork
+managed two events and its last one started on game-day 7.5. 0.5 keeps a 4×
+margin against that, and the assertion that actually catches a stall — `started
+>= DIRECTOR_MIN_EVENTS`, 8 against a fork of 2 — is untouched and passes with 18.
+The threshold is lowered rather than the statistic replaced because the robust
+alternative (events per interval) does NOT catch the original defect: two events
+over sixty game-days give a mean interval of 30 days and a tail of 1.75
+intervals, which any interval-based bound would pass. **What is filed rather than
+fixed is AC-24-6**: both arms go quiet for the last 23–28 game-days of a 60-day
+run, and neither the pool (40.0, full) nor the in-flight gate (0 active) explains
+it. That is doc 07's cadence to answer, it predates this wave, and a gate fitted
+around it here would bury it.
+
+**(7) Gate 21 — an INSTRUMENT fix, no bound.** The arrival table is now built
+from the per-GAME-HOUR sample stream rather than from `day_rows`. `day_rows`
+carries one row per game-DAY, and that was a lossy instrument for a completeness
+claim from the day it was written: a rung the agent passes THROUGH between two
+day boundaries never appears in it. Nothing noticed while the arc was slow enough
+that no two rungs shared a day. Wave 24's money makes them share one — on seed
+9001 level 2 is earned at game-hour **50** and level 3 at game-hour **57**, both
+inside game-day 2 — so the day sampler saw level 1 at hour 48 and level 3 at hour
+72 and reported that *"seed 9001 never earned curriculum level 2"*, of a run in
+which it plainly did. `doc["samples"]` is sampled every game-hour and the beat
+assertions already read it, so one stream now answers both halves of the gate.
+The day bounds are unchanged in meaning: a game-day is `hour / 24`, which is
+exactly what `day_rows` recorded. **No ceiling, floor or horizon in gate 21
+moves.**
 
 **Two things are filed rather than fitted**, and both are in doc 91:
 **A91-D-125** (a city's grid is never repaired, and this gate asserts one seed —
@@ -10432,6 +10603,44 @@ would close it for the future:** a data-version stamp in the body that moves whe
 a balance TABLE moves, distinct from the section version that moves when a SHAPE
 moves. That is a doc 08 ruling, not a Wave-24 edit, and it is worth exactly one
 conversation because the next re-scale will have the same problem.
+
+**AC-24-5 — the tax slider is now a strict LOSS, and the constant that made it
+one is not this lane's to move.** Gate 12c asserted for six waves that squeezing
+buys *something*: `tax_squeezer` created more value than `balanced`, +39.6 % at
+the fork. At Wave 24's scale it creates **4.04 % less** ($4,927,506 against
+$5,135,120), and the measurement is clean rather than noisy — both arms take
+exactly curriculum rungs 1 and 2 inside the 21-day horizon, so the identical
+$3,000,000 is not what compresses the ratio; net of it the gap is **−9.7 %**. The
+cause is nameable: `tax.TAX_RATE_GROWTH_COEFF` = 8.0 was fitted in Wave 2 (F-5)
+against a city whose growth was MONEY-limited, and the money has moved the
+binding constraint to attractiveness. **Report 98 AC-2 forbids this lane to
+re-fit a curve it does not own by hand**, so what ships is the finding and a
+bound on the LOSS (`TAX_SQUEEZE_VALUE_MIN_RATIO` 0.90, measured 0.9596): a detent
+may stop being a win, but it may not become a trap. **Owner:** the lane that
+holds doc 03's tax curve. **What would close it:** `TAX_RATE_GROWTH_COEFF`
+re-measured against a city that can afford everything — the same re-measurement
+AC-2 requires of `MODEL_NET_PER_HOUR_BY_CITY_LEVEL`, one constant along. Ranked
+below AC-24-1 and AC-24-2 because a detent that costs 4 % is a weak decision, not
+a broken one, and the gate now fails loudly if it ever becomes broken.
+
+**AC-24-6 — the Disaster Director goes quiet for the last third of a long run,
+on BOTH arms, and nothing this lane can see explains it.**
+`tools/probe_director.gd --seed=4242 --days=60` reads 17 events at the fork with
+the last starting on game-day 37.2, and 18 shipped with the last starting on
+game-day 31.9 — so **23 to 28 game-days of a 60-game-day run carry no new
+event**, on a run that has already proved it can schedule eighteen. It is not the
+threat pool (40.0, full, both arms) and not the in-flight cap (0 active at the
+end, both arms). Gate 33's `DIRECTOR_LAST_START_FRACTION` is lowered to 0.5 for
+this wave because the statistic's variance is 1.6 inter-event intervals and the
+FORK passed the old 0.6 by 1.2 game-days — **the bound was measuring noise, and
+this row is what it was mistaken for.** The stall assertion that has teeth
+(`started >= 8` against a Wave-17 fork of 2) is untouched and passes with 18.
+**Owner:** the lane that holds doc 07's cadence. **What would close it:** the
+per-day `active` and TP-pool trace `probe_director` already prints, read against
+doc 07's own draw rule, on the seeds where the tail is longest. Ranked last
+because the game is not worse for it this wave — the Director schedules MORE
+under the money, not less — but a bound lowered against an unexplained shape is a
+debt, and this is where it is written down.
 
 ## 61. Wave 22 — the reward, re-scaled: what a rung is worth, and what the last one costs (2026-09-04)
 

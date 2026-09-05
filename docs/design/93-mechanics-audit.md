@@ -5036,7 +5036,7 @@ able to collect it for all of them AUTOMATICALLY — you should just check if yo
 have received it, and if you haven't, then you get it. That way we can keep one
 city going for a while." §AW1 rules on the curve between the two anchors; §AW2 on
 what the money broke and what that turned out to be; §AW3 on the shape of the
-back-pay; §AW4 on the two things this lane found and deliberately did not fix.*
+back-pay; §AW4 on the four things this lane found and deliberately did not fix.*
 
 ### AW1. Two anchors and a straight line — and the anti-farm argument survives it
 
@@ -5168,7 +5168,7 @@ labelled as such: crediting the larger is what makes double payment impossible
 rather than unlikely, and the cost is published (at most $487,000 under-credited
 on a $15,000,000 settlement).
 
-### AW4. Two things this lane found and did not fix, both filed
+### AW4. Four things this lane found and did not fix, all filed
 
 **(a) A city's grid is never repaired, and gate 18b cannot see it** (doc 91
 **A91-D-125**). Seed 4242 reads **20.98 % at the fork** — over gate 18b's own
@@ -5191,6 +5191,28 @@ broken*, and a wave reading the sum will fix whichever of the three it happened
 to guess. That is exactly what nearly happened here. Filed as Medium with the
 instrument attached, because the instrument is the cheap half and splitting the
 gate's assertion is the expensive one.
+
+**(c) The tax slider stopped being a win, and the constant that made it one is
+not this lane's** (doc 92 §63.9 **AC-24-5**). Gate 12c's tradeoff arm has
+asserted for six waves that squeezing buys *something*; at this scale
+`tax_squeezer` creates **4.04 % less** value than `balanced` where the fork
+measured +39.6 %, and net of the identical curriculum money the gap is −9.7 %.
+The cause is `tax.TAX_RATE_GROWTH_COEFF` = 8.0, fitted in Wave 2 against a city
+whose growth was MONEY-limited. **This lane publishes it and does not re-fit
+it**, because report 98 AC-2's rule is that a lane re-measures the row it moved
+and does not hand-fit the curves that read it. What the arm asserts instead is
+the thing that is still ruled: **a detent may stop being a win, but it may not
+become a trap** — `TAX_SQUEEZE_VALUE_MIN_RATIO` 0.90 against a measured 0.9596.
+
+**(d) A bound was lowered against a shape nobody has explained, and it is
+written down rather than absorbed** (doc 92 §63.9 **AC-24-6**). Gate 33's
+`DIRECTOR_LAST_START_FRACTION` moves 0.6 → 0.5, and the honest reason is that
+the FORK passed 0.6 by 1.2 game-days on a statistic whose variance is 1.6
+inter-event intervals. The underlying shape — 23–28 game-days of a 60-day run
+with no new event, on both arms, with the threat pool full and nothing in flight
+— is doc 07's cadence to answer and predates this wave. The assertion that
+catches an actual stall (`started >= 8`, against a Wave-17 fork of 2) is
+untouched and reads 18.
 
 ## AU. Wave-22 rulings — what a rung is allowed to be worth, and what the last one has to ask for (2026-09-04)
 

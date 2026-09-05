@@ -3328,6 +3328,21 @@ class Runner extends RefCounted:
 		var damaged := 0
 		var destroyed := 0
 		var min_condition := 1.0
+		## **The worst building the doc 02 §2.6a ownership FLOOR actually
+		## governs** (Wave 24, doc 92 §63.7). §2.6a holds private stock at
+		## `condition.band_worn` 0.60, and it holds it under exactly two
+		## conditions the rule states itself: the building is not `damaged` (an
+		## incident put it there and the owner's crew is rebuilding it, on doc
+		## §2.12's own clock, with the floor deliberately not applied), and it is
+		## not DARK (doc 93 §Y1a's service clause — *an owner the city has left
+		## in the dark cannot hold anything*, which is what keeps neglect fatal).
+		##
+		## `min_condition` above is the worst building of ANY kind, so a city
+		## with one incident-damaged building or one dark one reads below 0.60
+		## while every building the floor reaches is at or above it. That is a
+		## different claim, and gate 4b was asserting the first while meaning the
+		## second — which held only for as long as such buildings were rare.
+		var min_condition_floored := 1.0
 		var condition_sum := 0.0
 		var counted := 0
 		for id in sim.buildings:
@@ -3342,6 +3357,9 @@ class Runner extends RefCounted:
 				min_condition = minf(min_condition, b.condition)
 				condition_sum += b.condition
 				counted += 1
+			if b.owner_maintained and b.state == &"active" \
+					and sim.grid.power_availability_hour(String(id)) > 0.0:
+				min_condition_floored = minf(min_condition_floored, b.condition)
 			if b.archetype == &"substation":
 				continue
 			metered += 1
@@ -3379,6 +3397,7 @@ class Runner extends RefCounted:
 			"damaged_buildings": damaged,
 			"destroyed_buildings": destroyed,
 			"min_condition": min_condition,
+			"min_condition_floored": min_condition_floored,
 			"mean_condition": condition_sum / maxf(1.0, float(counted)),
 			"open_incidents": sim.incidents.active_count() if sim.incidents != null else 0,
 			"failed_components": _failed_components(sim),
@@ -3556,6 +3575,9 @@ class Runner extends RefCounted:
 			"blocks_owned_end": int(last["blocks_owned"]),
 			"min_condition": condition_min,
 			"min_condition_end": float(last["min_condition"]),
+			## The worst building doc 02 §2.6a's ownership floor governs — see
+			## the sample builder for the two exemptions the rule states itself.
+			"min_condition_floored_end": float(last["min_condition_floored"]),
 			"mean_condition_end": float(last["mean_condition"]),
 			"damaged_end": int(last["damaged_buildings"]),
 			"destroyed_end": int(last["destroyed_buildings"]),

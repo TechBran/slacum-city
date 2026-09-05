@@ -337,19 +337,29 @@ static func _sha256_of(text: String) -> String:
 	return ctx.finish().hex_encode()
 
 
-func test_the_city_section_is_on_rung_nine() -> void:
+func test_the_city_section_is_on_rung_ten() -> void:
 	# The constant, the published accessor and the bytes on disk must agree.
 	# A bump that lands in only two of the three is how a save silently keeps
 	# claiming to be something it is not.
 	#
-	# **Rung 9, Wave 19** (report 98 §60 RR-170): doc 03 §2.5b's commissions
-	# board adds one top-level key, `contracts`, and one entry inside an existing
-	# one, `rng.contracts` — the same two shapes rung 7 added for the street
-	# layer, and `_v8_to_v9` is the identity function for the same reason
-	# `_v6_to_v7` was: an absent block deserialises to an empty board, which is
-	# what a city that has never seen the board should restore to.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 9,
-			"the commissions board is rung 9 (doc 08 §2.8, report 98 §60 RR-170)")
+	# **Rung 10, Wave 24** (report 98 §66 RR-199): doc 03 §2.5a.1's celebration-
+	# grant LEDGER adds one key inside an existing block, `treasury.
+	# grant_paid_by_level` — and it is the first rung on this ladder whose
+	# migrator can neither supply the new key nor honestly leave it out, because
+	# a v9 city at curriculum level 5 HAS been paid and a zeroed ledger would
+	# have the back-pay pay it a second time for every rung it climbed. So
+	# `_v9_to_v10` MARKS rather than answers, in v2 → v3's line and for v2 → v3's
+	# two reasons: the answer needs `data/economy.json`'s superseded tables,
+	# which doc 08 §2.8 forbids a migrator from opening, and it needs the
+	# restored city's own curriculum level, which does not exist until
+	# `CitySim._restore_goals` returns.
+	#
+	# **Rung 9, Wave 19** (report 98 §60 RR-170) was doc 03 §2.5b's commissions
+	# board: one top-level key, `contracts`, plus `rng.contracts`, with
+	# `_v8_to_v9` the identity function for the same reason `_v6_to_v7` was.
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 10,
+			"the celebration-grant ledger is rung 10 (doc 08 §2.8, report 98 "
+			+ "§66 RR-199)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()
