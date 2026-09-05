@@ -9522,8 +9522,15 @@ Wave 17's POWER section — header, draw line, shed line, N hop rows each with a
 title, a reading, an UPGRADE button, a checklist and an armed REMOVE row, then
 the next-level line and the fix strip — becomes **one row**:
 `Power · fed by T-03 · 78 % · ›`, or `Power · NOT SERVED · ›`, which opens S18.
-The water block takes the same treatment for the same reason. Measured in doc 92
-§65.4.
+Measured in doc 92 §65.4.
+
+**The water block does NOT take the same treatment, and the asymmetry is the
+ruling** (doc 12 D-116, doc 93 §AY3, doc 92 §65.4). It is the same shape read the
+other way: a transformer HAS a surface to be handed to, so collapsing its section
+MOVES a verb; a doc-05 node has none, so collapsing its section would DELETE one —
+A91-D-19 run backwards. `_render_water` and `_build_water_row` are untouched by
+this wave and `WTR-1` is exactly the length it was. (An earlier draft of this
+section said the opposite; the code, the measurement and doc 12 all say this.)
 
 **The three blocks that were examined and KEPT are as much of the ruling as the
 two that moved** (doc 93 §AY3): the priority row is a decision only this panel
@@ -9531,6 +9538,22 @@ can make about this building; the coverage checklist is the requirement contract
 doc 12 §2.7 calls the game's most important teaching device; the progress block
 is the answer to *"is anything happening here?"*, which a player asks of the
 building and not of a queue.
+
+**One thing this wave broke and put back: the sRGB census.** `set_selected`'s
+ring (`game/render/power_infra_view.gd`) shipped a vertex colour array of 24
+`Color.WHITE` entries under `vertex_color_use_as_albedo`. It rendered correctly —
+white is 1.0 in both spaces, so the multiply was a no-op and the ring's authored
+gold rode `albedo_color`, which the engine decodes for free (A91-D-36, RR-91,
+RR-95) — but it put the file into
+`test_render_polish.gd::test_every_procedural_mesh_decodes_its_authored_vertex_colour`'s
+census of renderers that hand a shader authored colour raw, and that guard is a
+source-text census which cannot tell a white multiplier from a hue. **The array
+is deleted rather than decoded**: there was no authored colour in it, and a
+`srgb_to_linear` added to satisfy a census is the census measuring nothing. The
+ring is byte-identical on screen; the census is back to guarding five files, all
+of which genuinely carry hue on a vertex. Found by the full suite, not by the
+checkpoints — it is the one test in the tree that reads `game/render/*.gd` as
+TEXT, so nothing in the transformer suite could have caught it.
 
 ### 68.1 `game/main.gd` — the five snippets, with anchors
 

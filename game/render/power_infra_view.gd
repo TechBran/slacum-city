@@ -213,7 +213,6 @@ func _build_select_mesh() -> ArrayMesh:
 	var inner := Vector2(pad.x * 0.5 + SELECT_GAP_M, pad.y * 0.5 + SELECT_GAP_M)
 	var outer := inner + Vector2(SELECT_RING_M, SELECT_RING_M)
 	var verts := PackedVector3Array()
-	var colors := PackedColorArray()
 	var normals := PackedVector3Array()
 	# Four quads, one per side of the rectangle — a rounded ring would need a
 	# fan and this reads identically at the scale a 2.4 m cabinet occupies.
@@ -230,17 +229,27 @@ func _build_select_mesh() -> ArrayMesh:
 		for point: Vector2 in [a, b, c, a, c, d]:
 			verts.append(Vector3(point.x, 0.0, point.y))
 			normals.append(Vector3.UP)
-			colors.append(Color.WHITE)
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_COLOR] = colors
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.vertex_color_use_as_albedo = true
+	# **The hue rides `albedo_color` and NOWHERE else, and that is the sRGB
+	# ruling rather than a shortcut** (A91-D-36, report 98 RR-91/RR-95). A
+	# `source_color` uniform and `StandardMaterial3D.albedo_color` are decoded
+	# for free; a MultiMesh instance colour and a vertex COLOR are not. This ring
+	# carried a vertex `ARRAY_COLOR` array of 24 `Color.WHITE` entries with
+	# `vertex_color_use_as_albedo` — a multiply by one, which rendered correctly
+	# and decoded nothing, but put this file in
+	# `test_render_polish.gd::test_every_procedural_mesh_decodes_its_authored_vertex_colour`'s
+	# census of files that hand authored colour to a shader raw. The array is
+	# gone rather than decoded: there was no authored colour in it to decode, and
+	# a white multiplier that exists only to satisfy a guard is the guard
+	# measuring nothing. `SELECT_COLOR`'s alpha 0.85 reaches the shader through
+	# `albedo_color.a`, which is why TRANSPARENCY_ALPHA below still has work.
 	material.albedo_color = SELECT_COLOR
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
