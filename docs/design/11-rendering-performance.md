@@ -3987,12 +3987,30 @@ distance any body travelled between two frames — and separates the two clocks,
 A layer that animated nothing reads 0.000 in every column, and that is exactly
 what Wave 25's did.
 
+Measured pixel deltas between the three frames of each phase (threshold 8 of
+765, 1280x720):
+
+| phase | t → t+15 | t+15 → t+45 |
+|---|---|---|
+| SURVEY | 40 | 39 |
+| CLEARING | 3,759 | 9,373 |
+| GRADING | 20,442 | 44,800 |
+| ROAD_INSTALL | 6,397 | 7,044 |
+| UTILITY_CORRIDOR | 1,934 | 3,541 |
+| FINAL_DEVELOPMENT | 1,632 | 1,240 |
+
+SURVEY is the honest floor and not a defect: it has no machine on it — doc 09
+§2.3 gives it a `construction_crew` and this layer gives it two figures on the
+boundary — so all that moves is two 1.9 m men at 150 m.
+
 **And a seventh subject, which is the other half of the player's sentence.** The
 preview lays a run through the real `CitySim.cmd_place_road` and photographs it
 at three points along its own progress — `road_run_p15/50/85.png`: the paver, the
 roller a machine-length behind, the barricade bays across the working end and the
-gang around them. Measured pixel deltas between consecutive frames, 18,040 and
-11,542.
+gang around them. **18,042** and **11,622** px between consecutive frames. The
+run is laid on the FIRST of those shots and not at bring-up, so it cannot appear
+in the six per-phase `--census` lines, which are a published table about the
+BLOCK.
 
 **And the harness itself had a defect this wave found**: the preview bound
 `DevelopmentController`, so `LandWorksView._poll` — the only writer of a block's

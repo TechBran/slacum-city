@@ -10859,17 +10859,22 @@ on its first line and the harness is the only writer (A91-D-141). It shoots
 game-minutes with the work advancing alongside the clock; measured pixel deltas
 between the first and last frame of each phase, threshold 8 of 765:
 
-    survey        -> clearing              10,571 px
-    clearing      -> clearing_t45           8,723 px
-    grading       -> grading_t45           62,021 px
-    road_install  -> road_install_t45      11,386 px
-    utility       -> utility_t45            3,223 px
-    final         -> final_t45              1,919 px
+    phase                t -> t+15   t+15 -> t+45
+    SURVEY                      40             39
+    CLEARING                 3,759          9,373
+    GRADING                 20,442         44,800
+    ROAD_INSTALL             6,397          7,044
+    UTILITY_CORRIDOR         1,934          3,541
+    FINAL_DEVELOPMENT        1,632          1,240
+
+SURVEY is the honest floor: it has no machine — doc 09 §2.3 gives it a
+`construction_crew` — so all that moves is two 1.9 m men at 150 m.
 
 And a seventh subject, which is the other half of the player's sentence: the
 preview lays a run through the real `cmd_place_road` and shoots it at progress
 0.15 / 0.50 / 0.85 (`road_run_p15/50/85.png`) — paver, roller, barricade bays and
-the gang, 18,040 and 11,542 px between consecutive frames.
+the gang, 18,042 and 11,622 px between consecutive frames. It is laid on the
+FIRST of those shots, so it cannot appear in the six per-phase census lines.
 
 ### §71's open questions, ranked by what breaks if nobody takes them
 

@@ -172,6 +172,16 @@ func _process(delta: float) -> bool:
 ## its own progress. A paver, a roller and the barricade bays across the working
 ## end, on a corridor that really is under construction in the sim.
 func _shoot_road_run(delta: float, shot: Dictionary) -> bool:
+	# **Laid on the FIRST road shot, not at bring-up.** A run in flight during the
+	# six phase shots would put its paver, its roller and its gang into their
+	# `--census` lines, and those lines are a published table (doc 11 §2.19) that
+	# has to be about the BLOCK. The run is a separate subject and it starts when
+	# its own shots do.
+	if _run_job <= 0:
+		_lay_a_road()
+		if _run_job <= 0:
+			_shot_index += 1
+			return false
 	_works.motion.motion.set_run(_run_job, [], float(shot["progress"]))
 	_plant.set_game_minutes(float(shot["gm"]))
 	_works.motion.set_game_minutes(float(shot["gm"]))
@@ -231,11 +241,11 @@ func _plan() -> void:
 					"offset": offset,
 					"progress": clampf(base + offset / maxf(phase_gm, 1.0), 0.0, 1.0),
 					"path": dir.path_join(file)})
-	if _run_job > 0:
-		for progress: float in [0.15, 0.50, 0.85]:
-			_shots.append({"phase": ROAD_RUN, "gm": fixed if fixed >= 0.0 else 480.0,
-					"offset": 0.0, "progress": progress,
-					"path": dir.path_join("road_run_p%d.png" % int(progress * 100.0))})
+	# The run itself is laid on the first of these shots — see `_shoot_road_run`.
+	for progress: float in [0.15, 0.50, 0.85]:
+		_shots.append({"phase": ROAD_RUN, "gm": fixed if fixed >= 0.0 else 480.0,
+				"offset": 0.0, "progress": progress,
+				"path": dir.path_join("road_run_p%d.png" % int(progress * 100.0))})
 
 
 func _build() -> void:
@@ -295,7 +305,6 @@ func _build() -> void:
 	# not to `bind` above for one reason: `_enter_run` reads it and the phase poll
 	# does not, and the poll is the thing that must stay off in this harness.
 	_works.set_roads(_sim.roads)
-	_lay_a_road()
 	for _step in 16:
 		_plant.refresh(0.0, 0.0, 0.0)
 
