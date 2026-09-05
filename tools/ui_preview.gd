@@ -79,6 +79,13 @@ const SCREENS: Array[String] = [
 	#                           acting on before an incident exists.
 	#   `transformer_troubled`  CRITICAL: over its derated plate, smoking in the
 	#                           world, and the panel says so in words (A5).
+	#   `transformer_severe`    §5.10's SEVERE band — past `severe_load_ratio()`,
+	#                           odds-on to burn out inside the game-hour. The pad
+	#                           is throwing sparks and the panel has to be as
+	#                           loud as the world is.
+	#   `transformer_dark`      de-energized: a working unit with nothing behind
+	#                           it. Not a fault, and the panel must not dress it
+	#                           as one — the OFFLINE token, not the critical one.
 	#   `transformer_failed`    the state the wave exists for: burned out, the
 	#                           panel opens ON the crew, and every customer row
 	#                           reads DARK.
@@ -91,6 +98,7 @@ const SCREENS: Array[String] = [
 	#                           with a `+N more` line, so this is the state the
 	#                           cap exists for.
 	"transformer", "transformer_stressed", "transformer_troubled",
+	"transformer_severe", "transformer_dark",
 	"transformer_failed", "transformer_repairing", "transformer_crowded",
 	"land_buy", "land_blocked", "land_developing",
 	"drawer", "drawer_empty", "drawer_expanded", "drawer_water",
@@ -835,6 +843,15 @@ func _apply(screen: String) -> void:
 			_open_transformer(_band_transformer(PowerGrid.OVERLAY_WARNING_R + 0.05))
 		"transformer_troubled":
 			_open_transformer(_band_transformer(PowerGrid.OVERLAY_CRITICAL_R + 0.10))
+		"transformer_severe":
+			_open_transformer(_band_transformer(PowerGrid.severe_load_ratio() + 0.10))
+		"transformer_dark":
+			# De-energized, and the load is stale on purpose: doc 04's own rule is
+			# that state outranks any load number, so this is also the state that
+			# proves the panel reads the band rather than the ratio.
+			var dark := _busiest_transformer()
+			_sim.grid.component(dark)["energized"] = false
+			_open_transformer(dark)
 		"transformer_failed":
 			# Burned out, and the player can afford the crew — this is the panel
 			# in the state it was written for, opened on the repair.

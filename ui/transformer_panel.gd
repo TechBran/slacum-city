@@ -329,8 +329,7 @@ func _render(v: Dictionary) -> void:
 				{"peak": str(v["peak_text"]), "now": str(v["load_text"]),
 				"capacity": str(v["capacity_text"]),
 				"nameplate": str(v["nameplate_text"]),
-				"temp": RequirementFormatter.percent(0.0) if false \
-						else "%d °C" % int(round(float(v["ambient_c"]))),
+				"temp": _temperature(float(v["ambient_c"])),
 				"hour": int(v["peak_hour"])},
 				str(v["capacity_text"]))
 	_render_upstream(v.get("upstream", []) as Array)
@@ -482,8 +481,7 @@ func _build_repair(repair: Dictionary) -> void:
 	if bool(repair.get("in_flight", false)):
 		var crew := UIWidgets.label("RepairCrew", _text_args("ui_transformer_crew_on_it",
 				{"eta": UIWidgets.duration_text(config, float(repair["eta_gm"])),
-				"crews": int(repair["crews"]) if repair.has("crews") \
-						else int(repair.get("crewed", 0))},
+				"crews": int(repair["crewed"])},
 				""), &"LegendRow", true)
 		crew.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_apply_state_color(crew, HudModel.STATE_WARNING)
@@ -676,6 +674,15 @@ static func _distress_state(distress: int) -> StringName:
 		PowerGrid.DISTRESS_STRESSED:
 			return HudModel.STATE_WARNING
 	return HudModel.STATE_NORMAL
+
+
+## Today's ambient, as the one string the derating line splices. Whole degrees:
+## a transformer's plate moves with the weather in steps a player can feel, and a
+## tenth of a degree on a panel is a number nobody reads. The UNIT lives in
+## `data/strings.en.json`'s template, not here — this supplies the figure.
+func _temperature(celsius: float) -> String:
+	return _text_args("ui_transformer_temp", {"c": int(round(celsius))},
+			"%d °C" % int(round(celsius)))
 
 
 func _text(key: String, fallback: String) -> String:
