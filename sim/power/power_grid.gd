@@ -98,6 +98,85 @@ const ORPHAN_RATIO := 1.0e9
 const OVERLAY_WARNING_R := 0.75
 const OVERLAY_CRITICAL_R := 0.95
 
+## §5.10's bands as a SINGLE VERDICT about one component, in severity order —
+## the number `game/render/power_infra_model.gd` packs into the pad buffer and
+## the shaders switch on, and (Wave 25, RR-207) the number `ui/power_actions.gd`
+## puts a word beside on the transformer panel.
+##
+## **It lives here because every input is doc 04's.** The classifier was written
+## in the render layer, where doc 11's own header already said "every number this
+## class classifies on is READ out of `PowerGrid`, never re-authored here". A
+## panel that re-derived it would be a second opinion about whether a transformer
+## is in trouble — a pad drawn SEVERE with a panel calling it "getting full" is
+## exactly the disagreement A5's three-channel rule exists to prevent. One
+## function, two readers.
+const DISTRESS_CLEAN := 0      # energized, inside §5.10's NORMAL band
+const DISTRESS_STRESSED := 1   # WARNING band, or past the hazard knee, or worn
+const DISTRESS_TROUBLED := 2   # CRITICAL band — this one smokes
+const DISTRESS_SEVERE := 3     # odds-on to fail within the game-hour — sparks
+const DISTRESS_DARK := 4       # OPEN or de-energized: no hum, no heat, no smoke
+const DISTRESS_FAILED := 5     # burned out: charred, dead, a dying wisp
+const DISTRESS_COUNT := 6
+
+## The hazard rate, per game-hour, that defines `DISTRESS_SEVERE`: 1.0 means the
+## component is odds-on (1 − e⁻¹ = 63 %) to fail inside one game-hour.
+const SEVERE_HAZARD_PER_GH := 1.0
+## §2.7's reference ambient — the default `t_ambient` of every read-only query
+## here, and the temperature `severe_load_ratio()` is solved at, because a
+## smoking threshold that slid with the weather would make the same transformer
+## smoke and stop smoking while its load never moved.
+const REFERENCE_AMBIENT_C := 25.0
+
+
+## Which band a component is in. Pure, and the whole of the mapping:
+## `state` and `energized` win over any load number, because a burned-out
+## transformer with a stale 1.8 load ratio is CHARRED, not SPARKING.
+static func distress_band(state: String, energized: bool, load_ratio: float,
+		condition: float, temp_c: float) -> int:
+	if state == "FAILED":
+		return DISTRESS_FAILED
+	if state == "OPEN" or not energized:
+		return DISTRESS_DARK
+	if load_ratio >= severe_load_ratio():
+		return DISTRESS_SEVERE
+	if load_ratio >= OVERLAY_CRITICAL_R:
+		return DISTRESS_TROUBLED
+	if load_ratio >= OVERLAY_WARNING_R \
+			or temp_c >= float((HAZARD[&"transformer"] as Array)[0]) \
+			or condition < worn_condition_threshold():
+		return DISTRESS_STRESSED
+	return DISTRESS_CLEAN
+
+
+## The load ratio at which a transformer's hazard rate reaches
+## `SEVERE_HAZARD_PER_GH`, SOLVED from §2.6's own rows rather than picked.
+##
+## §2.6: θ_ss = θ_rated · r², temp = ambient + θ, stress = (temp − knee)/span,
+## hazard = h_cold + h_hot · stress³ per game-hour. Setting hazard = H and
+## inverting:
+##
+##     stress = ((H − h_cold) / h_hot)^⅓
+##     r      = √( (knee + span·stress − ambient) / θ_rated )
+##
+## With the shipped transformer row (θ_rated 55, knee 85, span 60, h_hot 2.00,
+## h_cold 0.00012) at 25 °C that is **r = 1.399**. Retuning §2.6 moves this line
+## with it; nothing has to be re-picked.
+static func severe_load_ratio(t_ambient: float = REFERENCE_AMBIENT_C,
+		hazard_per_gh: float = SEVERE_HAZARD_PER_GH) -> float:
+	var thermal: Array = THERMAL[&"transformer"]
+	var hazard: Array = HAZARD[&"transformer"]
+	var stress := pow(maxf(0.0, (hazard_per_gh - float(hazard[3]))
+			/ maxf(float(hazard[2]), 1e-9)), 1.0 / 3.0)
+	var theta := float(hazard[0]) + float(hazard[1]) * stress - t_ambient
+	return sqrt(maxf(0.0, theta) / maxf(float(thermal[0]), 1e-9))
+
+
+## The condition at which §2.6's wear/hazard multiplier `1 + 3(1−c)²` has
+## DOUBLED — past which a component is failing for its age rather than for its
+## load. `(1−c)² = ⅓ ⇒ c = 0.4226`.
+static func worn_condition_threshold() -> float:
+	return 1.0 - sqrt(1.0 / 3.0)
+
 ## How full a PLANNED transfer is allowed to leave the receiving component.
 ##
 ## Not §2.9's `auto_transfer_max_r` (0.95, `TIE_CLEAN_R`), and the difference is

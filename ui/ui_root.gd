@@ -125,6 +125,21 @@ signal land_fix_requested(fix_target: Dictionary)
 ## that names a target the router can act on is the same event wherever it is
 ## raised, and placement is the first screen a new player ever gets one on.
 signal build_fix_requested(fix_target: Dictionary)
+## S18's three verbs (doc 12 §2.25, Wave 25 — RR-206/RR-207). `action` is
+## `repair`, `upgrade` or `demolish`, and `result` is the sim's own
+## `{ok, reason_code, payload}` — one signal for three verbs, because the shell
+## does exactly one thing with all three: re-read the city. It replaces S5's
+## retired `grid_upgraded` / `grid_demolished` (doc 12 D-115).
+signal grid_action(action: StringName, component_id: String, result: Dictionary)
+## A transformer was SELECTED — by a tap on its pad, by the one-row POWER
+## summary on a building panel, or by a `Fix this →` on a `POWER_CAPACITY` row.
+## The shell highlights the pad in the world (`PowerInfraView.set_selected`) and
+## stamps `selected_entity_id`. `component_id` is `""` when the selection was
+## cleared, or when an UNSERVED building's row was tapped and there is nothing to
+## open — one signal, so the shell has one place to clear the highlight.
+signal transformer_selected(component_id: String)
+## A row of S18's customer list was tapped: go and look at that building.
+signal transformer_customer_selected(sim_id: String, world_pos: Vector3)
 ## §2.13's progression moment: the city level moved, and this is the one place
 ## that knows it before the alert row does.
 signal city_level_changed(level: int, unlocked: PackedStringArray)
@@ -191,7 +206,18 @@ var city_dashboard: CityDashboard
 var away_report: AwayReportSheet
 var build_sheet: BuildSheet
 var onboarding: OnboardingFlow
+## S5 (doc 12 §2.9). **Bound but never `setup()` here** — `game/main.gd` owns
+## its controller and calls `setup()` itself. The root holds the reference only
+## so it can wire S5's one door into S18 (`power_row_opened`), which is a
+## panel-to-panel route on one layer and has no business travelling out to the
+## shell and back (Wave 25, doc 12 D-115).
+var building_panel: BuildingPanel
 var land_panel: LandPanel
+## S18 — the transformer panel (doc 12 §2.25, Wave 25). BUILT rather than
+## authored, for the follow chip's reason and one more: the whole surface is one
+## `_build_static()`, so a scene tree could only ever be a second description of
+## it to keep in step by hand.
+var transformer_panel: TransformerPanel
 var toast_view: ToastView
 ## S0. Present in every mount and **closed in every one of them** — only
 ## `present_title()` opens it, and only `game/main.gd` calls that.
@@ -347,7 +373,15 @@ func _bind_nodes() -> void:
 	away_report = safe_area.get_node_or_null("ModalLayer/AwayReport") as AwayReportSheet
 	build_sheet = safe_area.get_node_or_null("SheetLayer/BuildSheet") as BuildSheet
 	onboarding = safe_area.get_node_or_null("CoachLayer/Onboarding") as OnboardingFlow
+	building_panel = safe_area.get_node_or_null(
+			"PanelLayer/BuildingPanel") as BuildingPanel
 	land_panel = safe_area.get_node_or_null("PanelLayer/LandPanel") as LandPanel
+	transformer_panel = panel_layer.get_node_or_null("TransformerPanel") as TransformerPanel \
+			if panel_layer != null else null
+	if transformer_panel == null and panel_layer != null:
+		transformer_panel = TransformerPanel.new()
+		transformer_panel.name = "TransformerPanel"
+		panel_layer.add_child(transformer_panel)
 	title_screen = safe_area.get_node_or_null("TitleLayer/TitleScreen") as TitleScreen
 	loading_veil = safe_area.get_node_or_null("VeilLayer/LoadingVeil") as LoadingVeil
 	tilt_slider = safe_area.get_node_or_null("HUDLayer/TiltSlider") as TiltSlider
@@ -423,6 +457,10 @@ func bring_up_screens() -> void:
 	# build sheet does: `game/main.gd` owns the sim, and `setup()` is idempotent.
 	if land_panel != null and land_panel.config == null:
 		land_panel.setup(config)
+	# S18 on the same terms as S4: the config alone, and no model until
+	# `game/main.gd` hands it the sim. `setup()` is idempotent.
+	if transformer_panel != null and transformer_panel.config == null:
+		transformer_panel.setup(config)
 	if toast_view != null and toast_view.config == null:
 		toast_view.setup(config)
 	# S0 comes up like everything else — with the shared config, and CLOSED. A
@@ -449,6 +487,8 @@ func bring_up_screens() -> void:
 		build_sheet.haptics = haptics
 	if land_panel != null:
 		land_panel.haptics = haptics
+	if transformer_panel != null:
+		transformer_panel.haptics = haptics
 	if street == null:
 		street = StreetModel.new(config)
 	_connect_screens()
@@ -512,6 +552,14 @@ func _connect_screens() -> void:
 	if onboarding != null:
 		_connect(onboarding.action_requested, _on_onboarding_action)
 		_connect(onboarding.finished, _on_onboarding_finished)
+	if building_panel != null:
+		_connect(building_panel.power_row_opened, _on_power_row_opened)
+	if transformer_panel != null:
+		_connect(transformer_panel.repaired, _on_transformer_repaired)
+		_connect(transformer_panel.upgraded, _on_transformer_upgraded)
+		_connect(transformer_panel.demolished, _on_transformer_demolished)
+		_connect(transformer_panel.customer_selected, _on_transformer_customer)
+		_connect(transformer_panel.closed, _on_transformer_closed)
 	if land_panel != null:
 		_connect(land_panel.purchased, _on_land_purchased)
 		_connect(land_panel.developed, _on_land_developed)
@@ -1929,6 +1977,75 @@ func show_land_block(block_id: String) -> bool:
 func close_land_panel() -> void:
 	if land_panel != null:
 		land_panel.close()
+
+
+# ---------------------------------------------------------------------------
+# S18 transformer panel (doc 12 §2.25, Wave 25 — RR-207)
+# ---------------------------------------------------------------------------
+
+## The shell's tap seam, one kind up from `show_land_block`:
+## `BuildController.pick_at_ground` said `component`, and this opens S18 on it.
+## Returns whether the panel took the tap, so the caller can fall through to its
+## own deselect when it did not — a build whose `TransformerPanel` has no model
+## must deselect exactly as it does today rather than eat the tap.
+func show_transformer(component_id: String) -> bool:
+	if transformer_panel == null or transformer_panel.model == null:
+		return false
+	transformer_panel.show_component(component_id)
+	return transformer_panel.is_open()
+
+
+func close_transformer_panel() -> void:
+	if transformer_panel != null:
+		transformer_panel.close()
+
+
+## S5's one-row POWER summary was tapped, or a `POWER_CAPACITY` row's
+## `Fix this →` was. **Served here rather than re-emitted**, because both panels
+## are on this root's own `PanelLayer` and the route is one line — the shell has
+## no decision to make about it. The shell is still TOLD, through
+## `transformer_selected`, because it owns the world highlight and the selection
+## id.
+##
+## An UNSERVED building fires this with an empty id: the panel that would be
+## opened does not exist, so the answer is to close whatever is open and clear
+## the selection, which is exactly what a tap on empty ground does.
+func _on_power_row_opened(component_id: String, _sim_id: String) -> void:
+	if component_id == "" or not show_transformer(component_id):
+		transformer_selected.emit("")
+		return
+	transformer_selected.emit(component_id)
+
+
+func _on_transformer_repaired(component_id: String, result: Dictionary) -> void:
+	grid_action.emit(&"repair", component_id, result)
+
+
+func _on_transformer_upgraded(component_id: String, result: Dictionary) -> void:
+	grid_action.emit(&"upgrade", component_id, result)
+
+
+func _on_transformer_demolished(component_id: String, result: Dictionary) -> void:
+	grid_action.emit(&"demolish", component_id, result)
+
+
+func _on_transformer_customer(sim_id: String, world_pos: Vector3) -> void:
+	transformer_customer_selected.emit(sim_id, world_pos)
+
+
+## The panel closed — by the ✕, by a sibling opening over it, or by the REMOVE
+## row taking its subject out of the city. The world highlight goes with it, or
+## the player is left with a glowing pad and no panel.
+func _on_transformer_closed() -> void:
+	transformer_selected.emit("")
+
+
+## Re-reads the selected transformer. Called on the shell's HUD cadence, like
+## `refresh_land_panel`, so a crew's progress bar and its ETA move while the
+## panel is open and the load meter tracks the evening peak.
+func refresh_transformer_panel() -> void:
+	if transformer_panel != null and transformer_panel.is_open():
+		transformer_panel.refresh()
 
 
 ## Re-reads the selected block. Cheap, and the shell calls it on its HUD cadence

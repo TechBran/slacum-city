@@ -37,20 +37,34 @@ signal water_upgraded(node_id: String, result: Dictionary)
 ## `upgrade_building`'s, so the shell re-reads the city rather than guessing.
 signal rushed(sim_id: String, job_id: int, result: Dictionary)
 
-## Doc 04 §4's operating verbs (Wave 17). `power_fixed` is the one-tap
-## `POWER_CAPACITY` answer — the row whose `Fix this →` used to focus the camera
-## on the building the player already had open — and `grid_upgraded` is a rung
-## bought on the transformer or the feeder that feeds this building. Both carry
-## the sim's own `{ok, reason_code, payload}` so the shell re-reads the city.
+## Doc 04 §4's operating verbs. `power_fixed` is the one-tap `POWER_CAPACITY`
+## answer — `cmd_fix_power_capacity`, the cheapest single purchase that clears
+## THIS building's next level — and it carries the sim's own
+## `{ok, reason_code, payload}` so the shell re-reads the city.
+##
+## **`grid_upgraded` and `grid_demolished` are gone from this panel** (Wave 25,
+## doc 12 D-115). They were a rung bought and a transformer pulled from the hop
+## list, on the panel of one of the N buildings that transformer feeds; both
+## verbs now live on S18, on the thing they act on, and
+## `ui/transformer_panel.gd` raises `upgraded` / `demolished` in their place.
+## `game/main.gd`'s two connections move with them — the snippet is in report 98
+## §68.
 signal power_fixed(sim_id: String, result: Dictionary)
-signal grid_upgraded(component_id: String, result: Dictionary)
-signal grid_demolished(component_id: String, result: Dictionary)
+## Wave 25 (doc 12 D-115). The one-row POWER summary was tapped: open S18 on the
+## transformer that feeds this building. `component_id` is `""` for an UNSERVED
+## building — the row still fires, so the shell answers "there is nothing to
+## open" once, in one place, rather than every caller guessing.
+signal power_row_opened(component_id: String, sim_id: String)
 
 const PALETTE_TYPE := "Palette"
 ## §2.9's `L1 L2 ▮L3▮ L4 L5` level pips — glyphs, not copy (A5 redundancy).
 const PIP_ON := "▮"
 ## Every panel in the deck closes with this glyph and names itself in the tooltip.
 const CLOSE_GLYPH := "✕"
+## The affordance on a row that goes somewhere else — the one-row POWER summary's
+## door to S18. Same glyph S18's own customer rows use, because they are the same
+## promise (A5: the glyph carries it, not the colour).
+const POWER_ROW_CHEVRON := "›"
 ## §2.9 item 6: `Demolish` is hold-to-confirm, because it is the one button in
 ## the deck that cannot be undone. The window is `data/ui.json.layout`'s, with
 ## the doc's own 800 ms as the floor if the key is missing.
@@ -95,15 +109,11 @@ var _actions: VBoxContainer
 ## Doc 05 §6's node block, built in code below the actions row.
 var _water: VBoxContainer
 var _water_rows: Dictionary = {}   # node id -> Button
-## Doc 12 §2.9 D-70's POWER section, built in code below the water block.
+## Doc 12 §2.9 D-70's POWER section — ONE ROW and the fix strip since Wave 25
+## (D-115). Built in code below the water block.
 var _power: VBoxContainer
-var _power_rows: Dictionary = {}   # component id -> Button
-var _power_remove_rows: Dictionary = {}   # component id -> Button
+var _power_row_button: Button
 var _power_fix_button: Button
-## The transformer the REMOVE row is armed for, `""` when nothing is armed. Same
-## two-tap contract as the fix strip, and cleared by every re-render of a
-## DIFFERENT building, so an armed row cannot follow the selection.
-var _power_remove_armed := ""
 ## The `Fix this →` strip is a two-tap confirm: the first tap quotes, the second
 ## buys. This holds the sim id the strip is armed for, `""` when it is not armed
 ## — so a strip that is still on screen after the player selected a DIFFERENT
@@ -379,8 +389,6 @@ func _build_actions() -> void:
 		_bind_progress(body)
 
 		_power = body.get_node_or_null("PowerSection") as VBoxContainer
-		_power_rows.clear()
-		_power_remove_rows.clear()
 		return
 	_build_progress(body)
 	_actions = VBoxContainer.new()
@@ -585,7 +593,6 @@ func show_building(sim_id: String) -> void:
 		# a transformer, so an armed REMOVE row that survived the selection would
 		# take a street's lights out on what the player read as a first tap.
 		_power_fix_armed = ""
-		_power_remove_armed = ""
 	var view := controller.building_view(sim_id)
 	if not bool(view.get("exists", false)):
 		close()
@@ -1222,165 +1229,89 @@ func _build_water_row(entry: Variant) -> VBoxContainer:
 	return row
 
 
-# --- Wave 17: doc 12 §2.9 D-70's POWER section -----------------------------
+# --- Wave 25: the POWER section is ONE ROW and a door ----------------------
 #
-# What the user asked for in the two sentences that opened this wave: "feeders
-# adding extra power to a building is not clear and I'm not sure it actually
-# works", and "how the transformers feed power … doesn't seem to be working well
-# at all". Both were true readings of a panel that never named the wire.
+# The player, 2026-09-04: *"In every building we have the transformer power
+# information. We should have that on the transformer itself … So we don't
+# clutter the building information. The buildings just need a few things:
+# repair, upgrading, and things we already have. Right now there's too many
+# things there."*
 #
-# The section is a LIST OF HOPS, nearest first — the transformer that feeds this
-# building, the feeder that feeds it, the substation behind that — each with what
-# it carries now, what it carries at the day's peak, how much is spare **in
-# words**, and its own UPGRADE button with the price on its face. Under them: the
-# next level's headroom answer, and the one-tap fix when the next level is
-# blocked. Every value is `PowerActions`'; this method decides only what is on
-# screen.
+# Wave 17 put the whole of doc 04 §4 in here because the building was the only
+# door the game had to a transformer — the hop list, a per-hop UPGRADE with its
+# checklist, an armed REMOVE row, the next-level headroom line and the fix
+# strip. **That is not panel length, it is ownership** (doc 93 §AY3): a
+# transformer is shared by every building in its service radius, so its REMOVE
+# row was armed from N panels, and a player who upgraded it from a house's panel
+# had no way to see the other N−1 buildings they had just helped.
+#
+# What is left is a READING and a door: `Power · fed by T-03 · 78 % · ›`, tinted
+# with the transformer's own load band, or `Power · NOT SERVED · ›` in the
+# critical state. Every verb it used to carry is on S18, on the thing it acts
+# on. Measured on both sides in doc 92 §65.4.
+#
+# **The water block above is NOT given the same treatment, and that is a ruling
+# rather than an oversight** (doc 12 D-116). The test is not "how long is the
+# panel", it is "who owns this decision" — and a doc-05 node has no surface of
+# its own to be handed to. Collapsing it to a row would delete a verb rather than
+# move it, which is the A91-D-19 shape run backwards: a door to nowhere.
 
 func _render_power(block: Dictionary) -> void:
 	if _power == null:
 		return
-	var available := bool(block.get("available", false))
-	_power.visible = available
 	BuildingPanel._clear_children(_power)
-	_power_rows.clear()
-	_power_remove_rows.clear()
 	_power_fix_button = null
+	_power_row_button = null
+	var row := TransformerPanelModel.building_row(
+			controller.power if controller != null else null,
+			str(block.get("sim_id", _sim_id)))
+	var available := bool(row.get("available", false))
+	_power.visible = available
 	if not available:
-		_power_fix_armed = ""
-		_power_remove_armed = ""
 		return
-	_power.add_child(UIWidgets.label("PowerHeader", _text("ui_power_section_title", "")))
-	if bool(block.get("unserved", false)):
-		# No transformer at all. The most important line the section can draw,
-		# and the only one that is drawn alone.
+	# A 48 dp target, because it goes somewhere — and the chevron says so without
+	# colour (A5). The tooltip carries the transformer's id even when the row is
+	# elided, so the thing the tap will open is always nameable.
+	var text := _text_args(str(row["text_key"]), row["args"] as Dictionary,
+			str(row.get("transformer", "")))
+	var button := UIWidgets.button("PowerRow", "%s  %s" % [text, POWER_ROW_CHEVRON],
+			text, Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.pressed.connect(_on_power_row_pressed.bind(str(row.get("transformer", ""))))
+	_apply_state_color(button, StringName(String(row["band_state"])))
+	_power.add_child(button)
+	_power_row_button = button
+	if bool(row.get("unserved", false)):
+		# The one sentence that stays on THIS panel: a building nothing feeds is
+		# a fact about the building, and a player must not have to open a
+		# transformer that does not exist in order to be told about it.
 		var none := UIWidgets.label("Unserved",
 				_text("ui_power_unserved", ""), &"LegendRow", true)
 		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_apply_state_color(none, HudModel.STATE_CRITICAL)
 		_power.add_child(none)
-		return
-	var summary := UIWidgets.label("Draw", _text_args("ui_power_draw",
-			{"kw": str(block["demand_text"]), "hops": int(block["hops"])},
-			str(block["demand_text"])), &"LegendRow", true)
-	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_power.add_child(summary)
-	if bool(block.get("shed", false)):
-		var shed := UIWidgets.label("Shed", _text("ui_power_shed", ""), &"LegendRow", true)
+	if bool(row.get("shed", false)):
+		# Doc 04 §2.4's rolling blackout. The second sentence that stays on THIS
+		# panel: "you are dark, and it is not a fault" is a fact about this
+		# building, and a player must not have to open a transformer that is
+		# working perfectly to be told why their shop has no lights.
+		var shed := UIWidgets.label("Shed", _text("ui_power_shed", ""),
+				&"LegendRow", true)
+		shed.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_apply_state_color(shed, HudModel.STATE_CRITICAL)
 		_power.add_child(shed)
-	for entry: Variant in (block.get("rows", []) as Array):
-		_power.add_child(_build_power_hop(entry))
-	var next: Dictionary = block.get("next_level", {})
-	if bool(next.get("available", false)):
-		var headroom := UIWidgets.label("NextLevel", _text_args(
-				"ui_power_next_level_ok" if bool(next["ok"]) else "ui_power_next_level_short",
-				{"level": int(next["to_level"]), "kw": str(next["delta_text"]),
-				"short": str(next["deficit_text"]), "at": str(next["binds_at"])},
-				str(next["delta_text"])), &"LegendRow", true)
-		headroom.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		_apply_state_color(headroom, HudModel.STATE_NORMAL if bool(next["ok"])
-				else HudModel.STATE_WARNING)
-		_power.add_child(headroom)
-	_render_power_fix(block.get("fix", {}), str(block.get("sim_id", "")))
+	_render_power_fix(block.get("fix", {}), str(block.get("sim_id", _sim_id)))
 
 
-## One hop: what it is, what it carries, what is spare, and the purchase that
-## makes it bigger. The button's face carries its price even when it is
-## DISABLED — a button that hides its price while the player is broke teaches
-## nothing about how much to save (doc 12 §2.7).
-func _build_power_hop(entry: Variant) -> VBoxContainer:
-	var hop: Dictionary = entry
-	var component_id := str(hop["id"])
-	var row := VBoxContainer.new()
-	row.name = "PowerHop_" + component_id
-	row.add_theme_constant_override(&"separation", int(_spacing))
-
-	var title := UIWidgets.label("Title", _text_args("ui_power_hop",
-			{"kind": _text(str(hop["name_key"]), str(hop["kind"])),
-			"id": component_id, "customers": int(hop["customers"])},
-			component_id))
-	title.tooltip_text = component_id
-	row.add_child(title)
-
-	# The reading, in the order a player asks for it: what is spare, then the
-	# two numbers that spare came from. The BAND word is what makes it readable
-	# without the colour (A5).
-	var load := UIWidgets.label("Load", _text_args("ui_power_hop_load",
-			{"headroom": str(hop["headroom_text"]), "load": str(hop["load_text"]),
-			"peak": str(hop["peak_text"]), "capacity": str(hop["capacity_text"]),
-			"band": _text(str(hop["band_key"]), "")},
-			"%s / %s" % [hop["peak_text"], hop["capacity_text"]]), &"LegendRow", true)
-	load.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_apply_state_color(load, StringName(str(hop["band_state"])))
-	row.add_child(load)
-
-	var upgrade: Dictionary = hop.get("upgrade", {})
-	if not bool(upgrade.get("available", false)):
-		return row
-	var label := _text_args("ui_power_upgrade",
-			{"cost": str(upgrade["cost_text"]), "capacity": str(upgrade["to_capacity_text"])},
-			str(upgrade["cost_text"]))
-	var button := UIWidgets.button("Upgrade_" + component_id, label, label,
-			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
-	button.disabled = not bool(upgrade["ok"])
-	button.pressed.connect(_on_power_upgrade_pressed.bind(component_id))
-	row.add_child(button)
-	_power_rows[component_id] = button
-	for check: Variant in (upgrade.get("checklist", []) as Array):
-		row.add_child(_build_check_row(check))
-	_add_power_remove(row, hop)
-	return row
-
-
-## The transformer's own removal, and therefore its MOVE — the verb the user
-## asked for by name (*"the transformer should be able to be destroyed and moved
-## — if we remove it the power goes out and we hurry to reconnect"*). It lives on
-## the hop row because a transformer is not a thing the world pick can select; the
-## building it feeds is the only door there is.
-##
-## **Two taps, and the second one names the casualties.** The first arms the row
-## and re-labels it with how many buildings go dark and what the move back would
-## cost (`replace_cost − refund`); the second calls the verb. Same shape as the
-## fix strip, and the same reason as §2.9 item 6's hold-to-confirm on the
-## building demolition: this is the other button in the deck that cannot be
-## undone, and a mis-tap on it takes a street's lights out.
-func _add_power_remove(row: VBoxContainer, hop: Dictionary) -> void:
-	if String(hop["kind"]) != "transformer" or controller == null:
-		return
-	var component_id := str(hop["id"])
-	var quote := controller.power.demolish_quote(component_id)
-	if not bool(quote.get("available", false)):
-		return
-	var armed := _power_remove_armed == component_id
-	var label := _text_args("ui_power_remove_confirm" if armed else "ui_power_remove",
-			{"refund": str(quote["refund_text"]), "dark": int(quote["stranded"]),
-			"move": str(quote["move_cost_text"])}, str(quote["refund_text"]))
-	var button := UIWidgets.button("Remove_" + component_id, label, label,
-			Vector2(_touch_min * 2.0, _touch_min), &"DangerButton")
-	button.pressed.connect(_on_power_remove_pressed.bind(component_id))
-	row.add_child(button)
-	_power_remove_rows[component_id] = button
-
-
-func _on_power_remove_pressed(component_id: String) -> void:
-	if controller == null:
-		return
-	if _power_remove_armed != component_id:
-		_power_remove_armed = component_id
-		call_deferred("refresh")
-		return
-	_power_remove_armed = ""
-	var result := controller.power.demolish(component_id)
-	call_deferred("refresh")
-	grid_demolished.emit(component_id, result)
-
-
-## The `REMOVE` button of one hop, for a test that has to press one.
-func power_remove_button(component_id: String) -> Button:
-	return _power_remove_rows.get(component_id, null)
-
-
+## **`cmd_fix_power_capacity`'s strip stays on THIS panel** (Wave 25, doc 93
+## §AY3), under the one-row summary and above nothing else. It looks like
+## transformer clutter and it is not: every other row that left was a fact about
+## a SHARED component, and this one is a purchase quoted against **this
+## building's next level** — the cheapest single thing that clears the
+## `POWER_CAPACITY` blocker on the checklist twenty rows above it. Moving it to
+## S18 would need a building id S18 does not have, and deleting it would leave
+## doc 04 §4's fix verb with no door at all, which is the defect this wave is
+## named after.
 ## The `Fix this →` strip: what one tap would buy, what it costs, and whether it
 ## clears the blocker. Two taps, never one — the first arms the strip and the
 ## second spends the money (doc 12 §2.7).
@@ -1417,6 +1348,19 @@ func _render_power_fix(fix: Dictionary, sim_id: String) -> void:
 		_power.add_child(_build_check_row(check))
 
 
+## The row's tap: open S18 on the transformer that feeds this building. An
+## UNSERVED building fires it with an EMPTY id rather than swallowing the tap,
+## so the shell's router can answer "there is nothing to open" once, in one
+## place, instead of every caller guessing.
+func _on_power_row_pressed(component_id: String) -> void:
+	power_row_opened.emit(component_id, _sim_id)
+
+
+## The one-row POWER summary, for a test or a coach mark that has to press it.
+func power_row_button() -> Button:
+	return _power_row_button
+
+
 ## The panel's own `Fix this →` button lives on the checklist row and routes
 ## through `_on_fix_pressed`; this is the strip's button. Both land here.
 func _on_power_fix_pressed(sim_id: String) -> void:
@@ -1432,20 +1376,6 @@ func _on_power_fix_pressed(sim_id: String) -> void:
 	# inside the section a refresh rebuilds.
 	call_deferred("refresh")
 	power_fixed.emit(sim_id, result)
-
-
-func _on_power_upgrade_pressed(component_id: String) -> void:
-	if controller == null:
-		return
-	var result := controller.power.upgrade(component_id)
-	call_deferred("refresh")
-	grid_upgraded.emit(component_id, result)
-
-
-## The `UPGRADE` button of one hop, for a test or a coach mark that has to point
-## at one — the power twin of `water_upgrade_button()`.
-func power_upgrade_button(component_id: String) -> Button:
-	return _power_rows.get(component_id, null)
 
 
 func power_fix_button() -> Button:
@@ -1622,12 +1552,18 @@ func request_salvage() -> void:
 ## repair, so the row buys one.
 func _on_fix_pressed(fix_target: Dictionary) -> void:
 	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_POWER:
-		# Same reason `E_CONDITION` is answered here: the fix target is the
-		# building the player already has open, so the only thing the shell could
-		# do with it — focus the camera — moves nothing (A91-D-54). The row arms
-		# the confirm strip in the POWER section below; the strip spends.
-		_power_fix_armed = _sim_id
-		call_deferred("refresh")
+		# **Wave 25 (doc 12 D-115, §2.7):** `Fix this →` on a `POWER_CAPACITY`
+		# row now OPENS S18 on the component the headroom binds at — which is
+		# what `fix_target.id` has always been (`sim.grid.attachment_of`, never a
+		# building id; PA-05's whole first half). Wave 17 armed the confirm strip
+		# below instead, and that was the best it could do when the transformer
+		# had no surface: the row said "T-02 is full" and the answer it offered
+		# was a purchase with no picture of the thing being purchased.
+		#
+		# The strip is still there and still one tap from here — it is the
+		# CHEAPEST single purchase that clears this building — but the row's job
+		# is to take the player to the wall, and the wall is now a place.
+		power_row_opened.emit(str(fix_target.get("id", "")), _sim_id)
 		return
 	if StringName(str(fix_target.get("kind", ""))) == RequirementFormatter.FIX_REPAIR:
 		if controller == null or _sim_id == "":

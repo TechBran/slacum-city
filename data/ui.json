@@ -473,6 +473,31 @@
 				}
 			},
 			{
+				"_comment": "Wave 25 (report 98 sec 68 RR-206). cmd_repair_grid_component's two events, given the reader that makes them worth emitting: the log's power filter, plus the toast game/main.gd raises off the same bus. key is the component, so a transformer repaired twice in one session is two rows and not one -- a repair is a place and a decision, the same reason transformer_removed does not aggregate.",
+				"type": "grid_component_repair_started",
+				"category": "power",
+				"notify_id": "grid_repair_started",
+				"state": "warning",
+				"key": "component",
+				"args": {
+					"component": "component",
+					"cost": "@money:cost",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "grid_component_repaired",
+				"category": "power",
+				"notify_id": "grid_repair_done",
+				"state": "normal",
+				"key": "component",
+				"args": {
+					"component": "component",
+					"count": "@number:customers",
+					"time": "@time"
+				}
+			},
+			{
 				"type": "PowerComponentTripped",
 				"category": "power",
 				"notify_id": "component_tripped",
@@ -2026,5 +2051,9 @@
 		"graphics": "balanced",
 		"refresh_rate": "auto",
 		"battery_saver": false
+	},
+	"transformer": {
+		"_comment": "S18 (doc 12 sec 2.25, Wave 25). One number: how many customer rows the panel draws before it caps the list and says how many it kept back. It is a LAYOUT decision and not a rule of the grid, which is why it lives here rather than in doc 04 -- doc 92 sec 65.1 measures a grown city's widest transformer feeding 17 buildings, and 17 rows at 48 dp is 816 dp of list on a 915 dp display.",
+		"max_customer_rows": 8
 	}
 }

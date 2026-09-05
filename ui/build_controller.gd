@@ -980,6 +980,12 @@ const PICK_COMPONENT := &"component"
 ## them here would give one object two pick kinds.
 const PICKABLE_COMPONENT_KINDS: Array[StringName] = [&"transformer"]
 
+## How far from a pad's tile centre a tap may land and still select it, as a
+## fraction of a tile — half, because that is the edge of the tile the pad
+## stands on. See `component_near` for why this is a CAP on the finger radius
+## rather than a radius of its own.
+const COMPONENT_PICK_TILE_FRACTION := 0.5
+
 ## `data/ui.json.street.tap_dp`, and the fallback for a malformed file. The path
 ## is `UIConfig`'s own — a second copy of it here is a second thing to rename.
 const TAP_DP_DEFAULT := 48.0
@@ -1052,6 +1058,18 @@ func set_tap_radius_from(m_per_dp: float, dp: float = -1.0) -> float:
 ## tiles resolve the same way on every machine.
 func component_near(point: Vector3, radius_m: float = -1.0) -> Dictionary:
 	var radius := radius_m if radius_m >= 0.0 else tap_radius_m
+	# **Capped at half a tile, and the cap is the whole safety argument.** A
+	# transformer stands on ONE tile; a tap more than half a tile from its centre
+	# is not on it. Without the cap this pick out-ranks the building at every
+	# zoom the street collectable was designed for — 48 dp is 16.04 m of ground
+	# at full zoom-out (doc 92 §38.3), two tiles in every direction — so a tap
+	# squarely on a house would open the transformer next door. The dog gets to
+	# do that because a dog is leaving; a transformer is not.
+	#
+	# Derived from `tile_m`, not authored: it is "the pad's own tile, with a
+	# finger's tolerance inside it". At the default camera height the finger is
+	# 2.581 m and the cap never binds (doc 92 §65.3).
+	radius = minf(radius, tile_m * COMPONENT_PICK_TILE_FRACTION)
 	if radius <= 0.0 or sim == null or sim.grid == null:
 		return {}
 	var best: Dictionary = {}

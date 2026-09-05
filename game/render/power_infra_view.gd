@@ -59,6 +59,13 @@ const PART_BUSHING := 4
 ## radius, i.e. under a pixel at any zoom the wire is drawn at.
 const WIRE_SEGMENTS := 8
 
+## The selection ring (Wave 25). Metres, against the pad — not pixels — so the
+## affordance is the same size relative to the cabinet at every zoom.
+const SELECT_GAP_M := 0.28    ## bare ground between the pad's edge and the ring
+const SELECT_RING_M := 0.34   ## the ring's own width
+const SELECT_LIFT_M := 0.02   ## off grade, so it does not z-fight the road
+const SELECT_COLOR := Color(1.0, 0.86, 0.35, 0.85)
+
 const PAD_SHADER := "res://game/shaders/power_pad.gdshader"
 const WIRE_SHADER := "res://game/shaders/power_wire.gdshader"
 const SMOKE_SHADER := "res://game/shaders/power_smoke.gdshader"
@@ -87,6 +94,8 @@ var _wire_mesh: ArrayMesh = null
 var _wire_material: ShaderMaterial = null
 var _wire_nodes: Dictionary = {}    # Vector2i -> MultiMeshInstance3D
 var _wire_chunks: Array = []        # sorted keys of _wire_nodes
+var _select_node: MeshInstance3D = null
+var _selected_id: String = ""
 var _smoke_node: MultiMeshInstance3D = null
 var _smoke_mm: MultiMesh = null
 var _wire_radius_m: float = 0.045
@@ -145,6 +154,98 @@ func set_pad_shadows(enabled: bool) -> void:
 	if _pad_node != null:
 		_pad_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if enabled \
 				else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## **The selected pad, ringed on the ground** (Wave 25, doc 12 §2.25 / D-114).
+##
+## A `MeshInstance3D` with one flat annulus, moved and shown rather than rebuilt:
+## a selection ring is one object that exists for the life of the view, and
+## re-uploading the whole 144-instance pad buffer to mark one of them would be a
+## per-tap cost on a buffer that is deliberately quiet when nothing is happening
+## (`_buffers_dirty`).
+##
+## **Why a ring and not the pad's own custom data.** The `.b` channel is
+## `distress + 112 × overlay_state`, and every bit of it is doc 04's or doc 12
+## §2.5's. Packing a selection flag in beside them would give one channel two
+## owners and put a UI concern inside the shader that draws the physical grid —
+## the fault line C-64 drew. The ring is also the affordance a player already
+## knows from the placement ghost, and it reads at every zoom because it is
+## sized in METRES against the pad rather than in pixels.
+##
+## `""` clears it. An id this view has never heard of clears it too, rather than
+## leaving the last one lit — a panel opened on a transformer that has since been
+## demolished must not leave a ring on empty ground.
+func set_selected(component_id: String) -> void:
+	if _select_node == null:
+		_select_node = MeshInstance3D.new()
+		_select_node.name = "SelectionRing"
+		_select_node.mesh = _build_select_mesh()
+		_select_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_select_node.visible = false
+		add_child(_select_node)
+	_selected_id = component_id
+	var rec: PowerInfraModel.PadRec = model.pad_of(component_id) if model != null \
+			and component_id != "" else null
+	_select_node.visible = rec != null
+	if rec != null:
+		# A hair above grade, for the same reason the road overlay is: two
+		# coplanar surfaces at y = 0 z-fight, and the fight is visible from the
+		# default camera pitch.
+		# LOCAL, not global: every other node this view owns is placed in the same
+		# space (`_pad_mm.set_instance_transform` writes local transforms too),
+		# the view itself is added at the origin, and reading a global transform
+		# from a Node3D whose ancestor is not one is an engine warning a headless
+		# harness prints on every call.
+		_select_node.position = rec.world_pos + Vector3(0.0, SELECT_LIFT_M, 0.0)
+		_select_node.rotation = Vector3(0.0, rec.yaw, 0.0)
+
+
+## The transformer the ring is on, or `""`. Read by the shell when it has to put
+## the ring back after a topology rebuild moved the pads.
+func selected() -> String:
+	return _selected_id
+
+
+## The ring itself: a flat annulus around the pad, in the pad's own local space,
+## so it grows with `pad_size` and never has to be re-measured by hand.
+func _build_select_mesh() -> ArrayMesh:
+	var pad := model.pad_size if model != null else Vector2(2.40, 2.00)
+	var inner := Vector2(pad.x * 0.5 + SELECT_GAP_M, pad.y * 0.5 + SELECT_GAP_M)
+	var outer := inner + Vector2(SELECT_RING_M, SELECT_RING_M)
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	var normals := PackedVector3Array()
+	# Four quads, one per side of the rectangle — a rounded ring would need a
+	# fan and this reads identically at the scale a 2.4 m cabinet occupies.
+	var corners_in := [Vector2(-inner.x, -inner.y), Vector2(inner.x, -inner.y),
+			Vector2(inner.x, inner.y), Vector2(-inner.x, inner.y)]
+	var corners_out := [Vector2(-outer.x, -outer.y), Vector2(outer.x, -outer.y),
+			Vector2(outer.x, outer.y), Vector2(-outer.x, outer.y)]
+	for i in 4:
+		var j := (i + 1) % 4
+		var a: Vector2 = corners_in[i]
+		var b: Vector2 = corners_in[j]
+		var c: Vector2 = corners_out[j]
+		var d: Vector2 = corners_out[i]
+		for point: Vector2 in [a, b, c, a, c, d]:
+			verts.append(Vector3(point.x, 0.0, point.y))
+			normals.append(Vector3.UP)
+			colors.append(Color.WHITE)
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.vertex_color_use_as_albedo = true
+	material.albedo_color = SELECT_COLOR
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.surface_set_material(0, material)
+	return mesh
 
 
 ## Give the pads their orientation. Without a probe every cabinet takes the
@@ -294,6 +395,11 @@ func _rebuild_pad_buffer() -> void:
 				Basis.from_euler(Vector3(0.0, rec.yaw, 0.0)), rec.world_pos))
 	_pad_node.custom_aabb = model.pad_aabb()
 	_upload_pads()
+	# A rebuild can drop the selected pad (the REMOVE row on S18 is the obvious
+	# way), so the ring is re-resolved against the new roster rather than left
+	# hanging over ground that no longer has a transformer on it.
+	if _selected_id != "":
+		set_selected(_selected_id)
 
 
 func _upload_pads() -> void:
@@ -626,6 +732,10 @@ func _smoke_material() -> ShaderMaterial:
 func draw_calls() -> int:
 	var calls := 0
 	if _pad_node != null and _pad_node.visible:
+		calls += 1
+	# The selection ring is one unshaded quad strip and it is only ever submitted
+	# while a panel is open, but §2.13 counts draw calls and not excuses.
+	if _select_node != null and _select_node.visible:
 		calls += 1
 	if _smoke_node != null and _smoke_node.visible:
 		calls += 1

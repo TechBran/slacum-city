@@ -11263,19 +11263,40 @@ not the body's reported size: the body lives in a `ScrollContainer` and reports
 the VIEWPORT's height however long its contents are — the number that hides the
 problem.)
 
-| building | | rows before | content before | rows after | content after |
+| building | | rows before | rows after | content before | content after |
 |---|---|---|---|---|---|
-| `APT-001` | residential | **65** | **1,795 dp** | *(65.4b)* | *(65.4b)* |
-| `OFF-1` | commercial | **76** | **2,098 dp** | *(65.4b)* | *(65.4b)* |
-| `FIRE-1` | service | **66** | **1,818 dp** | *(65.4b)* | *(65.4b)* |
+| `APT-001` | residential | **65** | **42** (−35 %) | **1,795 dp** | **1,216 dp** (−32 %) |
+| `OFF-1` | commercial | **76** | **53** (−30 %) | **2,098 dp** | **1,519 dp** (−28 %) |
+| `FIRE-1` | service | **66** | **43** (−35 %) | **1,818 dp** | **1,239 dp** (−32 %) |
 
 Identical at 360, 412 and 794 dp — the panel is a fixed-width column, so nothing
 about its length is a phone-only problem.
 
-**2,098 dp is 2.3 screenfuls of a 915 dp display**, on a surface whose primary
+**2,098 dp was 2.3 screenfuls of a 915 dp display**, on a surface whose primary
 action (`UPGRADE`) is pinned to a footer precisely because Wave 18 had already
-found it below the fold. The player's *"right now there's too many things there"*
-is 76 rows.
+found it below the fold. The player's *"right now there's too many things
+there"* was 76 rows; it is 53, and the worst case in the city is now shorter
+than the BEST case was.
+
+**What the 23 rows that left were, on `APT-001`.** The POWER header, the draw
+line, three hop rows × (title + reading + UPGRADE button + up to three checklist
+rows), the transformer's armed REMOVE row, and the next-level headroom line.
+Every one of them is on S18 now except the draw line (the vitals grid has said
+`Power 18 kW` since Wave 4) and the next-level line (the upgrade checklist's own
+`POWER_CAPACITY` row says it, in the formatter's words).
+
+**Three things stayed and each is a ruling** (doc 93 §AY3): the `Fix this →`
+strip, because `cmd_fix_power_capacity` is quoted against THIS building's next
+level and moving it to S18 would need a building id S18 does not have; the
+UNSERVED sentence, because "nothing feeds this" is a fact about the building;
+and the shed-feeder sentence, because a player whose shop is dark must not have
+to open a transformer that is working perfectly to find out why. Together they
+are at most 8 rows, and only on a building that has a problem.
+
+**The water block is unchanged and that is also a ruling.** It looks like the
+same candidate and it is not: a doc-05 node has no surface of its own, so
+collapsing it to a row would delete a verb rather than move one — the
+A91-D-19 shape run backwards. `WTR-1` is therefore the same length it was.
 
 ### 65.5 Determinism
 
