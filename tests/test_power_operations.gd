@@ -1048,6 +1048,18 @@ func test_h_the_repair_events_have_readers() -> void:
 		assert_true(bound.has(event_type),
 				"%s has an event_log row — an event with no reader is A91-D-19" % event_type)
 		assert_eq(String((bound[event_type] as Dictionary)["category"]), "power")
+	# …and the ARRIVAL has a second one: doc 08's notification bindings, which is
+	# what puts a banner in front of a player who is looking somewhere else. The
+	# dispatch deliberately has none — see the file's own comment.
+	var notify: Dictionary = StarterCityLoader.read_json("res://data/notifications.json")
+	var bound_types: Dictionary = {}
+	for entry: Variant in (notify.get("bindings", []) as Array):
+		bound_types[String((entry as Dictionary).get("type", ""))] = \
+				String((entry as Dictionary).get("notify_id", ""))
+	assert_eq(String(bound_types.get("grid_component_repaired", "")), "grid_repair_done",
+			"the arrival raises a banner")
+	assert_true((notify.get("events", {}) as Dictionary).has("grid_repair_done"),
+			"…and its class row exists, or the binding names nothing")
 
 
 func test_h_the_job_is_a_project_like_any_other() -> void:

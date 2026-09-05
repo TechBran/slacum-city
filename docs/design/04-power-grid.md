@@ -668,7 +668,12 @@ take doc 03's money and move nothing. The threshold is doc 03's own rounding.
 
 Events: `grid_component_repair_started` on dispatch and `grid_component_repaired`
 on arrival, both read by `data/ui.json.event_log` under the `power` filter and
-both naming the transformer.
+both naming the transformer. **The ARRIVAL has a second reader** — doc 08's
+`data/notifications.json` binds it to a `P3_routine` `grid_repair_done`, which is
+the banner. The dispatch has none on purpose: a player who has just pressed CALL
+A CREW is looking at the panel that already shows the crew and its ETA, and doc
+08's own test for a notification is whether it is worth raising to somebody who is
+somewhere else.
 
 #### 2.15.3 The pick and the panel
 

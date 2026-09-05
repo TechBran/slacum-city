@@ -473,7 +473,7 @@
 				}
 			},
 			{
-				"_comment": "Wave 25 (report 98 sec 68 RR-206). cmd_repair_grid_component's two events, given the reader that makes them worth emitting: the log's power filter, plus the toast game/main.gd raises off the same bus. key is the component, so a transformer repaired twice in one session is two rows and not one -- a repair is a place and a decision, the same reason transformer_removed does not aggregate.",
+				"_comment": "Wave 25 (report 98 sec 68 RR-206). cmd_repair_grid_component's two events, given the reader that makes them worth emitting: the log's power filter. The ARRIVAL has a second reader in data/notifications.json, which is what puts a banner in front of a player who is looking somewhere else; the dispatch has none, because a player who just pressed CALL A CREW is looking at the panel that already shows the crew and the ETA. key is the component, so a transformer repaired twice in one session is two rows and not one -- a repair is a place and a decision, the same reason transformer_removed does not aggregate.",
 				"type": "grid_component_repair_started",
 				"category": "power",
 				"notify_id": "grid_repair_started",

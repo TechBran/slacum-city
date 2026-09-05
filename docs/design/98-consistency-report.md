@@ -9444,6 +9444,12 @@ component id can never satisfy.
 Refusal ladder, in order: `E_UNKNOWN_COMPONENT`, `E_NOT_DAMAGED`,
 `E_ALREADY_REPAIRING`, `E_FUNDS` / the treasury's own spend refusals.
 
+**Both events have named readers**, which is the test this project applies to
+anything it emits: `data/ui.json.event_log` logs both under the `power` filter,
+and `data/notifications.json` binds the ARRIVAL to a `P3_routine` banner. The
+DISPATCH is deliberately not bound — a player who has just pressed CALL A CREW is
+looking at the panel that already shows the crew and the ETA.
+
 **Two things it deliberately refuses, and both are written down rather than
 approximated.** A component that is only OPEN is not damaged — a tripped relay
 is a position, and doc 04's auto-reclose or doc 06's dispatch closes it for
