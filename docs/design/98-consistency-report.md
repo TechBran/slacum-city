@@ -10604,11 +10604,12 @@ three times, `PT-095` once) with the bulk pool at 19 % load, and both of those
 transformers previewed an OK $6,900 rung.
 
 **And the site scan says how hard it looked.** `WATER_SITE_PREVIEWS` goes 96 →
-4,096 — a 16-block city has at most `16 × 14² = 3,136` candidate origins for a
-3×3 pump, so the cap is now above "every free footprint on every READY block"
-rather than below it — and the `E_NO_SITE` log row carries `previews`, `blocks`
-and whether the cap was hit, so the next reader can tell a full map from a broken
-search without reimplementing the search.
+4,096: the level-7 city this wave measured has **16 READY blocks**, i.e. at most
+`16 × 14² = 3,136` candidate origins for a 3×3 pump, so the cap now sits above
+the whole search on the city that exposed the problem rather than below its first
+block. It is not a proof for a fully-developed 49-block map, which is why the
+`E_NO_SITE` log row carries `previews`, `blocks` and `capped` — a city that
+outgrows it says so on the line, instead of stopping silently the way 96 did.
 
 ### RR-216 — `_lead_water`: the purchase before the refusal (§67.5)
 
@@ -10627,3 +10628,29 @@ wall is its utilization, and 0.75 is the band this project already publishes for
 on the arc with its game-hour, its verdict and its price, plus the doc-05 zone
 table the run ended on (`BalanceGateRig.run` gains an additive `zones` block for
 it).
+
+### What this lane shipped, and what it did not
+
+**Files.** `tools/playtest.gd` (the roster entry, the logged door,
+`relief_spot_ring`, `supply_chain_order`, `binding_supply_kind`,
+`water_power_binder`, `water_pinch_zone`, `zone_key_of`, `_relieve_power`,
+`_lead_water` and KNOB 3 `plans_water`), `sim/city_sim.gd` (doc 93 §BA's
+placement delegation, `_rerate_water_nodes`, `water_shell_top_level`,
+`water_shell_node_delta_kw`), `ui/build_controller.gd` (§BA3's one-line route),
+`tests/balance_gate_rig.gd` (additive `zones` and `blocked` blocks),
+`tests/test_balance_gates.gd` (gate 21's new per-seed water assertion),
+`tests/test_playtest_harness.gd`, `tests/test_infra_verbs.gd`,
+`tests/test_power_operations.gd` (doc 92 §67.12), and the new
+`tools/measure_utility_plan.gd`.
+
+**The bound was NOT moved** — doc 92 §62.9's addendum asked for the planner
+rather than another re-fit, and it got one. `reached_top >= 1` reads 2 of 3 with
+margin instead of 0 of 3 in failure, and the cell gained an assertion about the
+CITY rather than about which seed got lucky (doc 92 §67.7).
+
+**What is deferred, and both are named rather than hidden.** `balanced` still has
+no water planner (doc 93 §BA4), and a zero-water-delta upgrade is still refused
+for a building in no pressure zone (doc 91 A91-D-139). And the wall this wave
+uncovered — doc 05's MAINS, both as `feed_capacity` and as the tile factor under
+`pressure_at` — is the next lane's, with `cmd_place_water_main` sitting probed,
+listed and undriven (doc 92 §67.8).

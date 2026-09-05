@@ -12878,7 +12878,7 @@ the high-rise):
 
     blocked_upgrade(high_rise) = {sim_id P-071, tile (56,51), blocker E_POWER_HEADROOM,
                                   cost 29900, power_at PT-053}
-    grid.capacity_summary() load_ratio 0.19  — 29,291 kW of pool headroom, unused
+    grid.capacity_summary() load_ratio 0.19  — the bulk pool is 81 % idle (doc 92 §66.7)
     zone P-058-PMP: supply 77.8  demand 127.3  pressure 0.21  headroom 0.0
 
 ### 67.2 The cause: a door that had been dead since the day it shipped
@@ -13002,10 +13002,13 @@ one of them is bounded.
 **`WATER_SITE_PREVIEWS` 96 → 4,096**, for the other half of the same problem: 96
 was fitted to a young city where the first free footprint in the first READY block
 is usually legal, and on a full one it is a cap that stops the scan before it has
-looked at a second block. A 16-block city has at most `16 × (16 − 3 + 1)² = 3,136`
-candidate origins for a 3×3 pump. The `E_NO_SITE` log row now carries `previews`,
-`blocks` and whether the cap was hit, so the constant is checkable rather than
-trusted.
+looked at a second block. The level-7 city this wave measured has **16 READY
+blocks**, i.e. at most `16 × (16 − 3 + 1)² = 3,136` candidate origins for a 3×3
+pump, so 4,096 is the smallest round number above the whole search on the city
+that exposed the problem. It is NOT a proof for a fully-developed 49-block map,
+and that is why the `E_NO_SITE` log row now carries `previews`, `blocks` and
+`capped`: a city that outgrows the cap says so on the line instead of stopping
+silently, which is exactly what 96 did.
 
 ### 67.6 The arc, after — `tools/measure_curriculum.gd --days=45`, three seeds
 
@@ -13195,3 +13198,40 @@ only when a water works is placed or upgraded, and neither baseline does either
 their nodes at their own level, and neither a 24-game-hour coarse advance nor a
 2-game-hour fine one starts a job on one. The arc measurements in §67.6 and
 §67.10 are where that change is visible, and they are where it is measured.
+
+### 67.12 What the suite said, and the one published example §BA2 made stale
+
+`tools/run_suite.sh` on this branch: **157 files, 2,888 tests, 590,385 asserts,
+failed 0, silent 0.** (2,880 → 2,888 is this wave's eight new tests.) The fork's
+one red — gate 21's capstone cell — is green, and no gate was re-fitted to make
+it so.
+
+**One existing test had to move, and what it found is worth more than the test.**
+`test_power_operations.gd::test_a_a_second_power_station_adds_to_the_pool_and_
+clears_no_transformer_blocker` — doc 92 §48.1's demonstration that *"a plant is
+not the fix for a transformer"* — opened by asserting that
+`cmd_upgrade_building("WTR-2", true)` carries `E_POWER_HEADROOM`, calling `WTR-2`
+*"the starter city's one transformer-bound upgrade"*. Under §BA2 it no longer
+does, and the reason is that the old reading was standing on an **overstated
+delta**:
+
+| | kW |
+|---|---|
+| what `_refresh_water_kw` bills the city for `WTR-2` (one doc-05 `tank` node, L1) | **5.0** |
+| what the upgrade gate charged it (doc 02's `water_facility` column = the PUMP reference row, 60 → 145, ×1.15) | **97.75** |
+
+**Nineteen times the draw, and the gate had been asking doc 04 about it since
+Wave 5.** `WTR-2` is a water TOWER: doc 02 authors one level table for this
+archetype and report 98 RR-8 says plainly that it is generated for
+`reference_variant: "pump"`, so every shell that is not a pump was being priced
+in power as though it were one. §BA2 makes the gate ask about the nodes the tick
+bills, and `WTR-2`'s own next rung costs **7 kW** (tank L1 → L2, 5 → 12), which
+its transformer carries easily.
+
+**The finding the test exists for does not move by one part in a thousand**, and
+the rewrite says so with the audit's own numbers rather than through the
+command: `can_upgrade_power("WTR-2", 97.75)` is refused at `T-18` with `r_after`
+**2.080** before the second plant and **2.094** after it — 8,000 kW added to the
+pool, and the binding transformer's ratio went UP, because an hour of city passed
+and the plant is not on that transformer. That is doc 92 §48.1's whole sentence,
+made against the layer that was always the honest one to make it against.

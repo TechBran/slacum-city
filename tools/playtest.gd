@@ -1054,13 +1054,13 @@ class Api extends RefCounted:
 	## **96 → 4,096, Wave 26** (doc 92 §67.4, report 98 RR-215). 96 was fitted to
 	## a young city, where the first free footprint in the first READY block is
 	## usually legal; on a full one it is a cap that stops the scan before it has
-	## looked at a second block. A 16-block city has at most
-	## `16 × (16 − 3 + 1)² = 3,136` candidate origins for a 3×3 pump, so 4,096 is
-	## the smallest round bound above "every free footprint on every READY block
-	## of the largest city this project builds" — the number the docstring above
-	## always claimed the scan was walking. The E_NO_SITE log line now carries
-	## the count it actually paid, so this constant is checkable rather than
-	## trusted.
+	## looked at a second block. The level-7 city doc 92 §67.4 measured has 16 READY
+	## blocks, i.e. at most `16 × (16 − 3 + 1)² = 3,136` candidate origins for a
+	## 3×3 pump, so 4,096 is the smallest round bound above the whole search on the
+	## city that exposed the problem. **It is not a proof for a fully-developed
+	## 49-block map**, and that is why the `E_NO_SITE` log line now carries
+	## `previews`, `blocks` and `capped`: a city that outgrows this number says so
+	## on the line instead of stopping silently, which is what 96 did.
 	const WATER_SITE_PREVIEWS := 4096
 
 	## Doc 05's `cmd_place_water_component(kind, tile, level = 1, preview =

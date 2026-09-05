@@ -6698,6 +6698,18 @@ at once it would be wrong by more than a factor of two — `WTR-1` L1 → L2 ask
 +85. `CitySim.water_shell_node_delta_kw` is that sum, and the E_POWER_HEADROOM
 check is asked with it.
 
+**And it is wrong the OTHER way by nineteen times on the starter city's water
+tower**, which is the measurement that makes this a defect rather than a
+refinement (doc 92 §67.12). `WTR-2` hosts one doc-05 `tank` node; the demand tick
+bills it **5.0 kW** through `_water_kw_by_building`, and the gate was charging it
+doc 02's `water_facility` column — the PUMP reference row (report 98 RR-8) — at
+60 → 145 kW, i.e. **97.75 kW after the margin**. A water tower was being priced
+in power as though it were a pump house, because doc 02 authors ONE level table
+for the archetype and generates it for one variant. `test_power_operations.gd`'s
+doc 92 §48.1 demonstration had been standing on that number since Wave 5 and is
+re-made here against `can_upgrade_power` directly, with the audit's own delta,
+where it is unaffected.
+
 ### BA3. Which card does the player tap?
 
 **Q.** The build sheet lists `water_facility` as a plain building card AND five
