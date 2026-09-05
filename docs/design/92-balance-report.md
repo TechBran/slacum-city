@@ -13295,8 +13295,12 @@ that costs a *level-5* transformer, the whole ladder, for one building at level
 two of six — and behind it were `data_center` L3–L6, `high_rise` L5–L6, `office`
 L6, `apartment` L6 and `water_facility` L5. `apartment` L6 is the one worth
 naming twice: at 1,940 kW it looks comfortably inside a 2,250 kW ceiling and is
-not, because at 20:00 it asks for 2,832. **The peak column is where four of the
-nine live**, and it had never been checked against the ladder in any document.
+not, because at 20:00 it asks for 2,832. **Two of the nine are invisible without
+the peak column** — `apartment` L6 (1,940 base, inside the ceiling; 2,832 at
+20:00, outside it) and `water_facility` L5 (2,160 base; 2,484 at the civic peak)
+— and that column had never been multiplied out against the ladder in any
+document. The other seven are over even at base, which is worse: they were
+checkable by reading two tables side by side, and nobody did.
 
 **AS SHIPPED** — ladder `[50, 150, 400, 1,000, 2,500, 6,750]`, ceilings
 `[45, 135, 360, 900, 2,250, 6,075]`, `data_center` seed 400 → 100, doc 93 §BC-4's
