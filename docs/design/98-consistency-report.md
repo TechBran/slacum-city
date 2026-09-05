@@ -10813,7 +10813,8 @@ silence would read as "the panel does not know"), and the fix router's
 
 ```
 router POWER: action=upgrade_transformer to_level=2 cost=1100 clears=false
-              | needs rung 4 (1000 kW), host L1
+              | needs rung 4 (1000), host L1, for WTR-2
+router POWER (with_quote=false): needs rung 4 (1000), host L1, for WTR-2, quote=false
 ```
 
 Before this wave the row stopped after `clears=false` — the player was told,
@@ -10821,6 +10822,45 @@ correctly, that the $1,100 purchase would not work, and nothing about what would
 The quote itself is unchanged and deliberately so: `cmd_upgrade_grid_component`
 moves one rung per call, so a quote naming L4 from L1 would price a purchase the
 verb cannot charge.
+
+**CORRECTED TWICE IN THE FIX PASS** (doc 92 §68.6; both found by the lane's
+verifier, both reproduced before being changed).
+
+**(a) `needs` reached no surface.** It was written inside `if with_quote:`, and
+both production callers pass `false` — `ui/ui_root.gd:2269` and
+`game/main.gd:2442` — so the only readers of the third of these "three surfaces"
+were a test and a tool. It is unconditional now (a pure grid read: no `preview`,
+no parallel-placement search, so it costs a camera move nothing), it carries
+`sim_id`, and `UIRoot._serve_transformer_fix` passes it to
+`show_transformer(binds_at, needs)`. S18 then draws the sentence for **the
+building the player came from**, which its own customer summary structurally
+cannot: that summary answers about the HUNGRIEST customer, and the list is capped
+(`customers_hidden`), so the asked-about building may have no row on the panel at
+all. The second line above is the regression test for it, and it printed nothing
+before.
+
+**(b) `needs_rung == 0` was given the wrong sentence.** *"No rung under this
+pad"* and *"nothing you can buy"* are different statements. Doc 04 §2.9's
+parallel transformer — a second unit beside the first, which adoption hands the
+building to — is exactly what `cmd_fix_power_capacity` sells when the host is at
+the top rung, and `rung_needed` could not see it. Reproduced on a level-6 pad at
+**6,150 kW** (`r = 0.911`, un-shed, legal, merely past the 0.90 upgrade gate): a
+100 kW `data_center` L1 was told *"Level 2 draws more than any transformer
+carries — nothing on the ladder feeds it"* and S18 marked its neighbour STRANDED,
+while the same verb at the same tick returned `action=place_transformer
+clears=true cost=42160`. `rung_needed` now also asks the question about the
+BUILDING (`alone_rung`, from the new `CitySim.building_peak_demand_kw` plus the
+same ×1.15 delta), giving three states — `needs_bigger`, `needs_second`,
+`no_rung_carries` — and two new strings, `ui_power_row_needs_second` and
+`ui_transformer_customer_needs_second`, that name the purchase instead of the
+ceiling. Doc 93 §BC-3's rider.
+
+**And two numbers went the other way: they were deleted.**
+`transformer_block`'s `customers_need_capacity_kw` and the customer row's
+`needs_bigger` each had exactly one occurrence repo-wide, the write. The row now
+carries the three scalars the summary loop above it actually consumes and not one
+more — which is the rule this report has applied to events since A91-D-19,
+applied to fields.
 
 ### What this wave did NOT do, named rather than hidden
 
@@ -10838,3 +10878,11 @@ verb cannot charge.
   jobs and capital columns are untouched and its power bill fell by 12,670 kW at
   L5. That is a doc 03 re-fit for the lane that owns the money matrix; doc 92
   §68.4 carries the number so it cannot be found later as a surprise.
+* **Two upgrades in the roster are now efficiency-POSITIVE** (added in the fix
+  pass). A clamped cell is off the `k_dem` curve by construction, so `high_rise`
+  L5→L6 grows demand ×1.092 and `data_center` L5→L6 ×1.378 while doc 03's tax
+  grows ×2.15 — which is C-13 / spec §55 rule 3's bar, not the "non-zero" bar doc
+  02 §2.14's rider was written against. Bounded by §BC-4 (at most the top rung),
+  asserted by name in gate 34, and named in doc 02 §2.14 and doc 93 §BC-4. It is
+  a re-fit for the lane that owns doc 03's matrix, not a defect this lane can
+  close.
