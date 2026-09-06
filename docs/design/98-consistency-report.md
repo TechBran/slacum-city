@@ -11930,6 +11930,19 @@ nothing publishes is a guard that never fires and looks exactly like a guard
 that works** — this wave's own subject, one layer up, so the census is not
 optional.
 
+**And the project's own census answered back.** The first full-suite run of this
+branch failed two tests, both of them registers doing exactly what they exist
+for. `test_asset_completeness.gd::test_17` refused an unregistered
+`site_paint.gdshader` (now a row in `SHADERS` and in `SHADER_OWNER`, and the
+count assertion goes 20 → 21). And
+`test_event_matrix.gd::test_the_register_names_a_consumer_that_is_no_longer_needed`
+reported `road_built`: it had carried the exemption *"covered: road_graph_changed
+rebuilds the street surface"* and this branch gave it a real consumer, so the
+exemption is deleted. That is the right way round —
+`TileGrid.can_place` refuses `FLAG_ROAD`, so a street laid across a tile **takes
+a placement site away**, and a window memoised across it would keep offering
+ground that has become a road. The classified-exemption count goes 67 → 66.
+
 **The budget it protects, measured:** one `placement_sites` at radius 10 is
 **60.6 ms** for `source` on the founding city, **66.8 ms** on the player's save,
 **14.2 ms** for `house`. That is why the paint reads the memo and never scans:

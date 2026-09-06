@@ -132,7 +132,9 @@ var _site_paint_model: SitePaintModel
 ##   grid_node_commissioned / _retired      …and the capacity behind them
 ##   water_main_placed                      E_NO_MAIN
 ##   water_component_placed                 E_NO_WATER's other half
-##   road_built                             frontage
+##   road_built                             E_FOOTPRINT — `TileGrid.can_place`
+##                                          refuses FLAG_ROAD, so a street laid
+##                                          across a tile TAKES a site away
 ##   austerity_entered / _exited            E_AUSTERITY — the player's own case:
 ##                                          all three shoreline sites on
 ##                                          `player_save_0903` refuse for this

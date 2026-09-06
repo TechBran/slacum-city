@@ -275,8 +275,13 @@ const REGISTER := {
 	"road_block_stamped":
 		"covered: block_roads_stamped is the shell's arm for the same stamp and"
 		+ " rebuilds the street.",
-	"road_built":
-		"covered: road_graph_changed rebuilds the street surface.",
+	# `road_built` HAD an exemption here — "covered: road_graph_changed rebuilds
+	# the street surface" — and lost it in Wave 30, which is this register
+	# working exactly as designed. `TileGrid.can_place` refuses FLAG_ROAD, so a
+	# road laid across a tile takes a legal placement site away, and doc 12
+	# D-130's `BuildSheet.SITE_GROUND_EVENTS` now reads the event to throw a
+	# memoised window away rather than keep offering ground that has become a
+	# street. The consumer is real, so the exemption is gone.
 	"road_removed":
 		"covered: road_graph_changed rebuilds the street surface, which is the"
 		+ " whole of what a removed road looks like.",

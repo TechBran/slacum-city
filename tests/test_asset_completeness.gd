@@ -57,7 +57,7 @@ const SHADERS := [
 	"flood.gdshader", "ground.gdshader", "lamp.gdshader", "light_pool.gdshader",
 	"power_pad.gdshader", "power_smoke.gdshader", "power_wire.gdshader",
 	"road_overlay.gdshader", "road_surface.gdshader", "sidewalk.gdshader",
-	"sky_gradient.gdshader",
+	"site_paint.gdshader", "sky_gradient.gdshader",
 	"street_fx.gdshader", "street_life.gdshader",
 	"vehicle.gdshader", "vehicle_headlight.gdshader", "water.gdshader",
 ]
@@ -81,6 +81,10 @@ const SHADER_OWNER := {
 	"road_overlay.gdshader": "res://game/render/road_overlay_view.gd",
 	"road_surface.gdshader": "res://game/render/road_surface_view.gd",
 	"sidewalk.gdshader": "res://game/render/road_surface_view.gd",
+	# Wave 30, doc 11 §2.20: the second layer that tints the GROUND, for the
+	# same reason `road_overlay` is the first — a legal placement site is bare
+	# ground with no instance for §2.5's per-building channel to reach.
+	"site_paint.gdshader": "res://game/render/site_paint_view.gd",
 	# Wave 17's sky is the one shader whose owner is not a `game/render/` view:
 	# `EnvironmentController` installs it on the `Environment`'s `Sky`, which is
 	# where every other environment write already lives (doc 11 §2.8).
@@ -656,7 +660,11 @@ func test_19_the_matrix_census_is_what_doc_91_records() -> void:
 	# `blob_shadow.gdshader` is the per-building contact decal on the one preset
 	# whose `shadows` knob is false — its own file rather than a seventh mode on
 	# `street_fx.gdshader`, for the three reasons in its header.
-	assert_eq(SHADERS.size(), 20, "shaders")
+	# **21 since Wave 30** (doc 11 §2.20): `site_paint.gdshader` draws doc 12
+	# D-130's placement sites on the ground — the second shader in this list
+	# that tints the surface rather than a building, and for the same reason
+	# `road_overlay.gdshader` was the first.
+	assert_eq(SHADERS.size(), 21, "shaders")
 	assert_eq((StarterCityLoader.read_json(VEHICLES).get("types", {}) as Dictionary).size(),
 			5, "doc 06 vehicle types")
 	assert_eq(DEFERRED_BODIES.size(), 1,
