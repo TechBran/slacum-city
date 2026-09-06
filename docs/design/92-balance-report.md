@@ -14350,26 +14350,29 @@ the two tables are separately switchable.
 
 | gate method | fork | after | Δ |
 |---|---:|---:|---:|
-| `test_gate_21_the_curriculum_is_completable_and_paced` | **537.82** | **392.58** | **−145.24** |
-| `test_gate_29_neglect_is_fatal_on_every_preset_and_ordered` | 278.40 | 281.83 | +3.43 |
-| `test_gate_33_the_director_does_not_stall` | 232.94 | 232.55 | −0.39 |
-| `test_gate_30_a_decayed_city_roster_is_bounded` | 161.15 | 163.21 | +2.06 |
-| `test_gate_18b_the_late_game_ceiling_is_lifted` | 112.70 | 112.60 | −0.10 |
-| `test_gate_32_active_play_pays_more_and_idling_still_pays` | 108.83 | 99.56 | −9.27 |
-| `test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent` | 62.99 | 61.89 | −1.10 |
-| `test_gate_04_maintenance_pays` | 28.63 | 28.69 | +0.06 |
-| the other 26 methods | 41.47 | 41.79 | +0.32 |
-| **34 methods, total** | **1,564.93 s** | **1,414.70 s** | **−150.23 s (−9.6 %)** |
+| `test_gate_21_the_curriculum_is_completable_and_paced` | **537.82** | **395.93** | **−141.89** |
+| `test_gate_29_neglect_is_fatal_on_every_preset_and_ordered` | 278.40 | 281.98 | +3.58 |
+| `test_gate_33_the_director_does_not_stall` | 232.94 | 234.20 | +1.26 |
+| `test_gate_30_a_decayed_city_roster_is_bounded` | 161.15 | 162.42 | +1.27 |
+| `test_gate_18b_the_late_game_ceiling_is_lifted` | 112.70 | 113.93 | +1.23 |
+| `test_gate_32_active_play_pays_more_and_idling_still_pays` | 108.83 | 100.63 | −8.20 |
+| `test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent` | 62.99 | 64.47 | +1.48 |
+| `test_gate_04_maintenance_pays` | 28.63 | 29.77 | +1.14 |
+| the other 26 methods | 41.47 | 42.87 | +1.40 |
+| **34 methods, total** | **1,564.93 s** | **1,426.20 s** | **−138.73 s (−8.9 %)** |
 
 `tests: 34  asserts: 755  failed: 0  silent: 0` on both sides — the same 755
 assertions, so nothing was made cheaper by asserting less.
 
-**A/B-isolated to one cause.** The saving is **145.2 s in gate 21 and 9.3 s in
+**A/B-isolated to one cause.** The saving is **141.9 s in gate 21 and 8.2 s in
 gate 32**, and those are the only two methods in the file that drive the
 `curriculum` agent — which is the only agent that opens doc 05's placement door.
-Every other method moves inside run-to-run noise (±3.4 s on a 280 s run, on a
-machine with sibling lanes on it). The remaining 1,414.7 s is not the harness;
-§71.5 has the number.
+Every other method moves by +1.1 to +3.6 s, uniformly and in the same direction,
+which is the load on the box rather than the code: this "after" run had a full
+`tools/run_suite.sh` beside it and the fork run did not. (An earlier "after" pass
+with only the fork's own two neighbours read **1,414.70 s**, and gate 29 read
+281.83 against this run's 281.98 — the untouched gates are the ruler.) §71.3
+carries the reading that is immune to it.
 
 ### 71.3 Per agent verb, at the fork — the table the brief did not have
 
@@ -14391,6 +14394,41 @@ descending:
 
 **Three verbs are 447 s of the 492 s.** All three are site searches, and all three
 have the same shape: a sweep that pays a full command preview for every candidate.
+
+**The same table after this lane — and this is the reading the machine's load
+cannot move**, because the call counts are identical to the last call:
+
+| agent verb | fork self s | after self s | calls (both) | Δ |
+|---|---:|---:|---:|---:|
+| `place_water_component` | 184.18 | **35.24** | 631 | **−148.94 (5.2×)** |
+| `grid_shortfall_tile` | 207.63 | **197.45** | 7,333 | −10.18 |
+| `relief_spot` | 55.20 | 55.19 | 3,685 | −0.01 *(untouched — the control)* |
+| `upgrade_preview` | 20.05 | 20.35 | 444,155 | +0.30 *(untouched)* |
+| `candidate_site` | 5.28 | 5.24 | 6,347 | −0.04 *(untouched)* |
+| **42 instrumented verbs** | **491.77** | **333.18** | | **−158.59** |
+| `place_water_component:memo` | — | 0.00 | **80 hits** | |
+| `grid_shortfall_tile:memo` | — | 0.00 | **1,462 hits** | |
+
+`relief_spot`, `upgrade_preview` and `candidate_site` are the control arms: this
+lane did not touch them and they do not move. Every verb's call count is
+byte-identical across the two runs, which is the direct evidence that the agents
+made the same decisions in the same order.
+
+**And the instrument caught this wave's own optimisation not paying.** The memo's
+first cut built its signature by string concatenation — `taps += "%d,%d,%d;"` per
+transformer — and GDScript copies the whole buffer on every `+=`, so a late-game
+city made that quadratic: **5.2 ms per signature**, against ~28 ms for the search
+it was meant to avoid. At a 16.6 % hit rate (1,462 of 8,795 asks) that is a
+**LOSS**, and the verb table said so in the only way anything could have:
+
+| `grid_shortfall_tile` self s | 7,333 calls |
+|---|---|
+| fork, no memo | **207.63** |
+| memo, signature built as a string | **212.81** — *slower than no memo at all* |
+| memo, signature as a `PackedInt32Array` hashed once | **197.45** |
+
+The middle row is what this instrument exists for. A wave that had shipped it
+would have published a memo, a test and a paragraph for a 5-second regression.
 
 ### 71.4 The water sweep, priced per candidate origin
 
@@ -14479,3 +14517,33 @@ number and no gate bound was touched; the one `sim/` change is
 is neither saved nor part of `state_hash`. The three `curriculum` `state_hash`
 values in §71.4 are the stronger statement: the arcs the gates measure are
 bit-identical, run for run.
+
+
+### 71.7 The whole suite, and what the trip-wire now names
+
+`nohup setsid tools/run_suite.sh` on this branch: **161 files, 2,993 tests,
+606,535 asserts, failed 0, silent 0, ALL TESTS PASSED**, and the run prints its
+own wall clock for the first time — 3,781.5 s in test methods, of which:
+
+| seconds | share | file |
+|---:|---:|---|
+| 1,421.1 | 37.6 % | `test_balance_gates.gd` |
+| 391.3 | 10.3 % | `test_catchup_cursor.gd` |
+| 295.7 | 7.8 % | `test_player_verbs.gd` |
+| 222.2 | 5.9 % | `test_save_determinism_days.gd` |
+| 192.3 | 5.1 % | `test_power_infra_feed.gd` |
+| 192.3 | 5.1 % | `test_land_works.gd` |
+| 120.8 | 3.2 % | `test_difficulty.gd` |
+| 106.0 | 2.8 % | `test_power_operations.gd` |
+| 99.8 | 2.6 % | `test_save_chunked_restore.gd` |
+| 78.4 | 2.1 % | `test_infra_verbs.gd` |
+| 75.9 | 2.0 % | `test_street_opportunities.gd` |
+| 72.7 | 1.9 % | `test_ui_transformer.gd` |
+
+**This is the deliverable that outlives the lane.** The brief asked for the gates
+file under 10 minutes; the honest answer is that it cannot be reached from
+`tests/` and `tools/` (§71.5), and the useful answer is that the number is now
+printed on every run, per file and per method, so the next wave that adds four
+minutes to the suite finds out on the run that added them. The eight files under
+`test_balance_gates.gd` in that table have never been measured before and are
+where a second cost lane should start.

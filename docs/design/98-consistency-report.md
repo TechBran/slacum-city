@@ -11948,6 +11948,17 @@ for the same reason: its answer reads the block set, the flag plane and the
 transformer roster, and nothing else. It is called once a game-hour by
 `Balanced._lead_grid`.
 
+**And the instrument caught this memo not paying, which is the argument for
+building it first.** The signature's first cut accumulated
+`taps += "%d,%d,%d;" % […]` per transformer; GDScript copies the whole buffer on
+every `+=`, so a late-game city made it quadratic at **5.2 ms per signature**
+against a ~28 ms search, and at a 16.6 % hit rate (1,462 of 8,795 asks) the memo
+made `grid_shortfall_tile` **slower than no memo at all** — 207.63 s at the fork,
+**212.81 s** with it. Rebuilt on a `PackedInt32Array` hashed once, the same memo
+reads **197.45 s** over the identical 7,333 calls. The middle number is the one a
+lane without an instrument ships: a memo, a test, a doc section and a five-second
+regression, all of it looking like progress. Doc 92 §71.3 has the three-row table.
+
 **One new sim accessor, and it has exactly one consumer.**
 `TileGrid.flags_hash()` returns `hash(_flags)` — a digest of the 12,544-byte flag
 plane, which is all `can_place` and `CitySim._touches_water` read. Not saved, not

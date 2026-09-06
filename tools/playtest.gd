@@ -299,12 +299,13 @@ class Clock extends RefCounted:
 				return int(a["self_usec"]) > int(b["self_usec"])
 			return String(a["verb"]) < String(b["verb"]))
 		return out
-
-	static func self_usec_of(id: StringName) -> int:
-		return int(_self_usec.get(id, 0))
-
-	static func calls_of(id: StringName) -> int:
-		return int(_calls.get(id, 0))
+	# **No `self_usec_of` / `calls_of` here, and that is deliberate.** The first
+	# draft had both, as the obvious pair of accessors a timing class "should"
+	# expose, and neither had a caller — `tools/profile_gates.gd` reads [rows] and
+	# nothing else does. That is this project's signature defect (A91-D-19:
+	# authored behaviour nothing consumes), committed by the lane whose own report
+	# quotes the rule. If a future reader needs one number by name, it arrives
+	# with the reader that needs it.
 
 
 ## One open scope on [Clock]'s stack. Freed the instant its caller returns —
@@ -1422,22 +1423,36 @@ class Api extends RefCounted:
 	## anything relevant is re-rated, and either costs a re-scan that was not
 	## strictly needed. Missing a change that DOES move an answer is the failure
 	## this must not have.
+	## **Packed integers, not a built string, and the measurement is why.** The
+	## first cut accumulated `taps += "%d,%d,%d;" % […]` per transformer and
+	## `mains += …` per edge. GDScript copies the whole buffer on every `+=`, so
+	## a late-game city with a few hundred components made that quadratic:
+	## `tools/profile_gates.gd --verbs` measured **5.2 ms per signature**, which
+	## turned `grid_shortfall_tile`'s memo from a 41 s saving into a 5 s LOSS
+	## (207.63 s → 212.81 s at 1,462 hits of 8,795 asks). Appending to a
+	## `PackedInt32Array` and hashing it once is the same information at a
+	## fraction of the price — and it is the instrument this wave built catching
+	## this wave's own optimisation not paying, which is the argument for having
+	## built it.
 	func _map_signature() -> String:
-		var mains := ""
+		var mains := PackedInt32Array()
 		for id: Variant in _sorted(sim.water.edges):
 			var e: WaterEdge = sim.water.edges[id]
 			if e.is_live():
-				mains += "%s:%d," % [String(id), e.path.size()]
-		var taps := ""
+				mains.append(hash(id))
+				mains.append(e.path.size())
+		var taps := PackedInt32Array()
 		for id: Variant in sim.grid.component_ids_of_kind(&"transformer"):
 			var c: Dictionary = sim.grid.component(String(id))
 			if c["state"] == &"FAILED":
 				continue
 			var t: Vector2i = c["tile"]
-			taps += "%d,%d,%d;" % [t.x, t.y, int(c["level"])]
-		return "%s|%d|%d|%s|%s|%d" % ["/".join(_ready_blocks()),
+			taps.append(t.x)
+			taps.append(t.y)
+			taps.append(int(c["level"]))
+		return "%s|%d|%d|%d|%d|%d" % ["/".join(_ready_blocks()),
 				sim.world.grid.flags_hash(), sim.progression.city_level,
-				mains, taps, sim.water.edges.size()]
+				hash(mains), hash(taps), sim.water.edges.size()]
 
 	## True when every blocker on a refused preview is one MONEY can lift. Doc 03
 	## §2.10 gives two: the plain `E_FUNDS`, and `E_AUSTERITY`, which refuses the
