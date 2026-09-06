@@ -238,6 +238,13 @@ func _print_chain(sim: CitySim, day: int, spread: bool) -> void:
 ## refuses at 0.55 is refusing about pipes.
 func _print_spread(sim: CitySim) -> void:
 	var per_zone: Dictionary = {}
+	# **Wave 30: the same census, split by REMEDY** (doc 93 §BH). "46 of 89 are
+	# under the gate" is the shape of the problem; "and every one of them is a
+	# PIPE" is the answer, and until `WaterSystem.pressure_remedy_at` existed no
+	# reader could say which. Counted per zone because the classification is per
+	# zone: a zone at or above the gate refuses for distance and a zone under it
+	# refuses for supply, and the same tile can be either as the works moves.
+	var per_zone_far: Dictionary = {}
 	for raw: Variant in sim.water.demand.sorted_ids():
 		var building_id := String(raw)
 		var tile: Vector2i = sim.water.demand.access_tile(building_id)
@@ -246,7 +253,11 @@ func _print_spread(sim: CitySim) -> void:
 			continue
 		if not per_zone.has(z.zone_key):
 			per_zone[z.zone_key] = []
+			per_zone_far[z.zone_key] = 0
 		(per_zone[z.zone_key] as Array).append(sim.water.pressure_at(tile))
+		if sim.water.pressure_at(tile) < sim.water.data.effect("upgrade_min_pressure", 0.55) \
+				and sim.water.pressure_remedy_at(tile) == WaterSystem.BLOCKED_DISTANCE:
+			per_zone_far[z.zone_key] = int(per_zone_far[z.zone_key]) + 1
 	var gate := sim.water.data.effect("upgrade_min_pressure", 0.55)
 	for key: Variant in _sorted_keys(per_zone):
 		var values: Array = per_zone[key]
@@ -255,10 +266,11 @@ func _print_spread(sim: CitySim) -> void:
 		for value: float in values:
 			if value < gate:
 				under += 1
-		print("  spread %s: n=%d  min %.2f  p25 %.2f  median %.2f  max %.2f  | under the %.2f upgrade gate: %d (%.0f%%)"
+		var far := int(per_zone_far[key])
+		print("  spread %s: n=%d  min %.2f  p25 %.2f  median %.2f  max %.2f  | under the %.2f upgrade gate: %d (%.0f%%) — %d want a MAIN, %d want SUPPLY"
 				% [key, values.size(), values[0], values[values.size() / 4],
 				values[values.size() / 2], values[-1], gate, under,
-				100.0 * float(under) / float(values.size())])
+				100.0 * float(under) / float(values.size()), far, under - far])
 
 
 ## Every doc-05 node the city owns, with the rung it is on and the rung the MVP

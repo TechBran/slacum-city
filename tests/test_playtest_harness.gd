@@ -908,3 +908,202 @@ func test_the_water_sweeps_cheap_filters_are_necessary_conditions() -> void:
 			("every placeable origin on the founding plane is within tap radius, "
 					+ "so this city cannot exercise the E_NO_MAIN skip (%d found)")
 					% no_main)
+# ===========================================================================
+# Wave 30 — the agent lays a main (doc 93 §BH, doc 92 §67.9 item 2)
+# ===========================================================================
+
+## The furthest owned, developed, un-piped tile on the founding city, scanned
+## row-major so the answer is the same on every machine. Doc 05 §2.3's factor is
+## `1 − 0.10 × (d − 2)`, so a tile at d = 8 sees 0.40 of whatever its zone has —
+## under the 0.55 gate at any healthy zone pressure.
+static func _far_dry_tile(sim: CitySim, api: Playtest.Api, want: int) -> Vector2i:
+	for z in TileGrid.SIZE:
+		for x in TileGrid.SIZE:
+			var tile := Vector2i(x, z)
+			var block: LandBlock = sim.world.block_of_tile(x, z)
+			if block == null or not block.is_owned() or not block.is_ready():
+				continue
+			if sim.water.topology.distance_at_tile(tile) < want:
+				continue
+			if api._main_layable(tile):
+				return tile
+	return Vector2i(-1, -1)
+
+
+## **The purchase `tools/playtest.gd` could not make until this wave.** Doc 92
+## §67.9 item 2 and A91-D-123's closing row: `cmd_place_water_main` was probed,
+## listed and called by nothing. The route is doc 05's own
+## `WaterSystem.lateral_tiles`, it starts ON the network because §2.2's
+## connectivity is physical, and the whole of what it buys is §2.3's `d`.
+func test_the_agent_lays_a_service_main_and_it_takes_the_tile_factor_to_one() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	sim.treasury.balance = 20_000_000
+	var target := _far_dry_tile(sim, api, 8)
+	assert_ne(target, Vector2i(-1, -1),
+			"the founding city has owned, developed ground eight tiles from a main")
+	assert_almost_eq(sim.water.topology.factor_at_tile(target), 0.40, 0.001,
+			"1 − 0.10 × (8 − 2), doc 05 §2.3, before anything is laid")
+
+	var run := api.water_main_run(target, "service")
+	assert_true(run.size() >= 2, "a run of at least two tiles, or it is not a main")
+	assert_false(sim.water.nearest_main_tile(run[0], 0).is_empty(),
+			"the run STARTS on a live main tile — §2.2's connectivity is physical")
+	assert_eq(run[run.size() - 1], target, "…and it ENDS on the tile that was refused")
+
+	# Doc 03 §2.13(g): `service` is $286/tile, and the quote is the command's own.
+	var per_tile := sim.econ_curves.water_main_cost_per_tile("service",
+			float(sim.treasury.difficulty().get("M_build", 1.0)))
+	assert_eq(per_tile, 286, "doc 03 §2.13(g)'s service main, at standard M_build")
+	var quote := api.water_main_quote(target, "service")
+	assert_eq(quote, run.size() * per_tile)
+
+	var balance_before := sim.treasury.balance
+	assert_true(bool(api.place_water_main(target, "service")["ok"]))
+	assert_eq(sim.treasury.balance, balance_before - quote,
+			"doc 03 billed exactly the quote")
+	assert_eq(api.water_main_tiles, run.size())
+	assert_eq(api.water_main_spend, quote)
+	assert_eq(sim.water.topology.distance_at_tile(target), 0,
+			"the tile is ON the main now")
+	assert_almost_eq(sim.water.topology.factor_at_tile(target), 1.0, 0.001,
+			"…so §2.3's factor is 1.0 and the gate's second arm has nothing to say")
+
+
+## **The other wall: `feed_capacity`, the one term of §2.5's chain that is not a
+## node** (doc 92 §67.8, doc 93 §BD6). `WaterTopology._resolve_supply_chain`
+## counts only mains INCIDENT TO A SUPPLY NODE'S TILE, so the run has to start at
+## the plant — which is why `Api.water_main_run` takes an explicit tap.
+func test_a_trunk_laid_at_the_plant_raises_the_term_no_node_can_raise() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	sim.treasury.balance = 20_000_000
+	var zone: PressureZone = null
+	for raw: Variant in sim.water.topology.zones:
+		var candidate: PressureZone = raw
+		if not candidate.dead and not candidate.live_pump_ids.is_empty():
+			zone = candidate
+			break
+	assert_ne(zone, null, "the founding city has a zone with a live pump")
+	var key := zone.zone_key
+	var before := zone.feed_capacity_m3h
+	var node: WaterNode = sim.water.nodes[String(zone.live_pump_ids[0])]
+	var step := Vector2i(-1, -1)
+	for candidate: Vector2i in [Vector2i(1, 0), Vector2i(0, 1),
+			Vector2i(-1, 0), Vector2i(0, -1)]:
+		if api._main_layable(node.tile + candidate) \
+				and api._main_layable(node.tile + candidate * 2):
+			step = candidate
+			break
+	assert_ne(step, Vector2i(-1, -1), "there is clear ground beside the plant")
+	var target: Vector2i = node.tile + step * 2
+	assert_true(bool(api.place_water_main(target, "trunk", node.tile)["ok"]),
+			"a run whose `path[0]` is a facility's own terminal tile is CONNECTED")
+	# `rebuild_zones()` builds new `PressureZone` objects; the old handle is stale.
+	var after: PressureZone = sim.water.topology.zone_by_key(key)
+	assert_ne(after, null)
+	assert_almost_eq(after.feed_capacity_m3h,
+			before + sim.water.data.main_capacity("trunk"), 0.001,
+			"the trunk's whole nameplate joins §2.5's min-cut, because it touches "
+					+ "the supply tile")
+
+
+## Both searches are TOTAL, and what they answer has to be true of the city they
+## answered about — the shape this project keeps filing is a harness read that
+## nothing checks against the sim it came from.
+func test_the_two_main_searches_answer_only_what_the_sim_agrees_with() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	sim.treasury.balance = 20_000_000
+	var tile := api.water_distance_blocked_tile()
+	if tile.x >= 0:
+		var found := ""
+		for id: Variant in sim.buildings:
+			if sim.water.demand.access_tile(String(id)) == tile:
+				found = String(id)
+				break
+		assert_ne(found, "", "the tile it names belongs to a building")
+		var b: Building = sim.buildings[found]
+		var next_stats: Dictionary = sim.catalog.stats(String(b.archetype), b.level + 1)
+		var delta := float(next_stats.get("water_demand", 0.0)) \
+				- float(b.stats.get("water_demand", 0.0))
+		assert_eq(String(sim.water.can_upgrade_water(found, delta)["reason"]),
+				WaterSystem.BLOCKED_DISTANCE,
+				"…and doc 05 refuses that building for DISTANCE, not for capacity")
+	else:
+		# The founding city's own answer, and it is an assertion either way: no
+		# standing building is one rung short AND refused for distance.
+		assert_eq(tile, Vector2i(-1, -1))
+	var trunk := api.mains_bound_trunk(Playtest.Balanced.MAINS_TRUNK_TILES)
+	if trunk.is_empty():
+		var mains_bound := 0
+		for raw: Variant in sim.water.topology.zones:
+			var z: PressureZone = raw
+			if not z.dead and String(sim.water.supply_chain_of(z)["binding"]) == "mains":
+				mains_bound += 1
+		assert_eq(mains_bound, 0,
+				"it stands down only when NO zone binds on its mains")
+	else:
+		var z: PressureZone = sim.water.topology.zone_by_key(String(trunk["zone"]))
+		assert_ne(z, null)
+		assert_eq(String(sim.water.supply_chain_of(z)["binding"]), "mains")
+		assert_ne(sim.water.node_at_tile(trunk["tap"]), "",
+				"the tap is a facility's own terminal tile, which is what "
+						+ "`feed_capacity` counts and what `E_NOT_CONNECTED` accepts")
+
+
+## **KNOB 4 ships OFF, and the A/B pair differs in exactly that one field**
+## (doc 93 §BH5, doc 92 §73.4). This is the same controlled-pair discipline
+## `tax_squeezer` and `disaster_neglect` are built on, and it is asserted rather
+## than commented because the whole value of the measurement is that one knob
+## separates the two runs. A second difference introduced later — a cooldown, a
+## band, an extra purchase — would make doc 92 §73.4's table a comparison of two
+## agents instead of a measurement of one rule.
+func test_the_service_main_knob_is_off_by_default_and_is_the_only_difference() -> void:
+	var taught := Playtest.Factory.make("curriculum")
+	var probe := Playtest.Factory.make("curriculum_service_mains")
+	assert_ne(taught, null)
+	assert_ne(probe, null)
+	assert_true(taught.plans_water, "the taught route plans its water (KNOB 3)")
+	assert_false(taught.lays_service_mains,
+			"…and does NOT lay service mains: doc 92 §73.4 measured seed 9001's "
+					+ "the arm losing residents on two of three seeds (5,809 vs 8,778 on 9001) when it does")
+	assert_true(probe.plans_water)
+	assert_true(probe.lays_service_mains, "the A/B arm is the knob, switched on")
+	# Every other knob and cursor identical, so the pair is controlled.
+	assert_eq(probe.maintains, taught.maintains)
+	assert_eq(probe.tax_target, taught.tax_target)
+	assert_eq(probe.describe() == taught.describe(), false,
+			"and it says which one it is")
+
+
+## **The band the service arm stands down on, asserted where nothing else runs
+## it.** `Api.zone_utilization_at` is read by exactly one caller — `_lead_mains`'s
+## service arm — and that arm is behind a knob this build ships OFF, so without
+## this test the reading would be authored behaviour with no consumer in any
+## default path: the shape doc 91 A91-D-19 names and the one this project keeps
+## filing. It is `demand / supply` of doc 05's zone, which is what
+## `Balanced.WATER_RELIEF_RATIO` is a band on, and it must agree with the zone it
+## claims to be about.
+func test_the_zone_utilization_read_is_the_zones_own_demand_over_supply() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	sim.advance_hours(6.0)
+	var seen := 0
+	for raw: Variant in sim.water.topology.zones:
+		var z: PressureZone = raw
+		if z.dead or z.edge_ids.is_empty():
+			continue
+		var edge: WaterEdge = sim.water.edges[String(z.edge_ids[0])]
+		var tile: Vector2i = edge.path[0]
+		if sim.water.zone_at(tile) != z:
+			continue
+		seen += 1
+		assert_almost_eq(api.zone_utilization_at(tile),
+				z.demand_m3h / maxf(z.supply_m3h, 0.001), 0.0001,
+				"zone %s: the read is the zone's own two numbers" % z.zone_key)
+	assert_true(seen >= 1, "the founding city has a live zone with a main in it")
+	# Off the map, and on a tile no main reaches, it answers 0.0 rather than
+	# dividing by a zone that is not there — which is what lets `_lead_mains`
+	# ask the question before it knows whether there is a zone to ask about.
+	assert_eq(api.zone_utilization_at(Vector2i(-5, -5)), 0.0)

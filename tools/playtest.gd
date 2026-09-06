@@ -92,6 +92,17 @@ const NAMED_ONLY_STRATEGY_IDS: Array[String] = [
 	# table doc 92 has published seven of. It earns its keep on a horizon long
 	# enough to contain a `severe_thunderstorm`.
 	"storm_ready",
+	# Wave 30 — `curriculum` with KNOB 4 on: an agent that also lays a SERVICE
+	# main to every building doc 05 §2.11 refuses for DISTANCE. It exists so doc
+	# 92 §73.4's A/B is a command anyone can re-run rather than a diff someone has
+	# to reconstruct, and it is named-only because the measurement it reproduces
+	# is the reason KNOB 4 ships OFF: the arm LOSES. Measured (doc 92 §73.4's V3
+	# row, re-taken by the merge verifier): seed 9001 ends the arc at supply 253.7
+	# / pressure 0.40 — above gate 21's 0.35 warn band — with 5,809 residents
+	# against 8,778 without the arm, and seed 1337 at 7,004 against 9,043. (An
+	# earlier draft said "supply 0.0 / pressure 0.00": that was V2, a variant the
+	# shipped code does not implement.) See `Balanced.lays_service_mains`.
+	"curriculum_service_mains",
 ]
 
 ## Verbs the harness knows how to drive. Present ones are used, absent ones are
@@ -481,6 +492,14 @@ class Api extends RefCounted:
 	## agent (doc 92 §17.6 recorded that no strategy drove it).
 	var water_placed: int = 0
 	var water_spend: int = 0
+	## Wave 30 — doc 05 §6's OTHER placement verb, driven for the first time
+	## (doc 92 §67.9 item 2). Counted in TILES for [road_tiles_built]'s reason: a
+	## run is one tap and N bills, and doc 03 §2.13(g) prices it per tile. Kept
+	## apart from `water_spend` because a main and a component are different
+	## purchases answering different terms of §2.5 — folding them would hide
+	## exactly the distinction this wave exists to measure.
+	var water_main_tiles: int = 0
+	var water_main_spend: int = 0
 	## Doc 10 §2.13's `cmd_place_road`, driven for the first time by the Wave-10
 	## curriculum — the other half of §17.6's gap. Counted in TILES, not in
 	## commands: a run is one tap and N bills, and the bill is the interesting
@@ -1470,6 +1489,216 @@ class Api extends RefCounted:
 			if code != &"E_FUNDS" and code != &"E_AUSTERITY":
 				return false
 		return true
+
+	# --- doc 05 §6's OTHER placement verb: the main (Wave 30, doc 93 §BH) -----
+
+	## **The purchase no agent in this file has ever made** (doc 92 §67.9 item 2,
+	## §69.5, A91-D-123's closing row). `cmd_place_water_main` has been on
+	## [KNOWN_VERBS] since Wave 10 and `ui/path_tool.gd` has given the PLAYER two
+	## cards for it since Wave 10 as well — and every curriculum and balance run
+	## this project has published measured a city that could only ever extend
+	## water by siting a component within `main_tap_radius_tiles` of a main that
+	## already existed. Doc 92 §67.8's two walls are both pipes, and this is the
+	## door that buys one.
+	##
+	## **The route is doc 05's own, and deliberately not `road_run`'s.**
+	## [place_road]'s search answers a different question — *where in the city can
+	## I lay N tiles of pavement that touch pavement* — and a main has a fixed
+	## start (the network) and a fixed end (the building or the plant). Doc 05
+	## already owns that shape: `WaterSystem.lateral_tiles` is the
+	## diagonal-then-straight run `CitySim.cmd_place_water_component` uses for
+	## every component lateral it has ever laid, and using it here is what keeps
+	## the agent's main and the game's lateral the same number of tiles — and the
+	## same price — for the same span. A second path-finder would have been a
+	## second, divergent copy of a rule that already exists.
+	##
+	## **Truncation is a feature.** The run stops at the last tile that is on
+	## owned, READY ground and carries no other main, because a main that gets
+	## *closer* still raises §2.3's factor: the whole gate is `1 − 0.10 × (d − 2)`
+	## and every tile of d bought back is 0.10 of tile factor. A run truncated to
+	## fewer than 2 tiles is not a run at all (`cmd_place_water_main`'s
+	## `E_NO_TILES`) and is refused here rather than sent.
+	## `from` names the tap explicitly and `(-1, -1)` asks for the nearest one.
+	## The TRUNK arm has to name it: `feed_capacity_m3h` counts only mains
+	## incident to a supply node's tile, so a trunk that started at the nearest
+	## pipe instead of at the plant would be a legal main that raises the term it
+	## was bought to raise by exactly zero.
+	func water_main_run(target: Vector2i, tier: String = "service",
+			from: Vector2i = Vector2i(-1, -1)) -> Array[Vector2i]:
+		var empty: Array[Vector2i] = []
+		if not TileGrid.in_bounds(target.x, target.y):
+			return empty
+		var start := from
+		if not TileGrid.in_bounds(start.x, start.y):
+			# The tap: the nearest LIVE main tile anywhere on the map, which is
+			# doc 05's own siting read (`nearest_main_tile`) and not a guess.
+			var tap := sim.water.nearest_main_tile(target, TileGrid.SIZE)
+			if tap.is_empty():
+				return empty
+			start = tap["tap_tile"]
+		var run: Array[Vector2i] = [start]
+		for entry: Variant in WaterSystem.lateral_tiles(start, target):
+			var t: Vector2i = entry
+			if not _main_layable(t):
+				break
+			run.append(t)
+		return run if run.size() >= 2 else empty
+
+	## A tile a NEW main may occupy: in bounds, on land the city owns and has
+	## developed (`cmd_place_water_main`'s `E_NOT_DEVELOPED`), and carrying no
+	## other main (`E_MAIN_OVERLAP`). Buildings are deliberately not consulted —
+	## §2.2's connectivity is tiles, a main is buried, and the command has never
+	## refused one for standing under a shell.
+	func _main_layable(tile: Vector2i) -> bool:
+		if not TileGrid.in_bounds(tile.x, tile.y):
+			return false
+		var block := sim.world.block_of_tile(tile.x, tile.y)
+		if block == null or not block.is_owned() or not block.is_ready():
+			return false
+		return sim.water.first_occupied_main_tile([tile]).x < 0
+
+	## What that run would cost, off `cmd_place_water_main`'s own preview — doc
+	## 03 §2.13(g)'s `main_build_cost_per_tile[tier] × tiles`. `0` when there is
+	## no run to price, so a budget-gated agent never saves toward nothing.
+	func water_main_quote(target: Vector2i, tier: String = "service",
+			from: Vector2i = Vector2i(-1, -1)) -> int:
+		if not has_verb("cmd_place_water_main"):
+			return 0
+		var run := water_main_run(target, tier, from)
+		if run.is_empty():
+			return 0
+		var raw: Array = []
+		for tile: Vector2i in run:
+			raw.append(tile)
+		var quote: Dictionary = sim.cmd_place_water_main(raw, tier, true)
+		if not bool(quote["ok"]):
+			return 0
+		return int((quote.get("payload", {}) as Dictionary).get("cost", 0))
+
+	## Lay it. Logged under the COMMAND's own name, because that is what
+	## [_optional] does with every verb it drives and a wrapper that spelled the
+	## refusal path differently would have put half this purchase's history under
+	## a name `tools/measure_utility_plan.gd` does not read. Counted in TILES for
+	## [road_tiles_built]'s reason: a run is one tap and N bills.
+	func place_water_main(target: Vector2i, tier: String = "service",
+			from: Vector2i = Vector2i(-1, -1)) -> Dictionary:
+		var run := water_main_run(target, tier, from)
+		if run.is_empty():
+			return _log("cmd_place_water_main", "%s @%d,%d" % [tier, target.x, target.y],
+					CommandQueue.fail(&"E_NO_SITE"), {"tier": tier})
+		var raw: Array = []
+		for tile: Vector2i in run:
+			raw.append(tile)
+		var result := _optional("cmd_place_water_main", 2, [raw, tier],
+				"%s %d tiles @%d,%d" % [tier, run.size(), run[0].x, run[0].y])
+		if bool(result["ok"]):
+			var payload: Dictionary = result["payload"]
+			water_main_tiles += int(payload.get("tiles", run.size()))
+			water_main_spend += int(payload.get("cost", 0))
+		return result
+
+	## **The building doc 05 refuses for DISTANCE**, and the first consumer of
+	## `WaterSystem.can_upgrade_water`'s `reason` (doc 93 §BH). Its ACCESS TILE,
+	## which is the tile the gate measured and therefore the tile a main has to
+	## reach — not `Building.origin`, which is the same tile only for a 1×1.
+	## `(-1, -1)` when no standing building is refused that way.
+	##
+	## Walks in sorted id order like every other search here, and asks the real
+	## `cmd_upgrade_building` preview first so the agent never lays a pipe for a
+	## building that some OTHER check (funds, condition, city level) is refusing
+	## anyway — the wall has to be water before a main is the answer.
+	##
+	## **Only the `pressure` arm, never `no_zone`** (doc 93 §BH5, and it is the
+	## difference between this rule helping and hurting). A main is a DEMAND
+	## purchase: §2.2's BFS enrols every tile within twelve of the new pipe and
+	## §2.4 bills the zone for every building that lands in it. A `pressure`
+	## refusal is a building the zone is ALREADY billing for — shortening its `d`
+	## enrols almost nothing new. A `no_zone` refusal is a building outside every
+	## zone whose demand is counted nowhere, and connecting it is a supply
+	## commitment as much as a pipe. Measured over 45 game-days with `no_zone`
+	## included: seed 1337 ended **8,559 → 6,283** residents with its zone at
+	## **0.21** pressure, because the agent spent the arc connecting districts to
+	## a works with nothing left to sell them (doc 92 §73.4).
+	func water_distance_blocked_tile() -> Vector2i:
+		if not has_verb("cmd_upgrade_building"):
+			return Vector2i(-1, -1)
+		for id in Api._sorted(sim.buildings):
+			var sim_id := String(id)
+			var b: Building = sim.buildings[sim_id]
+			if b.state != &"active" or b.level < 1 or b.level >= b.max_level:
+				continue
+			var preview: Dictionary = sim.cmd_upgrade_building(sim_id, true)
+			var blockers: Array = (preview.get("payload", {}) as Dictionary).get("blockers", [])
+			if blockers.is_empty() or String(blockers[0]) != "E_WATER_HEADROOM":
+				continue
+			var next_stats: Dictionary = sim.catalog.stats(String(b.archetype), b.level + 1)
+			var delta := float(next_stats.get("water_demand", 0.0)) \
+					- float(b.stats.get("water_demand", 0.0))
+			var verdict: Dictionary = sim.water.can_upgrade_water(sim_id, delta)
+			if String(verdict.get("reason", "")) != WaterSystem.BLOCKED_DISTANCE:
+				continue
+			if String(verdict.get("limit", "")) != "pressure":
+				continue
+			return sim.water.demand.access_tile(sim_id)
+		return Vector2i(-1, -1)
+
+	## **A main is a DEMAND purchase as much as a supply one, and this is the
+	## number that says whether the zone can afford one** (Wave 30, doc 92 §73.4).
+	## Doc 05 §2.2's BFS enrols every tile within `max_service_distance_tiles` of
+	## a live main tile, and §2.4 sums the demand of every building whose access
+	## tile lands in the zone — so a run laid into unserved ground does not only
+	## raise one building's tile factor, it moves a whole neighbourhood's demand
+	## onto a plant that was not sized for it. Measured over 45 game-days with no
+	## guard on this reading: seed 1337 ended **8,559 → 6,283 residents** and its
+	## zone **1.00 → 0.21** pressure, because the agent kept extending the network
+	## into ground the works could not supply.
+	##
+	## `demand / supply` of the zone at `tile`, or `0.0` where there is none —
+	## the same utilization band [Balanced.WATER_RELIEF_RATIO] reads, because it
+	## is the same question one purchase over.
+	func zone_utilization_at(tile: Vector2i) -> float:
+		var z: PressureZone = sim.water.zone_at(tile)
+		if z == null or z.dead:
+			return 0.0
+		return z.demand_m3h / maxf(z.supply_m3h, 0.001)
+
+	## **The plant tile a TRUNK main has to start at**, for the other wall doc 92
+	## §67.8 named: a zone whose §2.5 chain binds on `mains`. `feed_capacity_m3h`
+	## is the sum of the capacities of the live mains INCIDENT TO A SUPPLY NODE'S
+	## TILE (`WaterTopology._resolve_supply_chain`), so the only run that raises
+	## it is one that touches a live pump or tank — which is also what
+	## `cmd_place_water_main` needs for its `E_NOT_CONNECTED` check, because a
+	## facility's own terminal tile is a legal `path[0]`.
+	##
+	## `{}` when no zone binds on its mains, which is the answer on a young city
+	## and the reason this door stands down rather than buying pipe for its own
+	## sake. Otherwise `{tap, target, zone}` — the plant tile the run starts on
+	## and the far end `tiles` steps away, in the first of the four cardinal
+	## directions with clear ground for the whole run, checked in a fixed order so
+	## the choice is the same on every machine.
+	func mains_bound_trunk(tiles: int) -> Dictionary:
+		for z: PressureZone in _zones_by_need(""):
+			if z.dead:
+				continue
+			var chain: Dictionary = sim.water.supply_chain_of(z)
+			if String(chain.get("binding", "none")) != "mains":
+				continue
+			var ids: Array = []
+			ids.append_array(z.live_pump_ids)
+			ids.append_array(z.live_tank_ids)
+			ids.sort()
+			for node_id: Variant in ids:
+				var node: WaterNode = sim.water.nodes[String(node_id)]
+				for step: Vector2i in [Vector2i(1, 0), Vector2i(0, 1),
+						Vector2i(-1, 0), Vector2i(0, -1)]:
+					var reach := 0
+					while reach < tiles and _main_layable(node.tile + step * (reach + 1)):
+						reach += 1
+					if reach < 1:
+						continue
+					return {"tap": node.tile, "target": node.tile + step * reach,
+							"zone": z.zone_key}
+		return {}
 
 	## Doc 93 §B's headline verb ("THE game"). `cmd_place_grid_component(kind,
 	## tile, level = 1, preview = false)`.
@@ -2887,6 +3116,25 @@ class Balanced extends Strategy:
 	## $2,946,924** on seed 9001 and still did not finish the level.
 	const WATER_COOLDOWN := 24
 
+	## **How long a trunk main the agent lays at the plant** (Wave 30, doc 93
+	## §BH). Doc 05 §2.5's `feed_capacity` is the summed nameplate of every live
+	## main INCIDENT TO A SUPPLY NODE'S TILE, so as far as the min-cut is
+	## concerned a two-tile stub off the pump adds a whole `trunk` 213.0 m³/h for
+	## doc 03 §2.13(g)'s $1,608 — **$7.55 per m³/h against a pump's $187.50**, and
+	## an agent tuned to that number would be farming a modelling artefact rather
+	## than playing the game. It is reported instead (doc 92 §73.6, doc 91
+	## A91-D-168) and the rule buys the run a PLAYER would draw: 8 tiles, which is
+	## `main_tap_radius_tiles` and half a land block — the same span doc 09's
+	## `utility_corridor` phase runs to a block's centre.
+	const MAINS_TRUNK_TILES := 8
+	## One game-day between mains, on `WATER_COOLDOWN`'s own argument: a main is
+	## instant (no construction job gates it) but `rebuild_zones()` only moves
+	## `feed_capacity` and the tile factors once, and the SOLVE that turns them
+	## into supply and pressure runs on the tick after. An agent re-reading the
+	## same wall every game-hour would lay a second pipe against a reading the
+	## first one had already answered.
+	const MAINS_COOLDOWN := 24
+
 	## KNOB 1 — maintenance. `disaster_neglect` sets this false and changes
 	## nothing else: no repair, no priority class, no transformer. Everything it
 	## builds, it builds exactly as `balanced` would.
@@ -2896,7 +3144,11 @@ class Balanced extends Strategy:
 	## nothing else.
 	var tax_target: int = -1
 	## KNOB 3 — the water planner (Wave 26, doc 92 §67.5). `curriculum` sets it
-	## true; every other strategy in this file leaves it false.
+	## true; every other strategy in this file leaves it false. **Wave 30 hangs
+	## `_lead_mains` on the same knob**, for the same reason and with the same
+	## consequence: the pipes are the other half of the sentence the planner was
+	## already saying, and switching them on for every `Balanced` descendant would
+	## move every doc 92 row fitted to the ladder at once.
 	##
 	## **Why it is a knob and not simply the rule.** `_lead_water` belongs beside
 	## `_lead_generation` — it is the same sentence one utility over, *buy the
@@ -2910,6 +3162,29 @@ class Balanced extends Strategy:
 	## gate 21 measures — which is the same controlled-pair discipline
 	## `disaster_neglect` and `tax_squeezer` are built on.
 	var plans_water: bool = false
+	## KNOB 4 — the SERVICE half of the mains planner (Wave 30, doc 93 §BH5).
+	## **Ships OFF, and the measurement is why.**
+	##
+	## `_lead_mains` has two arms. The TRUNK arm buys doc 05 §2.5's
+	## `feed_capacity` — pure supply, laid at the plant, on ground the zone
+	## already serves — and it runs whenever `plans_water` does. The SERVICE arm
+	## lays a main to a building §2.11 refuses for DISTANCE, and doc 92 §73.4
+	## measured what that costs: §2.2's BFS enrols every tile within twelve of the
+	## new pipe and §2.4 bills the zone for all of it, so an agent that answers
+	## every distance refusal spends the arc connecting districts to a works that
+	## cannot supply them. Over 45 game-days it took seed 1337 from **8,559 to
+	## 6,283** residents, and seed 9001's one zone from pressure **1.00 to 0.00**
+	## with supply **0.0** — which is `test_balance_gates.gd` gate 21's own
+	## per-seed assertion (*"a seed that stops short must not be stopped by a
+	## pressure zone the agent was supposed to keep supplied"*) failing.
+	##
+	## **It is not deleted, because it is the right rule waiting for its other
+	## half.** It wins seed 4242 a whole city level — the capstone doc 92 §67.8
+	## measured the distance wall taking from it — and what it lacks is a planner
+	## that buys SUPPLY for the district it just connected. That is the next
+	## lane's, and until then this is a knob with a strategy on it
+	## (`curriculum_service_mains`) so the A/B stays one command.
+	var lays_service_mains: bool = false
 
 	var _residential_streak: int = 0
 	var _civic_at_level: int = -1
@@ -2919,6 +3194,7 @@ class Balanced extends Strategy:
 	var _feeder_hour: int = -1000
 	var _hotspot_hour: int = -1000
 	var _water_hour: int = -1000
+	var _mains_hour: int = -1000
 	## Set while the trunk is past `FEEDER_RELIEF_RATIO` and every feeder slot in
 	## the city is full — i.e. while the ONE purchase that would fix it is a
 	## substation the agent cannot yet afford. It stands the land fund down (see
@@ -3138,6 +3414,14 @@ class Balanced extends Strategy:
 		#      rule is written here and switched on for one arc.
 		if plans_water and maintains and _lead_water(api, hour, spare):
 			return
+		# 0a1b. …and then the PIPES, which are the only purchase that can answer
+		#      either of the two walls doc 92 §67.8 measured this ladder into:
+		#      a tile too far from a main, and a zone whose §2.5 chain binds on
+		#      `feed_capacity`. Deliberately AFTER `_lead_water`, because a zone
+		#      short of source or treatment is short of water and a pipe carries
+		#      water it does not have; see `_lead_mains`.
+		if plans_water and maintains and _lead_mains(api, hour, spare):
+			return
 		# 0a. The TRUNK, before the tap: a saturated feeder takes its whole
 		#     subtree dark, and no number of transformers under it helps.
 		if maintains and _relieve_feeders(api, hour, spare):
@@ -3344,6 +3628,83 @@ class Balanced extends Strategy:
 		# to the rest of the ladder; only the water rule stands down.
 		_water_hour = hour
 		return bought
+
+	## **The pipes — the purchase this file has never made** (Wave 30, doc 93
+	## §BH, doc 92 §67.8/§67.9 item 2). `_lead_water` raises the term of doc 05
+	## §2.5's chain that a NODE can raise; this raises the two that no node can:
+	##
+	## 1. **A service main to a building the gate refuses for DISTANCE.** §2.3's
+	##    per-tile factor is `1 − 0.10 × (d − 2)` in Chebyshev steps to the
+	##    nearest live main, `P_tile = P(zone) × factor`, and §2.11's gate is on
+	##    `P_tile`. Doc 92 §67.8 measured a level-7 high-rise refused at 0.50
+	##    against a 0.55 gate inside a zone at 1.00 with 57.1 m³/h spare — a
+	##    refusal no supply on earth could clear. `Api.water_distance_blocked_
+	##    tile` asks `WaterSystem.can_upgrade_water` which refusals are that one
+	##    (`reason == BLOCKED_WATER_DISTANCE`) and this lays a `service` main from
+	##    the nearest pipe to the building's own access tile, which takes `d` to
+	##    0 and the factor to 1.0.
+	## 2. **A trunk main at the plant when the zone binds on `mains`.** That term
+	##    is `feed_capacity_m3h` — the summed nameplate of the live mains touching
+	##    a supply node's tile — and it is the one term in §2.5 that is not a
+	##    node, which is why doc 92 §67.8 measured seeds 1337 and 4242 both ending
+	##    supply-capped at exactly **214.0** with every node term above it. Doc 93
+	##    §BD6 declined to raise the MVP ladder for precisely this reason and
+	##    ruled that the ladder and this door belong in one wave, measured
+	##    together; this is that door.
+	##
+	## **Order matters and it is not the order of the two walls' severity.** The
+	## distance arm goes first because it is the cheaper purchase ($286/tile
+	## against $804) and because it is answerable at all: a zone that binds on
+	## `mains` still delivers `feed_capacity` worth of water to every tile close
+	## enough to a pipe, so a building refused for distance is being refused water
+	## the city has already paid for.
+	##
+	## Budget-gated out of the same surplus as everything else, one purchase per
+	## game-day through `MAINS_COOLDOWN`, and `E_NO_VERB`-safe: a harness whose
+	## command layer has no `cmd_place_water_main` walks the rest of the ladder.
+	## **The clock starts on the ATTEMPT**, for `_lead_water`'s own reason — the
+	## two searches behind this rule are a whole-city upgrade sweep and a
+	## whole-city zone walk, and a sweep that found nothing this game-hour finds
+	## nothing the next one.
+	func _lead_mains(api: Api, hour: int, spare: int) -> bool:
+		if not api.has_verb("cmd_place_water_main"):
+			return false
+		if hour - _mains_hour < MAINS_COOLDOWN or spare <= 0:
+			return false
+		var far := api.water_distance_blocked_tile() if lays_service_mains \
+				else Vector2i(-1, -1)
+		if far.x >= 0:
+			var run := api.water_main_run(far, "service")
+			# **The guard, and it is the whole difference between this rule
+			# helping and hurting** (doc 92 §73.4). A service main is a DEMAND
+			# purchase: §2.2's BFS enrols everything within twelve tiles of the
+			# new pipe and §2.4 bills the zone for it. Extending a works that is
+			# already at [WATER_RELIEF_RATIO] is buying customers for a plant
+			# with nothing left to sell them, and it cost seed 1337 a quarter of
+			# its population before this line existed. The band is
+			# `_lead_water`'s own, unchanged — that arm is what answers a zone
+			# above it, and this one stands down until it has.
+			if not run.is_empty() \
+					and api.zone_utilization_at(run[0]) < WATER_RELIEF_RATIO:
+				var service_cost := api.water_main_quote(far, "service")
+				if service_cost > 0 and spare >= service_cost:
+					_mains_hour = hour
+					return bool(api.place_water_main(far, "service")["ok"])
+		# **The trunk takes no such guard, and that is the point of the split.**
+		# A zone that binds on `mains` is supply-short BY DEFINITION — its
+		# utilization is at or past the band — and the trunk is the purchase that
+		# fixes it. Refusing it for being short would be refusing the remedy for
+		# the symptom.
+		var trunk := api.mains_bound_trunk(MAINS_TRUNK_TILES)
+		if trunk.is_empty():
+			return false
+		var tap: Vector2i = trunk["tap"]
+		var target: Vector2i = trunk["target"]
+		var trunk_cost := api.water_main_quote(target, "trunk", tap)
+		if trunk_cost <= 0 or spare < trunk_cost:
+			return false
+		_mains_hour = hour
+		return bool(api.place_water_main(target, "trunk", tap)["ok"])
 
 	## True while any generating shell is building or upgrading. `Building.state`
 	## is `under_construction` for both jobs (doc 02 §2.2), and a plant that is
@@ -4013,6 +4374,37 @@ class Collector extends Curriculum:
 ## the rational play and it is also the one that makes the measurement legible:
 ## an agent that bought all six would confound "preparation works" with "spending
 ## works".
+## **`curriculum` with KNOB 4 on, and it exists to be MEASURED against
+## `curriculum`** (Wave 30, doc 92 §73.4, doc 93 §BH5).
+##
+## One variable, exactly as `tax_squeezer` and `disaster_neglect` are one
+## variable off `balanced`: `lays_service_mains`. Everything else — the water
+## planner, the trunk arm, the growth ladder, the goals sheet — is the taught
+## route's, unchanged.
+##
+## **It is expected to LOSE**, and that is what it is for. Doc 92 §73.4's table
+## is reproducible with
+##
+##     tools/measure_utility_plan.gd -- --days=45 --seeds=9001,1337,4242 \
+##         --strategy=curriculum_service_mains
+##
+## against the same command without `--strategy`, and the delta is one knob. An
+## A/B whose off-side has to be reconstructed by reverting a diff is an A/B the
+## next reader will not run.
+class CurriculumServiceMains extends Curriculum:
+
+	func _init() -> void:
+		super()
+		lays_service_mains = true
+
+	func id() -> String:
+		return "curriculum_service_mains"
+
+	func describe() -> String:
+		return "curriculum, plus a service main to every building doc 05 §2.11 " \
+				+ "refuses for distance (doc 92 §73.4's A/B — it loses)"
+
+
 class StormReady extends Balanced:
 
 	func id() -> String:
@@ -4074,6 +4466,8 @@ class Factory extends RefCounted:
 				return DisasterNeglect.new()
 			"storm_ready":
 				return StormReady.new()
+			"curriculum_service_mains":
+				return CurriculumServiceMains.new()
 		return null
 
 
@@ -4351,6 +4745,13 @@ class Runner extends RefCounted:
 			"goal_level_end": int(last.get("goal_level", 0)),
 			"water_placed": api.water_placed,
 			"water_spend": api.water_spend,
+			## Wave 30 (doc 93 §BH): doc 05 §6's main, laid by the agent for the
+			## first time. Published here because `tools/measure_curriculum.gd`
+			## and `tools/measure_utility_plan.gd` both read this dictionary and
+			## a purchase nothing can count is a purchase nothing can be fitted
+			## against.
+			"water_main_tiles": api.water_main_tiles,
+			"water_main_spend": api.water_main_spend,
 			## Doc 92 §17.6's other half: the tiles a strategy laid ITSELF,
 			## separate from doc 09's block template, and what they cost.
 			"road_tiles_built": api.road_tiles_built,

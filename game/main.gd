@@ -35,6 +35,9 @@ var build_controller: BuildController
 var build_sheet: BuildSheet
 var building_panel: BuildingPanel
 var ghost_view: GhostView
+## Wave 30 (doc 12 D-130/D-131, report 98 RR-247..249): the legal origins for the
+## thing being placed, painted on the ground under the refused ghost.
+var site_paint_view: SitePaintView
 ## doc 12 §2.7's RUN ghost (roads, water mains). The box ghost's twin; see
 ## `ui/path_ghost_view.gd`.
 var path_ghost_view: PathGhostView
@@ -1016,6 +1019,13 @@ func _wire_build_ui(ui_instance: Node) -> void:
 	path_ghost_view.name = "PathGhost"
 	add_child(path_ghost_view)
 	path_ghost_view.setup(cfg, build_controller.tile_m)
+	# Wave 30: where a source / treatment / pump / tank can legally go, lit on
+	# the ground while the ghost is refused; one overlay channel, recomputed on
+	# a ghost move or a batch that changed the map.
+	site_paint_view = SitePaintView.new()
+	site_paint_view.name = "SitePaint"
+	add_child(site_paint_view)
+	site_paint_view.setup(SitePaintModel.new(cfg), build_controller.tile_m)
 
 	build_sheet = ui_instance.get_node_or_null(
 			"SafeArea/SheetLayer/BuildSheet") as BuildSheet
@@ -2413,6 +2423,8 @@ func _on_placement_changed() -> void:
 	# `{visible: false}` whenever no run tool is up.
 	if path_ghost_view != null and build_sheet != null:
 		path_ghost_view.apply(build_sheet.path_ghost())
+	if site_paint_view != null and build_sheet != null:
+		site_paint_view.apply(build_sheet.site_paint())
 	if ui_root != null:
 		# ONE question about placement, for both tools — without this the back
 		# stack has no `cancel_placement` rung while a run is being drawn.

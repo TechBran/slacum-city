@@ -291,12 +291,20 @@ static func building_row(actions: WaterActions, sim_id: String) -> Dictionary:
 	var gate := sim_ref.water.data.effect("upgrade_min_pressure", 0.55)
 	var normal := sim_ref.water.data.effect("happiness_pressure_ref", 0.60)
 	var chain := sim_ref.water.supply_chain_of(zone)
-	# **Which of the two arms is short, said in the row.** A zone at pressure
+	# **Which of the two REMEDIES is short, said in the row.** A zone at pressure
 	# 1.00 refusing a building at 0.50 is a DISTANCE problem and no amount of
 	# supply answers it (doc 92 §67.8); a zone short of supply is answered by
 	# the stage that binds. The row says which, and the fix strip routes on it.
+	#
+	# **Wave 30 (doc 93 §BH): asked of doc 05, not re-derived here.** This line
+	# read `pressure < gate and zone.pressure >= gate` — its own spelling of a
+	# rule `BuildController` and `RequirementFormatter` each spelled differently,
+	# and none of the three was the gate's. `WaterSystem.pressure_remedy_at` is
+	# the gate's, so a row can no longer say "too far" about a building
+	# `can_upgrade_water` would refuse for capacity.
 	var distance := sim_ref.water.topology.distance_at_tile(tile)
-	var far := pressure < gate and zone.pressure >= gate
+	var far := pressure < gate \
+			and sim_ref.water.pressure_remedy_at(tile) == WaterSystem.BLOCKED_DISTANCE
 	return {
 		"available": true, "unserved": false,
 		"zone": zone.zone_key,

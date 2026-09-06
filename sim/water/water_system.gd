@@ -855,14 +855,71 @@ func zone_headroom_m3h(building_id: String) -> float:
 	return 0.0 if z == null else z.headroom_m3h()
 
 
-## §2.11's upgrade gate. Two arms, and **the answer now says WHICH ONE said no**
-## (`limit`), because the two want opposite purchases: `capacity` is short of
-## supply and is answered by the stage [method supply_chain] names, while
-## `pressure` is short of the per-tile factor §2.3 derives from DISTANCE TO A
-## MAIN and is answered by laying one closer. Doc 92 §67.8 measured a zone at
-## pressure 1.00 with 57.1 m³/h of unused headroom whose high-rise was refused at
-## its own tile's 0.50 — every number in that refusal said "capacity", and the
-## thing that was short was a pipe.
+## The two REMEDIES §2.11's gate can name — the `reason` of every refusal it
+## returns, and doc 05 §4's published contract (doc 93 §BH, Wave 30).
+##
+## **They are not a second spelling of `limit`.** `limit` says WHICH LINE of the
+## gate refused (`no_zone` / `capacity` / `pressure`); `reason` says WHAT THE
+## PLAYER HAS TO BUY, and neither folds into the other — `no_zone` splits across
+## both remedies (a tile out of every live main's reach wants a MAIN; a zone
+## whose supply nodes are all dead wants SUPPLY) and so does `pressure` (a tile
+## under the gate inside a zone that is ABOVE it is distance; a tile under the
+## gate inside a zone that is under it too is the zone's shortage). So the answer
+## carries both, and every reader that wants a remedy reads `reason`.
+const BLOCKED_CAPACITY := "BLOCKED_WATER_CAPACITY"
+## Doc 93 §BH — **the refusal that used to lie.** Until Wave 30 a high-rise
+## standing four tiles too far from a pipe, in a zone at pressure 1.00 with
+## 57.1 m³/h of unused headroom, was refused `BLOCKED_WATER_CAPACITY`: every
+## number in the sentence said "buy supply", and no cubic metre of supply could
+## ever move it (doc 92 §67.8). §2.3's factor is Chebyshev steps to the nearest
+## live main, and the only purchase that moves it is a main laid closer.
+const BLOCKED_DISTANCE := "BLOCKED_WATER_DISTANCE"
+
+
+## **The one place the two remedies are told apart** (doc 93 §BH). Asked of a
+## TILE rather than of an upgrade, so the checklist row, the building panel's
+## water row and the harness agent all read one rule instead of each re-deriving
+## it — which is exactly what `ui/build_controller.gd`, `ui/water_panel_model.gd`
+## and `ui/requirement_formatter.gd` were doing at this fork, on three DIFFERENT
+## predicates that could disagree with each other and with this gate.
+##
+## The question is only ever asked of a tile whose PRESSURE is the wall:
+##
+##   * no zone at all — the tile is further than `max_service_distance_tiles`
+##     from every live main tile, because §2.2's BFS is seeded from those tiles
+##     and from nothing else. That is a distance, so the remedy is a main.
+##   * a DEAD zone — the mains reach it and nothing is pushing water into them.
+##     More pipe changes nothing; the remedy is supply.
+##   * the zone at or above the gate while the tile is under it — §2.3's factor
+##     is the whole of the difference, so the remedy is a main laid closer.
+##   * the zone under the gate as well — the zone is what is short, and the
+##     remedy is the rung under the stage [method supply_chain] names.
+func pressure_remedy_at(tile: Vector2i) -> String:
+	var z := zone_at(tile)
+	if z == null:
+		return BLOCKED_DISTANCE
+	if z.dead:
+		return BLOCKED_CAPACITY
+	return BLOCKED_DISTANCE if z.pressure >= data.effect("upgrade_min_pressure", 0.55) \
+			else BLOCKED_CAPACITY
+
+
+## §2.11's upgrade gate. Two arms, and **the answer says WHICH ONE said no**
+## (`limit`) and **WHAT WOULD ANSWER IT** (`reason`), because the two want
+## opposite purchases: `capacity` is short of supply and is answered by the stage
+## [method supply_chain] names, while `pressure` is short of the per-tile factor
+## §2.3 derives from DISTANCE TO A MAIN and is answered by laying one closer.
+## Doc 92 §67.8 measured a zone at pressure 1.00 with 57.1 m³/h of unused
+## headroom whose high-rise was refused at its own tile's 0.50 — every number in
+## that refusal said "capacity", and the thing that was short was a pipe.
+##
+## **The gate reads the tile's LIVE pressure, not a 30-game-day average**, and
+## doc 93 §BH rules that rather than leaving it observed: §2.11's own sentence
+## said *"the building's 30-game-day average `P`"* and no such average has ever
+## existed anywhere in `sim/water/`. It is struck rather than implemented — an
+## average would leave the refusal standing for thirty game-days after the player
+## laid the main that answers it, which is a door that does not open, and doc 12
+## §2.7's rule is that a refusal names a remedy the player can take NOW.
 ##
 ## **A ZERO-delta upgrade needs no headroom** (A91-D-139, and it is
 ## `PowerGrid.can_upgrade_power`'s own Wave-17 sentence one document over): doc
@@ -877,18 +934,36 @@ func can_upgrade_water(building_id: String, delta_water_m3h: float) -> Dictionar
 	var tile := demand.access_tile(building_id)
 	var z := zone_at(tile)
 	if z == null or z.dead:
-		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY",
-				"deficit_m3h": delta_water_m3h, "limit": "no_zone"}
+		# `nearest_main_tile` over the WHOLE map, on the refusal path only — the
+		# same read `CitySim.cmd_place_water_component` does for its `E_NO_MAIN`
+		# sentence, because `topology.distance_at_tile` answers −1 out here (the
+		# BFS stops at the cutoff) and a row that says "−1 tiles from a main"
+		# teaches nothing. O(main tiles), once per refused upgrade.
+		var far := nearest_main_tile(tile, topology.grid_size)
+		return {"ok": false, "reason": pressure_remedy_at(tile),
+				"deficit_m3h": delta_water_m3h, "limit": "no_zone",
+				"zone_key": z.zone_key if z != null else "",
+				"pressure": 0.0, "zone_pressure": z.pressure if z != null else 0.0,
+				"main_distance_tiles": int(far.get("distance", -1)),
+				"tile_factor": 0.0}
 	var safety := data.effect("upgrade_headroom_safety", 1.10)
 	var required := delta_water_m3h * safety
 	var headroom := z.headroom_m3h()
 	if headroom < required:
-		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY",
+		# The capacity arm names its own remedy rather than asking
+		# [method pressure_remedy_at]: the fact that refused HERE is a shortage
+		# of cubic metres, whatever the tile's distance happens to be, and a
+		# building that is also far still has to be given water before it can be
+		# given pressure.
+		return {"ok": false, "reason": BLOCKED_CAPACITY,
 				"deficit_m3h": required - headroom, "limit": "capacity",
-				"zone_key": z.zone_key, "binding": String(supply_chain_of(z)["binding"])}
+				"zone_key": z.zone_key, "binding": String(supply_chain_of(z)["binding"]),
+				"pressure": pressure_at(tile), "zone_pressure": z.pressure,
+				"main_distance_tiles": topology.distance_at_tile(tile),
+				"tile_factor": topology.factor_at_tile(tile)}
 	var pressure := pressure_at(tile)
 	if pressure < data.effect("upgrade_min_pressure", 0.55):
-		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY", "deficit_m3h": 0.0,
+		return {"ok": false, "reason": pressure_remedy_at(tile), "deficit_m3h": 0.0,
 				"limit": "pressure", "zone_key": z.zone_key,
 				"pressure": pressure, "zone_pressure": z.pressure,
 				"main_distance_tiles": topology.distance_at_tile(tile),

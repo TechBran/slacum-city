@@ -573,6 +573,83 @@ func test_upgrade_gate() -> void:
 	assert_true(bool(system.can_upgrade_water("DC", 1.0)["ok"]), "a small delta fits")
 
 
+## **Doc 93 §BH — the refusal that used to lie.** §2.11's gate has two arms and
+## §2.3's per-tile factor is one of them, so a building can be refused with the
+## zone it stands in at pressure 1.00 and cubic metres to spare: the wall is
+## `1 − 0.10 × (d − 2)` in Chebyshev steps to the nearest live main, and no
+## supply on earth moves it. Until Wave 30 that refusal came back
+## `BLOCKED_WATER_CAPACITY` — the whole sentence said *buy a pump* — and doc 92
+## §67.8 measured a level-7 high-rise sitting behind it for a whole 45-game-day
+## arc.
+##
+## The rig's one main runs (10, 10) → (10, 14), so a house at (18, 12) is
+## **8 Chebyshev tiles** from the nearest main tile: `prox = 1 − 0.10 × 6 =
+## 0.40`, which is under the 0.55 gate at any zone pressure at or above it.
+func test_the_gate_says_a_main_when_distance_is_the_wall_and_supply_when_it_is_not() -> void:
+	var system := _rig({"pump_level": 3, "upstream_level": 3})
+	_seed_zone(system, 4.0, 1.0, 0.4)
+	system.attach_building("NEAR", Vector2i(11, 12), "house")
+	system.attach_building("FAR", Vector2i(18, 12), "house")
+	system.set_demands({"NEAR": 0.08, "FAR": 0.08})
+	_advance(system, H13, 240)
+	var z := _zone(system)
+	assert_true(z.pressure >= 0.55, "the ZONE is healthy: %.2f" % z.pressure)
+	assert_true(z.headroom_m3h() > 1.0,
+			"…and it has water to spare: %.1f m³/h" % z.headroom_m3h())
+
+	# The near house passes the gate on the same city, same hour, same zone.
+	assert_true(bool(system.can_upgrade_water("NEAR", 0.5)["ok"]),
+			"a house one tile from the main is not refused")
+
+	# The far one is refused, and the refusal names the PIPE.
+	var far := system.can_upgrade_water("FAR", 0.5)
+	assert_false(bool(far["ok"]))
+	assert_eq(String(far["limit"]), "pressure", "the pressure arm, not the capacity arm")
+	assert_eq(String(far["reason"]), WaterSystem.BLOCKED_DISTANCE)
+	assert_eq(int(far["main_distance_tiles"]), 8, "§2.3's d, in Chebyshev steps")
+	assert_almost_eq(float(far["tile_factor"]), 0.40, 0.001,
+			"1 − 0.10 × (8 − 2), which is the whole of the refusal")
+	assert_true(float(far["zone_pressure"]) > float(far["pressure"]),
+			"the zone is above what the tile sees, which is the finding itself")
+
+	# **The same building, one number later, is a CAPACITY refusal.** Drop the
+	# ZONE under the gate and the tile's distance stops being the explanation:
+	# a main laid closer would leave it at 0.30 × 1.00, still refused. This is
+	# the case `ui/water_panel_model.gd` and `ui/build_controller.gd` each used
+	# to classify with their own predicate.
+	z.pressure = 0.30
+	var short := system.can_upgrade_water("FAR", 0.5)
+	assert_false(bool(short["ok"]))
+	assert_eq(String(short["reason"]), WaterSystem.BLOCKED_CAPACITY,
+			"a zone under the gate is short of WATER, whatever the distance is")
+	assert_eq(system.pressure_remedy_at(Vector2i(18, 12)),
+			WaterSystem.BLOCKED_CAPACITY, "and the classifier agrees with the gate")
+
+
+## The `no_zone` arm's own half: a tile out of every live main's reach is a
+## DISTANCE refusal too, and it says HOW far. `topology.distance_at_tile`
+## answers −1 out here — the BFS stops at `max_service_distance_tiles` — and a
+## row that says "−1 tiles from a main" teaches nothing, so the gate falls back
+## to doc 05's own whole-map `nearest_main_tile` on the refusal path.
+func test_a_tile_no_main_reaches_is_refused_for_distance_and_says_how_far() -> void:
+	var system := _rig()
+	_seed_zone(system, 4.0, 1.0, 0.4)
+	system.attach_building("OUTPOST", Vector2i(40, 40), "house")
+	system.set_demands({"OUTPOST": 0.08})
+	_advance(system, H13, 24)
+	assert_eq(system.topology.zone_at_tile(Vector2i(40, 40)), -1,
+			"§2.2's BFS does not reach it")
+	assert_eq(system.topology.distance_at_tile(Vector2i(40, 40)), -1,
+			"…so the cached step count is the sentinel, not a distance")
+	var verdict := system.can_upgrade_water("OUTPOST", 0.5)
+	assert_false(bool(verdict["ok"]))
+	assert_eq(String(verdict["limit"]), "no_zone")
+	assert_eq(String(verdict["reason"]), WaterSystem.BLOCKED_DISTANCE)
+	# The rig's main ends at (10, 14); Chebyshev from (40, 40) is max(30, 26).
+	assert_eq(int(verdict["main_distance_tiles"]), 30,
+			"the whole-map search, so the row can say a number a player can act on")
+
+
 # --- test 23: the per-building hourly service factor (C-37) ---------------
 
 func test_service_factor_hour() -> void:

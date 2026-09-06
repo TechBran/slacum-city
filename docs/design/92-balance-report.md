@@ -14547,3 +14547,233 @@ printed on every run, per file and per method, so the next wave that adds four
 minutes to the suite finds out on the run that added them. The eight files under
 `test_balance_gates.gd` in that table have never been measured before and are
 where a second cost lane should start.
+## 73. Wave 30 — the mains the agent can lay, and the distance wall ruled (2026-09-06)
+
+*Lane C, fork `9aecbf9`. Rulings doc 93 §BH. Amendments doc 05 §10 RR-250..RR-252
+and doc 03 §2.13(g). Report 98 §77. Defect rows doc 91 A91-D-165..A91-D-168.*
+
+Every figure below is read off `tools/measure_utility_plan.gd --days=45
+--seeds=9001,1337,4242` and `tools/measure_water_chain.gd
+--saves=res://tests/fixtures/player_save_0903 --days=0 --spread`, both of which
+drive `tests/balance_gate_rig.gd` — the same rig gate 21 reads.
+
+### 73.1 The fork, re-measured — and §67.8's headline seed has MOVED
+
+Doc 92 §67.8 was written at the Wave-26 fork and named **seed 9001** as the seed
+the distance wall stopped. **Three waves later that is no longer true, and the
+first thing this lane did was re-measure rather than inherit.**
+
+| seed 9001 / 1337 / 4242, 45 game-days | capstone (L7) | treasury | population | end zone (supply / demand / P / headroom) |
+|---|---|---|---|---|
+| **9001** | h**292** | $34,283,812 | 7,821 | 214.0 / 252.9 / 1.00 / **0.0** |
+| **1337** | h**275** | $36,154,292 | 8,559 | 214.0 / 171.0 / 1.00 / 43.0 |
+| **4242** | **—** (stops at L6) | $26,117,848 | 9,158 | 253.8 / 201.6 / 1.00 / **52.2** |
+
+**Seed 9001 finishes level 7 now; seed 4242 is the one that does not** — and it
+is stopped by exactly the wall §67.8 described, one seed over:
+
+    data_center    P-076  E_WATER_HEADROOM  $207,000 | zone P-061-PMP  press 0.50  head 52.2
+    power_facility P-397  E_WATER_HEADROOM   $69,000 | zone P-061-PMP  press 0.40  head 52.2
+
+A zone at pressure **1.00** with **52.2 m³/h spare**, refusing a data centre at
+its own tile's **0.50**. And the other two seeds carry the second wall, also
+unchanged: **9001 ends supply-capped at 214.0 with ZERO headroom**, which is
+`feed_capacity` — doc 05 §2.5's only non-node term — and **1337 ends with
+`power_facility P-234` refused with no zone at all** (`press 0.00`), the
+`no_zone` arm RR-252 gave a number to.
+
+So the three seeds carry three refusals, and all three are pipes.
+
+### 73.2 What a main costs, and what it buys — doc 03 §2.13(g)
+
+| tier | $/tile | what one run does |
+|---|---|---|
+| `service` | **$286** | 9 tiles, **$2,574**: takes a building's doc 05 §2.3 tile factor from **0.40 to 1.00** (`d` 8 → 0) |
+| `trunk` | **$804** | 3 tiles, **$2,412**: `feed_capacity` **160.5 → 373.5** on the founding city — the whole 213.0 m³/h nameplate |
+| `arterial` | **$2,145** | not offered (`levels_4_5_enabled` off) |
+
+Both figures are `tests/test_playtest_harness.gd`'s, asserted rather than
+quoted. The trunk row is also **§73.6's anomaly**: the nameplate joins §2.5's
+min-cut on *touching* a supply tile, so the length is free.
+
+### 73.3 The ship — ONE trunk main, and it is the cheapest thing in the ledger
+
+`Balanced._lead_mains`, trunk arm only (KNOB 4 off — see §73.4):
+
+| | 9001 | 1337 | 4242 |
+|---|---|---|---|
+| capstone (L7) | h292 → **h292** | h275 → **h275** | — → **—** (still L6) |
+| mains laid | 0 → **1** trunk, 9 tiles, **$7,236** @h449 | 0 → **1** trunk, 9 tiles, **$7,236** @h450 | 0 → **1** trunk, 9 tiles, **$7,236** @h382 |
+| treasury | $34,283,812 → $34,949,356 | $36,154,292 → $36,928,609 | $26,117,848 → $26,346,497 |
+| **population** | 7,821 → **8,778** (**+957**) | 8,559 → **9,043** (**+484**) | 9,158 → 9,018 (**−140**) |
+| end zone supply | **214.0 → 254.0** | **214.0 → 254.0** | 253.8 → 254.1 |
+| end zone headroom | **0.0 → 63.8** | 43.0 → **48.0** | 52.2 → **69.3** |
+| end zone pressure | 1.00 → **1.00** | 1.00 → **1.00** | 1.00 → **1.00** |
+
+**The curriculum arrival table is bit-identical on all three seeds** — `L1@h17
+L2@h50 L3@h76 L4@h100 L5@h172 L6@h200 L7@h292` on 9001, `L1@h14 L2@h46 L3@h74
+L4@h98 L5@h159 L6@h184 L7@h275` on 1337, `L1@h13 L2@h43 L3@h72 L4@h96 L5@h161
+L6@h187` on 4242, every cell the fork's — because the arm does not fire until
+game-hour **382–450**, which is when the chain first binds on `mains`. The whole
+delta is post-capstone, and it is **one $7,236 purchase against a $1.4M capacity
+ledger: 0.5 % of the money, +957 residents on the seed that had zero headroom.**
+
+`feed_capacity` 214.0 → 427.0 moves the binder off the mains and onto `source` at
+253.5, which is precisely what doc 93 §BD6 predicted when it declined to raise
+doc 05 §6's MVP ladder — *"raise `treatment` to L3 and the binder moves to 214.0;
+raise `source` to L3 and it stays at 214.0"*. The term that binds is bought now,
+and the ladder question can be re-opened on a city where it would matter.
+
+**Seed 4242 is the honest cell and it is reported as it fell.** It loses 140
+residents (1.5 %) and gains $228,649 and 17.1 m³/h of headroom. Its zone never
+bound on `mains` — it binds on `source` at 253.5 — so the trunk buys it capacity
+it was not short of, and the 140 is doc 06's incident stream re-rolling around a
+$7,236 change in the ledger rather than a mechanism. **What it is still stopped
+by is the distance wall**, unchanged and now correctly named:
+
+    data_center P-076  E_WATER_HEADROOM  $207,000 | zone P-061-PMP  press 0.50  head 69.3
+
+Sixty-nine cubic metres an hour of spare water, and a data centre that cannot
+have any of it because it stands too far from a pipe. That refusal is the one
+§73.4's switched-off arm clears, and it is why the arm is written rather than
+deleted.
+
+### 73.5 What the ship does NOT do
+
+It does not clear a single `BLOCKED_WATER_DISTANCE` refusal on the arc, because
+the trunk arm answers capacity and the service arm is off. All three seeds end
+with one:
+
+| seed | refused | tile P | zone | zone headroom |
+|---|---|---|---|---|
+| 9001 | `power_facility P-523` | 0.40 | P-056-PMP | 63.8 |
+| 1337 | `power_facility P-485` | 0.00 | *(none — `no_zone`)* | — |
+| 4242 | `data_center P-076` | 0.50 | P-061-PMP | 69.3 |
+
+Every one of them now says *`BLOCKED_WATER_DISTANCE`*, routes `FIX_BUILDING`, and
+prints its own tile pressure and its distance to the nearest main — including the
+`no_zone` row, which before RR-252 could only have said "−1 tiles". **The PLAYER
+can act on all three today** (`ui/path_tool.gd`'s `water_main_service` card); the
+agent is held.
+
+### 73.4 The SERVICE arm, measured four ways — and why it ships OFF
+
+A main laid to a building §2.11 refuses for distance is a **demand purchase**:
+doc 05 §2.2's BFS enrols every tile within `max_service_distance_tiles` of the
+new pipe, and §2.4 bills the zone for every building whose access tile lands in
+it. Four variants, each one cause apart from the one above it:
+
+| variant | 9001 pop / end-zone P | 1337 pop / end-zone P | 4242 capstone / pop |
+|---|---|---|---|
+| **V0** fork, no arm | 7,821 / 1.00 | 8,559 / 1.00 | **— (L6)** / 9,158 |
+| **V1** + service arm on every distance refusal | 6,462 / **0.21** | 6,283 / **0.23** | **L7 @ h273** / 8,745 |
+| **V2** + stand down past `OVERLAY_WARNING_R` | 6,750 / **0.00** (supply **0.0**) | 8,817 / 1.00 | **L7 @ h273** / 8,469 |
+| **V3** + only the `pressure` arm, never `no_zone` | 5,809 / 0.40 | 7,004 / 0.63 | L7 / 8,682 † |
+| **SHIPPED** trunk arm only | **8,778** / 1.00 | **9,043** / 1.00 | — (L6) / 9,018 |
+
+† V3's 4242 cell was measured while this tree was being edited between seeds; its
+24 logged mains say the arm was on, and it is reported with that caveat rather
+than dropped.
+
+**Read the P column, not the population column.** `tests/test_balance_gates.gd`
+gate 21 asserts that *no live zone on any seed ends under doc 05 §5.8's warn band
+(0.35)* — the assertion the utility planner exists for — and **V1 and V2 both
+fail it**: V1 leaves seed 9001 at 0.21 and V2 leaves it at **pressure 0.00 with
+supply 0.0**, a water works that has stopped. V3 clears the band and still costs
+seed 9001 **2,012 residents**.
+
+**V3 is the interesting failure.** The hypothesis was that a building already
+inside the zone is already in §2.4's demand sum, so shortening its `d` enrols
+nothing new. That is true of the BUILDING and false of the RUN: the runs are 8 to
+18 tiles long and **every new main tile carries a twelve-tile service radius with
+it**, so the enrolment is a property of the pipe's length, not of which arm
+refused. The hypothesis was wrong and the measurement said so — recorded because
+the next lane will have it too.
+
+**What it is worth, and why the code stays.** The service arm wins seed 4242 the
+whole level-7 rung on both V1 and V2 — the capstone §67.8 measured the distance
+wall taking from it, at game-hour 273 — for 26 mains and **$93,932**. That is the
+right rule missing its other half: a planner that buys SUPPLY for the district it
+just connected. It ships behind KNOB 4 (`Balanced.lays_service_mains`, off) with
+a strategy on the knob (`curriculum_service_mains`) so this table is one command:
+
+    tools/measure_utility_plan.gd -- --days=45 --seeds=9001,1337,4242 \
+        --strategy=curriculum_service_mains
+
+### 73.6 The price anomaly the trunk arm exposes — A91-D-168
+
+Doc 05 §2.5's `feed_capacity` is the summed nameplate of every live main
+**incident to a supply node's tile**, with no reference to where the main goes,
+and `cmd_place_water_main` requires two tiles. So the shortest legal trunk —
+**2 tiles, $1,608** — buys the same **213.0 m³/h** as the longest:
+
+| purchase | $ | m³/h | $/m³/h |
+|---|---|---|---|
+| 2-tile `trunk` stub at the plant | 1,608 | 213.0 | **7.55** |
+| 8-tile `trunk` (what the agent buys) | 6,432 | 213.0 | 30.20 |
+| `pump` L1 | 45,000 | 240.0 | **187.50** |
+
+**24× on the term that bound two of three cities at the fork.** The harness does
+not take it: `Balanced.MAINS_TRUNK_TILES` is **8** — `main_tap_radius_tiles`,
+half a land block, the run a player would draw — and §73.3's shipped figure is
+the 9-tile, $7,236 purchase that produced it. The fix is a doc 05 §2.5
+re-derivation (count a feed edge against the supply tiles it actually serves) and
+it moves every `feed_capacity` figure this report has published, so it belongs in
+the same wave as doc 93 §BD6's deferred ladder question. Doc 91 A91-D-168.
+
+### 73.7 The player's own city, and the 46 buildings that were told the wrong thing
+
+`tools/measure_water_chain.gd --saves=res://tests/fixtures/player_save_0903
+--days=0 --spread`, on the committed 2026-09-03 save (89 buildings, one zone,
+$14,899,376):
+
+    | zone      | source | treat | upstr | pump rated | pump DELIV | mains | SUPPLY | demand | press | headroom | BINDS   |
+    | P-072-PMP |   94.2 |  74.6 |  74.6 |       80.0 |       73.5 | 214.0 |   73.5 |   42.1 |  0.64 |     31.3 | pump    |
+
+    spread P-072-PMP: n=89  min 0.32  p25 0.45  median 0.51  max 0.64
+                      | under the 0.55 upgrade gate: 46 (52%) — 46 want a MAIN, 0 want SUPPLY
+
+**Fifty-two per cent of a real player's city sits under doc 05 §2.11's upgrade
+gate, in a zone with 31.3 m³/h to spare, and before this wave the game told every
+one of them to buy water capacity.** All 46 are distance refusals. The remedy
+column is new — `WaterSystem.pressure_remedy_at` is what makes it computable —
+and it is the single number that says what RR-250 is worth.
+
+The distribution itself is unchanged by this wave, and that is the point: no
+threshold moved, no pressure moved, and all four `profile_sim --hash-only`
+baselines are bit-identical (report 98 §77). What changed is that the refusal
+now names the purchase that answers it.
+
+### 73.8 Open questions, ranked
+
+1. **A91-D-168 — §2.5's feed term is priced per EDGE and should be priced per
+   SERVED LENGTH.** A 24× arbitrage on the binding constraint of the late game.
+   Take it with doc 93 §BD6's MVP-ladder question, which is blocked on the same
+   arithmetic.
+2. **The service arm needs a supply planner beside it.** §73.4: it wins a whole
+   city level and costs a quarter of a city, because it connects districts a
+   works cannot supply. The rule is written, tested and switchable; what is
+   missing is *"buy the pump BEFORE the pipe that needs it"*, which is
+   `_lead_water` and `_lead_mains` being one decision instead of two.
+3. **Gate 21's capstone floor is still 1 of 3 and the shipped tree makes it 3 of
+   3.** Doc 92 §67.6 left the bound coarse deliberately; this lane does not raise
+   it, because the seed that moved (4242 → L7) moved only under the arm that is
+   switched off. The lane that turns KNOB 4 on should raise the floor in the same
+   commit.
+4. **`pressure_remedy_at` is exact only while doc 05 §2.3's `elev` term is
+   dormant, and it is dormant by one metre of coincidence.** Doc 09 §2.2's
+   elevation ladder tops out at **34 m** and doc 05 §8's L1 pump carries
+   `head_m = 34`, so `elev = clamp(1 − 0.015 × max(0, 34 − 34), 0.30, 1) = 1.0`
+   on every tile of every shipped city — verified on `data/starter_city.json` and
+   `tests/fixtures/bench_city.json`, both of which use all five classes. A
+   tank-only zone is the worst case at `head_m = 30` and reads 0.94. **The day a
+   map puts a block above its plant's head, a tile can be under the gate for
+   HEAD**, and the classifier would say "lay a main closer" where a main buys
+   nothing — the remedy is a booster (`boosters_enabled`, Phase 2) or a tank on
+   high ground, and §2.3 already says so in as many words. The answer publishes
+   `tile_factor` beside `main_distance_tiles` so the two halves are separable the
+   day it matters; splitting the remedy three ways before a map needs it would be
+   authoring a third answer with no verb behind it. Doc 93 §BH1.
+5. **Seed 1337 still ends with a `power_facility` in no pressure zone at all**
+   (`P-485`, `press 0.00`). RR-252 gives that row its distance; nothing yet gives
+   the agent a reason to act on it, because the service arm is off.

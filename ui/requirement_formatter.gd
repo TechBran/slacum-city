@@ -671,16 +671,30 @@ func _args_for(name: StringName, p: Dictionary) -> Dictionary:
 			# name the purchase. A caller that supplies neither still renders —
 			# the default is the capacity arm, which is what the row has always
 			# assumed.
+			#
+			# **Wave 30 (doc 93 §BH): the REMEDY comes from doc 05, the SENTENCE
+			# is still picked per arm.** `reason` is the two-way remedy class the
+			# gate itself names and the fix button routes on; `limit` is the
+			# finer three-way arm, and the copy stays keyed off it because the
+			# four sentences are genuinely different pieces of teaching. The one
+			# place they used to disagree is fixed here: `limit == "pressure"`
+			# inside a zone that is ALSO under the gate is the zone's shortage,
+			# not the building's distance, and it took the "lay a main closer"
+			# sentence — advice that would have cost the player a main and moved
+			# the pressure by nothing. It now takes the capacity sentence, which
+			# is what `reason` says.
 			var water_limit := str(p.get("limit", "capacity"))
+			var water_reason := str(p.get("reason", WaterSystem.BLOCKED_CAPACITY))
+			var water_far := water_reason == WaterSystem.BLOCKED_DISTANCE
 			var water_stage := str(p.get("binding", "none"))
 			args["stage"] = _resolve("ui_water_stage_%s" % water_stage, {}, water_stage)
 			args["tiles"] = str(p.get("main_distance_tiles", -1))
 			args["pressure"] = RequirementFormatter.percent(p.get("pressure", 0.0))
 			var advice_key := "ui_requirement_e_water_headroom_capacity"
-			if water_limit == "pressure":
-				advice_key = "ui_requirement_e_water_headroom_pressure"
-			elif water_limit == "no_zone":
+			if water_limit == "no_zone" and water_far:
 				advice_key = "ui_requirement_e_water_headroom_no_zone"
+			elif water_limit == "pressure" and water_far:
+				advice_key = "ui_requirement_e_water_headroom_pressure"
 			elif water_stage == "mains":
 				advice_key = "ui_requirement_e_water_headroom_mains"
 			args["advice"] = _resolve(advice_key, args, "")

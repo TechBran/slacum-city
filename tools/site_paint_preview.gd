@@ -186,6 +186,13 @@ func _arm() -> void:
 
 ## **The shell snippet, run here** — see this file's header. Three lines.
 func _wire_paint() -> void:
+	# The shell wires its own layer now (Wave 30 merge, RR-249): reuse it, so the
+	# preview photographs ONE layer — the merge verifier caught two SitePaint
+	# nodes and doubled alpha the moment the shell snippets landed.
+	var existing: Variant = _main.get("site_paint_view")
+	if existing != null:
+		_paint_view = existing
+		return
 	_paint_view = SitePaintView.new()
 	_paint_view.name = "SitePaint"
 	_main.add_child(_paint_view)

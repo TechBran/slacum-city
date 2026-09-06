@@ -23,11 +23,20 @@ const DEFAULT_SEEDS: Array[int] = [1337, 4242, 9001]
 const HOURS_PER_DAY := 24
 
 ## The verbs `Api._log` records for a capacity purchase. `water` is a placed
-## doc-05 component, `water_upgrade` a raised node, `grid_upgrade` a re-rated
-## transformer or feeder, `cmd_place_grid_component` a new tap or feeder run.
+## doc-05 component, `water_upgrade` a raised node, `cmd_place_water_main` a run
+## of doc 05 §6's main (Wave 30 — the first purchase in this list that moves a
+## term of §2.5's chain no node can reach), `grid_upgrade` a re-rated transformer
+## or feeder, `cmd_place_grid_component` a new tap or feeder run.
+##
+## **The two spellings are the harness's, not a choice made here**: a verb driven
+## through `Api._optional` is logged under its COMMAND name and one wrapped by
+## hand is logged under a short one. Getting it wrong is silent — the ledger just
+## omits the purchase — and it did, for the whole of this wave's first
+## measurement pass.
 const CAPACITY_VERBS: Array[String] = [
 	"relief_spot",
-	"water", "water_upgrade", "grid_upgrade", "cmd_place_grid_component",
+	"water", "cmd_place_water_main", "water_upgrade", "grid_upgrade",
+	"cmd_place_grid_component",
 ]
 
 
