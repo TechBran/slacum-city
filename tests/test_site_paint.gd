@@ -256,6 +256,47 @@ func test_a_clean_site_wears_the_normal_mark_and_a_warned_one_the_warning_mark()
 	_unmount(root)
 
 
+func test_the_ground_never_emits_a_mark_the_shader_has_no_arm_for() -> void:
+	# `game/shaders/site_paint.gdshader` draws TWO marks, not the legend's four,
+	# because a placement site is never `critical` or `offline` — a tile the
+	# window refused is not in `tiles` at all. That is a claim about what the
+	# model can emit, so it is checked by driving the model over the real cities
+	# rather than by reading the shader.
+	var cfg := UIConfig.load_from_files()
+	var model := SitePaintModel.new(cfg)
+	# (a) the transcription: `STATE_INDEX` IS `state_glyphs` order.
+	for state: String in SitePaintModel.STATE_INDEX:
+		assert_eq(int(SitePaintModel.STATE_INDEX[StringName(state)]),
+				OverlayModel.STATE_ORDER.find(state),
+				"`%s` sits where the legend puts it" % state)
+		assert_true(cfg.section("state_glyphs").has(state),
+				"…and it is a state the shipped glyph table names")
+	assert_eq(SitePaintModel.STATE_INDEX.size(), 2,
+			"two states, two shader arms")
+	# (b) the emitted set, over a real drive on both cities.
+	var seen: Dictionary = {}
+	for sim: CitySim in [_sim(), _restore_player_save()]:
+		if sim == null:
+			continue
+		sim.treasury.balance = 5_000_000
+		var controller := BuildController.new(sim, RequirementFormatter.new(cfg))
+		for card: String in ["house", "store", "police_station", "pump", "source",
+				"construction_yard"]:
+			if not bool(controller.enter(card)["ok"]):
+				continue
+			for centre in [Vector2i(40, 40), SHORE, Vector2i(60, 44)]:
+				var paint := model.paint(controller.placement_sites(centre),
+						controller.ghost(), controller.centre_offset(),
+						controller.tile_m)
+				for raw: Variant in (paint["tiles"] as Array):
+					seen[int((raw as Dictionary)["glyph"])] = true
+			controller.cancel()
+	assert_true(not seen.is_empty(), "the drive painted something")
+	for glyph: int in seen:
+		assert_true(glyph == 0 or glyph == 1,
+				"the ground emitted mark %d, which the shader has no arm for" % glyph)
+
+
 func test_the_warned_tail_of_a_window_wears_the_warning_mark() -> void:
 	# The clean/warned split, on a hand-built window — because whether the
 	# founding city happens to offer a site on a full pole-top is the sim's
@@ -328,11 +369,6 @@ func test_the_ground_borrows_the_legends_own_hue_and_follows_the_colourblind_pal
 		assert_almost_eq(got.r, expected.r, 0.0005, "%s red" % state)
 		assert_almost_eq(got.g, expected.g, 0.0005, "%s green" % state)
 		assert_almost_eq(got.b, expected.b, 0.0005, "%s blue" % state)
-	# The glyph is the legend's own name, not a fifth mark invented here.
-	assert_eq(default_model.glyph_char(HudModel.STATE_NORMAL),
-			str(HudModel.STATE_GLYPH_CHARS[str(cfg.section("state_glyphs")["normal"])]))
-	assert_eq(default_model.glyph_index(HudModel.STATE_NORMAL), 0)
-	assert_eq(default_model.glyph_index(HudModel.STATE_WARNING), 1)
 	# And a variant that recolours `normal` recolours the ground.
 	var variants: Dictionary = cfg.section("palette")
 	var moved := false
@@ -368,7 +404,10 @@ func test_the_sheet_hands_the_palette_switch_through_to_the_ground() -> void:
 	assert_true(bool(controller.enter("house")["ok"]))
 	_stand(root.build_sheet, controller, Vector2i(40, 40))
 	var before: Dictionary = (root.build_sheet.site_paint()["tiles"] as Array)[0]
-	root.build_sheet.set_palette_variant(target)
+	# Through the ROW, not through the setter — `UIRoot._on_settings_changed` is
+	# what a tap reaches, on the same reasoning §2.14's haptics rows and PA-58's
+	# camera rows are handled there and not one `game/main.gd` branch later.
+	root._on_settings_changed(UIRoot.SETTING_COLORBLIND, target)
 	var after: Dictionary = (root.build_sheet.site_paint()["tiles"] as Array)[0]
 	assert_ne(before["hue"], after["hue"],
 			"Settings ▸ colourblind reaches the ground, not just the Theme")

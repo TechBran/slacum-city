@@ -639,6 +639,8 @@ func _on_unread_changed(count: int) -> void:
 ## switching it on forgets the tutorial, starts it again and switches itself back
 ## off, so the row can never persist as a permanent "on".
 const SETTING_REPLAY_TUTORIAL := &"replay_tutorial"
+## A6's accessibility palette. The row's own key in `data/ui.json.settings`.
+const SETTING_COLORBLIND := &"colorblind"
 
 
 func _on_settings_changed(key: StringName, value: Variant) -> void:
@@ -657,6 +659,13 @@ func _on_settings_changed(key: StringName, value: Variant) -> void:
 	# shell, on the same reasoning §2.14's haptics rows do — the gesture is live
 	# on the next touch, not one `game/main.gd` branch later.
 	_apply_camera_setting(key, value)
+	# Wave 30 (D-130), on the same reasoning as the two rows above it: doc 12
+	# §2.7's site paint borrows the LEGEND's hues, and `rebuild_theme()` — which
+	# is what the shell's `&"colorblind"` arm calls — rebuilds a `Theme` and
+	# reaches no MultiMesh. A player who switches palettes mid-placement is
+	# looking at the ground while they do it, so it recolours on the tap.
+	if key == SETTING_COLORBLIND and build_sheet != null:
+		build_sheet.set_palette_variant(str(value))
 	# PA-15: a device-scoped row is committed to `user://settings.cfg` on the tap
 	# that changed it, not at some later save. The player who turns notifications
 	# off and immediately swipes the app away has been heard.

@@ -216,10 +216,9 @@ func draw_calls() -> int:
 	return 1 if _node != null and _node.visible and tile_count() > 0 else 0
 
 
-func mesh_instance() -> MultiMeshInstance3D:
-	return _node
-
-
+## What the GPU is actually holding, as the suite reads it — the one place the
+## anchor, the mark and the fade can be checked as NUMBERS rather than as a
+## picture (`tests/test_site_paint.gd`).
 func buffer_mirror() -> PackedFloat32Array:
 	if _mm == null or _mm.visible_instance_count <= 0:
 		return PackedFloat32Array()

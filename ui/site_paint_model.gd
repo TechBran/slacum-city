@@ -60,12 +60,17 @@ extends RefCounted
 ## Reads `data/ui.json.placement.site_paint` for its numbers and
 ## `data/ui.json.palette` for its hues. Owns no constant that is not a fallback.
 
-## The four data states of §2.5, in `data/ui.json.state_glyphs` order. The index
-## is what the view writes per instance and what `site_paint.gdshader` switches
-## its mark on, so this is a wire contract — append only.
-const STATE_INDEX := {
-	&"normal": 0, &"warning": 1, &"critical": 2, &"offline": 3,
-}
+## **A placement site is in one of TWO states**, and these are their indices in
+## `data/ui.json.state_glyphs` order: a site the ghost accepts is `normal` (`●`)
+## and a site doc 93 §BD9 warns about is `warning` (`▲`). The index is what the
+## view writes per instance and what `site_paint.gdshader` switches its mark on,
+## so it is a wire contract — and it stops at two on purpose. `critical` and
+## `offline` are rows 2 and 3 of the same table and a site is never either of
+## them: a tile the window refuses is not in `tiles` at all. A shader arm for a
+## state nothing can emit is a mark no player can ever see, which is the defect
+## this wave is named after. `test_the_ground_never_emits_a_mark_the_shader_has_no_arm_for`
+## drives the real cities and holds the set to {0, 1}.
+const STATE_INDEX := {&"normal": 0, &"warning": 1}
 
 ## Fallbacks for `data/ui.json.placement.site_paint`. Every one of them is a
 ## LOOK number, not a rule: the rule is `placement_sites`, one file over.
@@ -83,7 +88,6 @@ var config: UIConfig
 
 var _placement: Dictionary = {}
 var _palette: Dictionary = {}
-var _state_glyphs: Dictionary = {}
 var _variant := "default"
 
 
@@ -91,7 +95,6 @@ func _init(cfg: UIConfig = null, palette_variant: String = "default") -> void:
 	config = cfg if cfg != null else UIConfig.load_from_files()
 	_variant = palette_variant
 	_placement = config.section("placement")
-	_state_glyphs = config.section("state_glyphs")
 	_palette = config.palette(palette_variant)
 
 
@@ -105,10 +108,6 @@ static func load_from_files(palette_variant: String = "default") -> SitePaintMod
 func set_palette_variant(palette_variant: String) -> void:
 	_variant = palette_variant
 	_palette = config.palette(palette_variant)
-
-
-func palette_variant() -> String:
-	return _variant
 
 
 ## Everything `game/render/site_paint_view.gd` needs that is not geometry.
@@ -153,18 +152,11 @@ static func state_for(clean: bool) -> StringName:
 	return HudModel.STATE_NORMAL if clean else HudModel.STATE_WARNING
 
 
+## The mark for a state. Only `normal` and `warning` reach here (see
+## `STATE_INDEX`); anything else would draw the clean mark, which is why the
+## test asserts the set rather than trusting this line.
 func glyph_index(state: StringName) -> int:
 	return int(STATE_INDEX.get(state, 0))
-
-
-## The glyph CHARACTER for a state, straight out of `data/ui.json.state_glyphs`
-## — the same lookup `HudModel.state_glyph` makes. The view draws the mark
-## procedurally (a texture page for four shapes would be four draw calls of
-## bookkeeping for nothing), so this exists for the tests and for any card that
-## wants to print the mark beside the sentence.
-func glyph_char(state: StringName) -> String:
-	return str(HudModel.STATE_GLYPH_CHARS.get(
-			str(_state_glyphs.get(String(state), "")), ""))
 
 
 func hue(state: StringName) -> Color:
@@ -228,7 +220,7 @@ func paint(hint: Dictionary, ghost: Dictionary, offset: Vector2i,
 	var rows: Array[Dictionary] = []
 	for i in limit:
 		var origin: Vector2i = origins[i]
-		var anchor := origin + offset
+		var anchor := SitePaintModel.anchor_of(origin, offset)
 		var distance := maxi(absi(anchor.x - here.x), absi(anchor.y - here.y))
 		var t := clampf(float(distance) / float(reach), 0.0, 1.0)
 		var state := SitePaintModel.state_for(i < clean_drawn)

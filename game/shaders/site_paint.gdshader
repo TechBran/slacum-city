@@ -16,10 +16,10 @@
 //              write, RR-91), so the colourblind variants carry
 //   COLOR.a    the distance fade: alpha_near at the ghost, alpha_far at the
 //              edge of the window that was scanned
-//   CUSTOM.x   glyph index into data/ui.json.state_glyphs order:
-//              0 circle_filled (a clean site), 1 triangle (a site doc 93 §BD9
-//              warns about), 2 diamond, 3 cross — the legend's own vocabulary,
-//              never a fifth mark
+//   CUSTOM.x   glyph index into data/ui.json.state_glyphs order: 0
+//              circle_filled (a clean site), 1 triangle (a site doc 93 §BD9
+//              warns about). The legend's own vocabulary, and only the two rows
+//              of it a placement site can ever be in
 //   CUSTOM.y   1.0 on the site the bar's sentence NAMES ("the nearest is N
 //              tiles away"), which draws the ring
 //   CUSTOM.z   glyph radius, tile fraction
@@ -56,30 +56,25 @@ void vertex() {
 	v_shape = INSTANCE_CUSTOM;
 }
 
-// The four marks of data/ui.json.state_glyphs, as fields rather than as a
-// texture page: `p` is centred on the tile and runs -0.5..0.5 on both axes.
-// A page would be a second material and a second upload for four shapes that
-// are three lines of algebra each.
+// The TWO marks a placement site can carry, as fields rather than as a texture
+// page: `p` is centred on the tile and runs -0.5..0.5 on both axes. A page
+// would be a second material and a second upload for two shapes that are two
+// lines of algebra each.
+//
+// Two, and not the legend's four. `critical` and `offline` are rows 2 and 3 of
+// data/ui.json.state_glyphs and a placement site is never either of them — a
+// tile the window refused is not in `tiles` at all — so an arm for them would
+// be a mark no player could ever see. `SitePaintModel.STATE_INDEX` stops at the
+// same two and `tests/test_site_paint.gd` holds the emitted set to {0, 1}.
 float mark(vec2 p, int glyph, float r, float e) {
 	if (glyph == 1) {
-		// triangle, point up: three half-planes, the widest of which is the
-		// signed distance to the shape.
+		// triangle, point up (`warning`, doc 93 §BD9's warned site): three
+		// half-planes, the widest of which is the signed distance to the shape.
 		float d = max(max(-p.y - r * 0.55, p.y * 0.5 + p.x * 0.866 - r * 0.5),
 				p.y * 0.5 - p.x * 0.866 - r * 0.5);
 		return 1.0 - smoothstep(-e, e, d);
 	}
-	if (glyph == 2) {
-		// diamond
-		return 1.0 - smoothstep(r - e, r + e, abs(p.x) + abs(p.y));
-	}
-	if (glyph == 3) {
-		// cross: two rotated bars
-		vec2 q = vec2(p.x + p.y, p.x - p.y) * 0.7071;
-		float bar = min(max(abs(q.x) - r, abs(q.y) - r * 0.26),
-				max(abs(q.y) - r, abs(q.x) - r * 0.26));
-		return 1.0 - smoothstep(-e, e, bar);
-	}
-	// circle_filled
+	// circle_filled (`normal`, a site the ghost accepts)
 	return 1.0 - smoothstep(r - e, r + e, length(p));
 }
 

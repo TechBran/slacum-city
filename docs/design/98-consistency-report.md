@@ -11951,16 +11951,17 @@ file in `game/` but its own new one). Anchors are the existing function names.
     site_paint_view.setup(SitePaintModel.new(cfg), build_controller.tile_m)
 
 *with `var site_paint_view: SitePaintView` beside `var ghost_view: GhostView`;
-in `_on_placement_changed()`, after the `path_ghost_view.apply(...)` line:*
+and in `_on_placement_changed()`, after the `path_ghost_view.apply(...)` line:*
 
     if site_paint_view != null and build_sheet != null:
         site_paint_view.apply(build_sheet.site_paint())
 
-*and in `_on_setting_changed()`'s `&"colorblind"` arm, beside
-`road_overlay.set_palette_variant(...)`:*
-
-    if build_sheet != null:
-        build_sheet.set_palette_variant(str(model.value("colorblind")))
+**That is the whole shell change — two blocks, not three.** A6's colourblind
+hand-off does NOT need a `_on_setting_changed()` arm: `UIRoot._on_settings_changed`
+routes it to `BuildSheet.set_palette_variant` on the tap that changed the row,
+which is where §2.14's haptics rows and PA-58's camera rows already go and for
+the same reason — the player switching palettes mid-placement is looking at the
+ground while they do it, not one `game/main.gd` branch later.
 
 `_on_placement_changed()` is the right feed and the only one: the shell emits it
 when placement starts, when the ghost moves and when it ends — never per frame —
