@@ -1778,6 +1778,18 @@ func _check_street(batch: Array) -> void:
 ## the same coin a bounty sounds (`data/audio.json`'s rule on the event) and says
 ## what it was worth — and the event log keeps it, so a player can find the
 ## number again an hour later.
+func _check_land_works(batch: Array) -> void:
+	if land_works == null:
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		var event: Dictionary = entry
+		if StringName(str(event.get("type", ""))) != LandWorksModel.EVENT_FIND:
+			continue
+		report_land_works(event)
+
+
 ## **The batch that changed the ground under a live placement** (Wave 30, doc 12
 ## D-130).
 ##
@@ -1800,18 +1812,6 @@ func _check_placement_ground(batch: Array) -> void:
 				StringName(str((entry as Dictionary).get("type", "")))):
 			build_sheet.invalidate_site_hint()
 			return
-
-
-func _check_land_works(batch: Array) -> void:
-	if land_works == null:
-		return
-	for entry: Variant in batch:
-		if not (entry is Dictionary):
-			continue
-		var event: Dictionary = entry
-		if StringName(str(event.get("type", ""))) != LandWorksModel.EVENT_FIND:
-			continue
-		report_land_works(event)
 
 
 ## **The one door.** Public because the shell can reach a find outside a tick

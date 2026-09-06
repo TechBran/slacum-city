@@ -1077,7 +1077,9 @@ func site_paint() -> Dictionary:
 ## Settings ▸ colourblind. The ground borrows the legend's hues, so it has to
 ## follow the palette the theme just switched to — A6 is not a UI-layer-only
 ## promise, and `rebuild_theme()` rebuilds a `Theme` and reaches no MultiMesh.
-## `game/main.gd`'s `&"colorblind"` arm is the caller.
+## `UIRoot._on_settings_changed` is the caller, on the tap that changed the row,
+## for the reason §2.14's haptics rows and PA-58's camera rows are handled there
+## and not one `game/main.gd` branch later.
 func set_palette_variant(variant: String) -> void:
 	if _site_paint_model != null:
 		_site_paint_model.set_palette_variant(variant)
@@ -1092,10 +1094,11 @@ func _palette_variant() -> String:
 ## **The map moved under the memo** (Wave 30, doc 12 D-130). §BD8's rule is that
 ## the answer to "where can this go" does not change while the finger moves
 ## inside the window it is about — which is true, and says nothing about the
-## batch that just bought the block the player was told to buy. The shell drains
-## the bus once a tick and calls this when a batch carried a change to the
-## ground; the next `site_hint()` re-scans, the bar re-prints and the paint
-## follows, all from the one call they share.
+## batch that just bought the block the player was told to buy.
+## `UIRoot._check_placement_ground` calls this off the drained batch
+## `feed_events()` already takes once a tick, when that batch carried one of
+## `SITE_GROUND_EVENTS`; the next `site_hint()` re-scans, the bar re-prints and
+## the paint follows, all from the one call they share.
 func invalidate_site_hint() -> void:
 	_site_hint = {}
 	_site_hint_card = ""

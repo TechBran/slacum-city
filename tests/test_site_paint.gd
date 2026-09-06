@@ -451,6 +451,32 @@ func test_the_paint_fades_from_the_ghost_and_rings_the_site_the_sentence_names()
 					"the ring is on the site the bar's sentence names")
 	assert_eq(rings, 1, "exactly one ring: the sentence names one site")
 	root.build_sheet.cancel_placement()
+
+	# **The fade is measured origin-to-origin on a 3×3 too**, which is the case
+	# a `house` cannot see: `anchor = origin + (1, 1)` there, so an
+	# anchor-against-ghost-origin subtraction would be a whole tile out on every
+	# row and the site under the ghost's own feet would not read as nearest.
+	assert_true(bool(controller.enter("construction_yard")["ok"]))
+	assert_eq(controller.centre_offset(), Vector2i(1, 1), "a 3×3 lot centres")
+	var hint := controller.placement_sites(Vector2i(40, 40))
+	controller.move_to_tile(hint["centre"])
+	var yard := model.paint(hint, controller.ghost(), controller.centre_offset(),
+			controller.tile_m)
+	for raw: Variant in (yard["tiles"] as Array):
+		var row: Dictionary = raw
+		var origin: Vector2i = row["origin"]
+		assert_eq(int(row["distance"]),
+				maxi(absi(origin.x - controller.origin.x),
+						absi(origin.y - controller.origin.y)),
+				"a 3×3's fade is origin-to-origin, not anchor-to-origin")
+	# …and it is the metric `placement_sites` measured `nearest_distance` with.
+	for raw2: Variant in (yard["tiles"] as Array):
+		var row2: Dictionary = raw2
+		if bool(row2["nearest"]):
+			assert_eq(int(row2["distance"]), int(hint["nearest_distance"]),
+					"the ringed site is `%d tiles away` in the bar's own units"
+					% int(hint["nearest_distance"]))
+	controller.cancel()
 	_unmount(root)
 
 

@@ -221,7 +221,15 @@ func paint(hint: Dictionary, ghost: Dictionary, offset: Vector2i,
 	for i in limit:
 		var origin: Vector2i = origins[i]
 		var anchor := SitePaintModel.anchor_of(origin, offset)
-		var distance := maxi(absi(anchor.x - here.x), absi(anchor.y - here.y))
+		# **Measured origin-to-origin, and it matters.** `here` is the ghost's
+		# ORIGIN and `anchor` is `origin + offset`, so an anchor-to-origin
+		# subtraction carries a spurious `offset` — one whole tile on every 3×3
+		# and 4×4 lot, which is doc 05's roster. Origin-to-origin is also the
+		# metric `placement_sites` measures `nearest_distance` with, so the fade
+		# and the bar's "N tiles away" are the same arithmetic (the anchor frame
+		# would give the same answer, because both ends shift by `offset` — but
+		# only if BOTH ends do).
+		var distance := maxi(absi(origin.x - here.x), absi(origin.y - here.y))
 		var t := clampf(float(distance) / float(reach), 0.0, 1.0)
 		var state := SitePaintModel.state_for(i < clean_drawn)
 		rows.append({
