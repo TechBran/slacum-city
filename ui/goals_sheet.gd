@@ -512,8 +512,12 @@ func _apply_rows(rows: Array) -> void:
 
 func _apply_reward(reward: Dictionary, level: int) -> void:
 	var empty := bool(reward["empty"])
+	# The title names the level the REWARD is for — `reward["level"]`, the same
+	# rung `GoalsModel.reward()` read the grant off — not `level + 1`. On the
+	# tablet the first card read "Reaching level 2 unlocks · $1,000,000 council
+	# grant" over objectives whose completion reaches level 1 (2026-09-06 merge).
 	_reward_title.text = UIWidgets.t_args(config, "ui_goals_reward",
-			{"level": level + 1}, "") if not empty \
+			{"level": int(reward.get("level", level))}, "") if not empty \
 			else UIWidgets.t(config, "ui_goals_reward_none", "")
 	UIWidgets.clear_children(_reward_lines)
 	for line: Variant in (reward["lines"] as PackedStringArray):
