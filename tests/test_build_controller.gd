@@ -350,16 +350,22 @@ func test_ghost_centres_the_footprint_on_the_pointed_tile() -> void:
 	var sim := _sim()
 	var controller := _controller(sim)
 	sim.progression.city_level = 5
-	controller.enter("power_facility")  # 3×3
-	assert_eq(controller.size, Vector2i(3, 3))
+	# **The ghost is the LOT** (Wave 29, doc 12 D-128, doc 02 §2.3a). A power
+	# plant covers 3×3 on its first day and reserves 4×4, and `cmd_place_building`
+	# takes the 4×4 — so a 3×3 ghost would have been green on ground the command
+	# then refuses. The centring rule under test is unchanged: `(size − 1) / 2`,
+	# which is (1, 1) for both 3 and 4.
+	controller.enter("power_facility")  # 3×3 built, 4×4 lot
+	assert_eq(controller.size, Vector2i(4, 4))
 	assert_eq(controller.centre_offset(), Vector2i(1, 1))
 	var point := Vector3(40 * 8.0 + 4.0, 0.0, 44 * 8.0 + 4.0)
 	controller.move_to_ground(point)
-	assert_eq(controller.origin, Vector2i(39, 43), "a 3×3 ghost centres on the finger")
+	assert_eq(controller.origin, Vector2i(39, 43), "the ghost centres on the finger")
 	var ghost := controller.ghost()
 	assert_true(bool(ghost["visible"]))
 	assert_eq(ghost["centre"] as Vector3,
-			Vector3(39 * 8.0 + 12.0, 0.0, 43 * 8.0 + 12.0))
+			Vector3(39 * 8.0 + 16.0, 0.0, 43 * 8.0 + 16.0),
+			"…and the drawn rectangle is the 4×4 the placement will reserve")
 	assert_eq(BuildController.tile_at(Vector3(0.5, 0.0, 8.5), 8.0), Vector2i(0, 1))
 	# 1×1 lands exactly under the finger.
 	controller.enter("house")

@@ -14236,6 +14236,52 @@ then asked the command for a lot-sized reservation, so an unmoved harness would
 have reported `E_FOOTPRINT` refusals as a **balance** result ("the city ran out of
 room on day 31") when what had run out was the agreement between two functions.
 
+**The A/B, and it isolates ONE cause.** `CitySim.lot_for` and `water_lot_for`
+are the single seam the whole rule flows through — placement, the ghost, the
+migration and the harness all ask them — so turning them back to the level-1
+footprint turns the entire feature off, and nothing else in the tree moves.
+Verified before each run with `tools/measure_lots.gd`: **rule off → 77 reserved
+tiles, 0 growers, 0 lot-locked** (exactly the fork); **rule on → 109, 8, 0**.
+
+| curriculum level | **rule OFF** (1337 / 4242 / 9001) | **rule ON** (1337 / 4242 / 9001) |
+|---|---|---|
+| 1 | 14 / 13 / 17 | 14 / 13 / 17 |
+| 2 | 46 / 43 / 50 | 46 / 43 / 50 |
+| 3 | 76 / 78 / 75 | 74 / 72 / 76 |
+| 4 | 100 / 102 / 100 | 98 / 96 / 100 |
+| 5 | 164 / 168 / 172 | 159 / 161 / 172 |
+| 6 | 232 / 179 / 194 | 184 / 187 / 200 |
+| 7 | — / 277 / 269 | 275 / — / 292 |
+
+**The result is unchanged where it is a rule and moved where it is a
+population.** Levels 1 and 2 are identical on all three seeds. Levels 3–5 are
+inside the seed spread and, if anything, marginally EARLIER with the rule on
+(L4 96–100 against 100–102), because the harness now searches for the rectangle
+the command will actually reserve instead of finding a hole the command then
+refuses (RR-239).
+
+**Two of three seeds reach level 7 either way** — the arc's headline — and
+*which* seed stalls at 6 swaps from 1337 to 4242. That is a population fact, not
+a regression: a 45-day run is one sample per seed, the two runs bracket the same
+band, and the stalling seed is the one whose repair bill ran hot (`repair_spend`
+$2,970,524 for 1337 with the rule off, $1,015,964 with it on). End state, all
+three seeds:
+
+| | rule OFF | rule ON |
+|---|---|---|
+| levels reached | 6 / 7 / 7 | 7 / 6 / 7 |
+| `population_end` | 8,365 / 9,025 / 8,628 | 8,559 / 9,158 / 7,821 |
+| `treasury_end` | $24.0M / $34.6M / $33.7M | $36.2M / $26.1M / $34.3M |
+| `road_tiles_built` | 4 / 4 / 4 | 4 / 4 / 4 |
+| `tax_changes` | 1 / 1 / 1 | 1 / 1 / 1 |
+
+**No gate cell is re-fitted.** Gate 21 reads the BOUNDS this table is fitted to,
+and every band still lands inside them; `road_tiles_built` and `tax_changes` —
+the two counters that would expose a harness that had started refusing
+placements — are byte-identical across the A/B on all three seeds, which is the
+direct evidence that RR-239's site-search change did its job.
+
+
 ### 70.5 The four `profile_sim --hash-only` baselines: UNCHANGED
 
 | | at the fork (`4d78f30`) | after this lane |
