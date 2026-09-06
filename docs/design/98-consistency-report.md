@@ -12008,3 +12008,19 @@ right. Nothing in the project read the rendered words until a preview harness
 printed `placement_issue_text()` beside a screenshot. Third time (RR-242,
 RR-243, this): **the preview deck is the only instrument that reads the sentence
 the player reads.**
+
+### The gates, at the head of this lane
+
+| gate | command | result |
+|---|---|---|
+| determinism, founding | `profile_sim.gd -- --hash-only` | `9004573df161a57e…` / `d5c6678de64cb5de…` — **identical to the fork** |
+| determinism, bench | `… --city=res://tests/fixtures/bench_city.json` | `ebb5f4762e4f2412…` / `307a6a27ad6f1801…` — **identical to the fork** |
+| suite | `tools/run_suite.sh` | 162 files, **3,008 tests, 605,236 asserts, 0 failed, 0 silent** |
+| this lane's file | `tools/run_suite.sh --one=test_site_paint.gd` | **20 tests, 833 asserts, 0 failed** |
+| screens | `ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0** |
+| ledger | `python3 tools/check_doc_refs.py` | 6,793 references, all resolving; no id assigned twice |
+
+Hash-neutrality is not an achievement here, it is the shape of the lane:
+**nothing under `sim/` is touched at all**, and the one file in `game/` is a new
+one. The four baselines were recorded at the fork (`9aecbf9`) before any edit
+and again at the head, and they are the same four strings.
