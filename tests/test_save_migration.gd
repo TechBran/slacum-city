@@ -372,9 +372,22 @@ func test_the_city_section_is_on_rung_ten() -> void:
 	# **Rung 9, Wave 19** (report 98 §60 RR-170) was doc 03 §2.5b's commissions
 	# board: one top-level key, `contracts`, plus `rng.contracts`, with
 	# `_v8_to_v9` the identity function for the same reason `_v6_to_v7` was.
-	assert_eq(CitySim.SAVE_SECTION_VERSION, 11,
-			"the celebration-grant ledger is rung 11 (doc 08 §2.8, report 98 "
-			+ "§66 RR-199)")
+	#
+	# **Rung 12, Wave 29** (report 98 §74 RR-238): doc 02 §2.3a's LOT rule. The
+	# body's SHAPE is byte-for-byte what v11 wrote — not one key added, removed or
+	# renamed — and `_v11_to_v12` is the identity function, because what moved is
+	# the RULES the body is advanced under. A building now reserves the footprint
+	# of its FINAL form, so a v11 body restores onto a materially different grid:
+	# the player's stores hold four tiles where they held one. Doc 08 §2.8's own
+	# test for whether a rung is owed — *"does an old body still mean what it
+	# meant?"* — answers no, which is v2's and v4's argument exactly.
+	#
+	# The widening itself is NOT in the migrator and could not be: whether a store
+	# may have its other three tiles depends on the neighbours, the roads and the
+	# block state, none of which exist when a migrator runs. `CitySim.migrate_lots`
+	# does it at the end of the restore, when the city is standing.
+	assert_eq(CitySim.SAVE_SECTION_VERSION, 12,
+			"the lot rule is rung 12 (doc 08 §2.8, report 98 §74 RR-238)")
 	var sim := CitySim.boot_from_files(4242)
 	assert_eq(sim.save_section_version(), CitySim.SAVE_SECTION_VERSION)
 	var service := _fresh_service()

@@ -132,6 +132,11 @@ var _water_rows: Dictionary = {}   # node id -> Button
 ## in code directly above the POWER section so the two utilities read as a pair.
 var _water_row: VBoxContainer
 var _water_row_button: Button
+## Wave 29 (doc 12 §2.9a): the LOT row's container and its `Fix this →` button,
+## which exists only while the building is lot-locked AND a BUILDING is what is
+## standing on the missing ground.
+var _lot: VBoxContainer
+var _lot_fix_button: Button
 ## Doc 12 §2.9 D-70's POWER section — ONE ROW and the fix strip since Wave 25
 ## (D-115). Built in code below the water block.
 var _power: VBoxContainer
@@ -413,6 +418,8 @@ func _build_actions() -> void:
 
 		_water_row = body.get_node_or_null("WaterSection") as VBoxContainer
 		_water_row_button = null
+		_lot = body.get_node_or_null("LotSection") as VBoxContainer
+		_lot_fix_button = null
 		_power = body.get_node_or_null("PowerSection") as VBoxContainer
 		return
 	_build_progress(body)
@@ -520,6 +527,19 @@ func _build_actions() -> void:
 	_water_row.add_theme_constant_override(&"separation", int(_spacing))
 	_water_row.visible = false
 	body.add_child(_water_row)
+
+	# --- Wave 29: doc 12 §2.9a / D-128's LOT row ---------------------------
+	# BELOW the two utility rows, because it is not about a service — it is about
+	# the GROUND, which is the one fact on this panel that never changes after
+	# placement. It draws on the five growing archetypes only (doc 93 §BE4) and
+	# is invisible on the other nine: a house is 1×1 at every rung, and a row
+	# saying so on nineteen of the founding city's thirty-four buildings would
+	# be the clutter the player asked us to take OFF this panel in Wave 25.
+	_lot = VBoxContainer.new()
+	_lot.name = "LotSection"
+	_lot.add_theme_constant_override(&"separation", int(_spacing))
+	_lot.visible = false
+	body.add_child(_lot)
 
 	# --- Wave 17: doc 12 §2.9 D-70's POWER section -------------------------
 	# Below the water block for the same reason the water block is below the
@@ -701,6 +721,7 @@ func _render(v: Dictionary) -> void:
 	_render_actions(v)
 	_render_water(v.get("water", {}))
 	_render_water_row()
+	_render_lot(v.get("lot_block", {}))
 	_render_power(v.get("power", {}))
 
 
@@ -1325,6 +1346,66 @@ func _render_water_row() -> void:
 		none.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_apply_state_color(none, HudModel.STATE_CRITICAL)
 		_water_row.add_child(none)
+
+
+## **The LOT row** (Wave 29, doc 12 §2.9a / D-128, doc 02 §2.3a).
+##
+## Two sentences and at most one button. On a building that HOLDS its lot it is
+## a statement — *"2×2 reserved, 1×1 built"* — and its whole job is to stop the
+## three empty tiles beside a young store reading as a bug. On a LOT-LOCKED one
+## it is the bad news plus the door: the level the ground still reaches, the
+## neighbour standing on the rest, what clearing that neighbour refunds, and
+## `Fix this →` routed at it.
+##
+## `available` false draws nothing at all — nine of the twelve archetypes never
+## grow, and doc 12 D-116's rule holds here: a row that always says the same
+## thing is clutter, not information.
+func _render_lot(block: Dictionary) -> void:
+	if _lot == null:
+		return
+	BuildingPanel._clear_children(_lot)
+	_lot_fix_button = null
+	var available := bool(block.get("available", false))
+	_lot.visible = available
+	if not available:
+		return
+	var locked := bool(block.get("locked", false))
+	var title := _text("ui_building_lot_title", "Lot")
+	if locked:
+		title = "%s  ·  %s" % [title,
+				_text("ui_building_lot_locked_badge", "LOT-LOCKED")]
+	var heading := UIWidgets.label("LotTitle", title, &"LegendRow", true)
+	_apply_state_color(heading,
+			HudModel.STATE_WARNING if locked else HudModel.STATE_NORMAL)
+	_lot.add_child(heading)
+	var body := UIWidgets.label("LotBody",
+			_text_args(str(block.get("text_key", "")),
+					block.get("params", {}) as Dictionary, ""),
+			&"LegendRow", true)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lot.add_child(body)
+	# The button exists only where there is something to press: a lot blocked by
+	# a ROAD or by undeveloped land routes `FIX_NONE`, and a `Fix this →` that
+	# opens nothing is the defect this project is named after.
+	var fix_target: Dictionary = block.get("fix_target", {})
+	if StringName(str(fix_target.get("kind", RequirementFormatter.FIX_NONE))) \
+			== RequirementFormatter.FIX_NONE:
+		return
+	var button := UIWidgets.button("LotFix",
+			_text("ui_building_fix_this", "Fix this →"),
+			str(block.get("blocked_by", "")),
+			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.pressed.connect(func() -> void: fix_requested.emit(fix_target))
+	_lot.add_child(button)
+	_lot_fix_button = button
+
+
+## The LOT row's `Fix this →`, for a test or a coach mark that has to press it.
+## `null` whenever the row is absent or has no door, which is the same contract
+## `water_row_button()` keeps.
+func lot_fix_button() -> Button:
+	return _lot_fix_button
 
 
 ## The row's tap: open S19 on the node that binds this building's zone. A

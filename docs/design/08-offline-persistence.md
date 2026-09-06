@@ -422,6 +422,57 @@ static func _v3_to_v4(b: Dictionary) -> Dictionary:
 > (`tools/profile_sim.gd --baseline`). What it does not get is the city v3 would
 > have produced next, and that is exactly what the rung records.
 
+> ### Shipped 2026-09-06 — `city.section_version` 11 → 12, **the LOT rule**
+>
+> A **RULES** rung, like v2 and v4, with the identity migrator (`_v11_to_v12`)
+> for exactly their reason: **the city body's SHAPE is byte-for-byte what v11
+> wrote.** Not one key is added, removed or renamed.
+> `placed_records[*].footprint` still means precisely what it has always meant —
+> *the extent the grid reserves for this building* — which is the number
+> `_restore_records` hands `stamp_building`.
+>
+> **What moved is the rule that body is advanced under** (doc 02 §2.3a, doc 93
+> §BE). A building now reserves the footprint of its **final form** rather than
+> its first day's, so a v11 body restores onto a materially different grid: a
+> player's store holds four tiles where it held one, and a placement on the tile
+> beside it that used to succeed now correctly answers `E_FOOTPRINT`. §2.8's own
+> test for whether a rung is owed — *"does an old body still mean what it
+> meant?"* — answers **no**. That is the whole argument, and it is v2's argument
+> word for word.
+>
+> **Nothing new is persisted, and that is the deliberate half.** The reservation
+> is DERIVED — from the archetype, its level, and the ground around it — and is
+> rebuilt at load exactly as the rest of `TileGrid` is. `CitySim.migrate_lots()`
+> is what rebuilds it, at the end of BOTH load paths and again after any
+> demolition. A `lot` key stored beside `footprint` would be a second record of
+> one fact, which is the scattering C-17 exists to stop; and **LOT-LOCKED** — a
+> building boxed in by neighbours that were already there — is likewise
+> recomputed rather than stored, because it is a function of the whole restored
+> city and a stored copy could go stale against the grid it describes.
+>
+> **Why the widening is not in the migrator.** §2.8 requires a migrator to be
+> TOTAL and forbids it from reading `data/`. Whether a store may have its other
+> three tiles depends on its neighbours, the roads and the block state — none of
+> which exist when a migrator runs. So the rung marks, and the work happens at
+> the end of the restore where the answer is knowable. That is v2 → v3's line
+> (*"mark, do not answer"*) applied to a question about ground.
+>
+> **It costs the player nothing.** Every v11 save opens with every building,
+> every dollar and every RNG stream where it was left; nothing is moved and
+> nothing is demolished. A building that cannot have its lot keeps exactly the
+> tiles it had and is told so, on its own panel, with the neighbour named (doc 12
+> §2.9a). Measured after migration: the founding city has **0** lot-locked
+> buildings, the 1,500-building benchmark city **206** (doc 93 §BE6).
+>
+> **It does NOT move the four determinism baselines**, which is worth recording
+> because it is the surprising half. `tools/profile_sim.gd --hash-only` is
+> byte-identical to the fork on both cities and both paths:
+> `placed_records` carries PLAYER buildings only (`P-` prefixed) and neither
+> authored city has one, so the ground this rule changes never reaches the body
+> that is hashed. A city with a player-placed grower does move, and honestly.
+> `tests/test_save_migration.gd` and `tests/test_lot_reservation.gd::
+> test_a_legacy_body_gets_its_lots_on_restore` are the gates.
+
 > ### Shipped 2026-09-04 — `city.section_version` 9 → 10, **the celebration-grant ledger**
 >
 > A SHAPE rung, and the first one on this ladder whose migrator can neither

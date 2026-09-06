@@ -11502,3 +11502,146 @@ break, the severity and the leak exactly as the save wrote them, which is the
 same class of act as reading a field that was always meant to be read — but doc
 08 §2.8 is the strongest statement in the project that a version records RULES
 and not only shape, and this should be ruled on out loud rather than passed by.
+
+## 74. WAVE 29 — a building reserves the ground its final form needs (binding)
+
+*Lane: the player's instruction of 2026-09-05, taken literally. Fork `4d78f30`.*
+
+**Id note, and it is a correction.** This lane was assigned RR-230..RR-233.
+**That block was already spent** — Wave 28's fix pass assigned RR-229..RR-235 in
+§73b before this lane forked. The work below therefore takes the next free block,
+**RR-236..RR-239**, and no existing id is reused or renumbered.
+`tools/check_doc_refs.py` is the gate that would have caught a collision, and it
+prints *"all resolving; no id assigned twice"* on this tree.
+
+### RR-236 — placement reserves the LOT, and the overlap it closes was live
+
+**The player, on the device:** *"The buildings should take up, when you initially
+set them at level one, the allowance for the block that it takes up should be the
+size of the FINAL form of that building … that way the buildings look like they
+belong when they get older."*
+
+`CitySim.cmd_place_building` reserved `catalog.stats(archetype, 1).footprint` —
+the ground a building covers on its first day. It now reserves `lot_for(archetype)`,
+the footprint at the tallest rung it can reach. `BuildingCatalog.lot_of` /
+`footprint_of` are the two extents; `CitySim.lot_for` / `built_for` are the two
+accessors every caller uses.
+
+**What this closed is not cosmetic.** Doc 02 §2.11's check 12 authors an
+`E_FOOTPRINT` on the UPGRADE, and doc 02 §5 names a `test_footprint_growth_gate`
+for it. **Neither existed.**
+
+```
+grep -n 'E_FOOTPRINT' sim/city_sim.gd        -> placement, roads, water. NEVER cmd_upgrade_building.
+grep -rn 'test_footprint_growth_gate' tests/ -> nothing
+```
+
+`on_construction_completed` re-stats a building and never re-stamps the grid, so
+a store that reached L3 had `stats.footprint == [2, 2]`, a 2×2 mesh, and **one**
+occupied tile. Measured at the fork on `STR-001` (49, 49), forced to L3 the way
+the completion path does:
+
+| probe | at the fork |
+|---|---|
+| `record.footprint` after L3 | `(1, 1)` — never updated |
+| `can_place(origin + (1,0), 1×1)` | **`true`** — the ground under the new mesh is still for sale |
+
+So the game would found a second building **inside** the first one's mesh. A91-D-19's
+shape (authored behaviour nothing consumes) with a visible overlap on the far side.
+Doc 02 §2.11 check 12 is now struck and doc 02 §5 test 16 is replaced by
+`tests/test_lot_reservation.gd`.
+
+### RR-237 — the lot is measured to the REACHABLE ceiling, and water's is per variant
+
+Two ways to get this wrong, both of which take ground from the player for nothing.
+
+**(a) The catalog's last row is not the ceiling.** Doc 05 ships
+`levels_4_5_enabled` **false**, so `_water_node_top_level` caps a water shell at
+L3 and the 4×4 in its L5 row is a rung no player can buy. `lot_of` therefore takes
+the ceiling as a PARAMETER and `CitySim.archetype_top_level` supplies it. Measured
+to L3 the shell's lot is 3×3 — exactly what it already occupies — so
+**`water_facility` does not grow**, and reserving 4×4 would have taken seven extra
+tiles per plant for a purchase that does not exist.
+
+**(b) Doc 02's water column is the PUMP row.** `data/buildings.json`'s
+`water_facility` rows are flagged `footprints_are_reference_variant_only`. The
+variants a player actually places have their own columns in doc 05 §8, and **two
+of them grow inside the shipped ceiling**:
+
+| variant | reachable rungs | footprint | lot | grows? |
+|---|---|---|---|---|
+| `source` (river) | L1–L2 | 2×2 → 2×2 | 2×2 | no |
+| `treatment` | L1–L2 | 2×2 → **3×3** | 3×3 | **yes, at L2** |
+| `pump` | L1–L3 | 3×3 → 3×3 | 3×3 | no |
+| `tank` | L1–L3 | 2×2 → **3×3** | 3×3 | **yes, at L3** |
+
+`CitySim.water_lot_for(variant)` answers from doc 05's own table. Asking doc 02
+for a `source` would have reserved the pump's 3×3 where 2×2 is wanted — five tiles
+of shoreline the component never uses. **The growing set this wave moves is five,
+not the four doc 02 shows**, and the founding city's `WTR-2` is a `tank`.
+
+### RR-238 — the migration, and save rung 12
+
+`CitySim.migrate_lots(reason)` runs at the end of both load paths (boot after
+`_boot_water`, restore in `_restore_finish`) and again after any demolition. It
+walks the roster in **id order** and gives each building the rest of its lot where
+the ground is free; where it is not, the building is **LOT-LOCKED** — it keeps
+exactly the tiles it has. **Nothing is moved and nothing is bulldozed.**
+`lot_lock(sim_id)` reports the level that ground still reaches and the neighbour
+standing on the rest; doc 12 §2.9a is the surface and `FIX_BUILDING` is the route.
+
+The census, on the three cities that exist:
+
+| city | buildings | growers | **lot-locked** | reserved tiles |
+|---|---|---|---|---|
+| founding `data/starter_city.json` | 34 | 8 | **0** | 77 → 109 |
+| benchmark `tests/fixtures/bench_city.json` | 1,500 | 332 | **206** | 3,213 (unchanged) |
+
+The benchmark's 206 decompose **exactly**: 202 stores — its 95 L1 plus its 107 L2
+stores, every single one — plus both power plants and both construction yards.
+`gen_bench_city.py` packs at the current level's footprint, so no young grower in
+it has a spare tile. The founding city, authored with its stores two tiles apart,
+migrates with none.
+
+`city.section_version` takes **rung 12** (doc 08 §2.8): a RULES rung with the
+identity migrator, on §2.8's own test — a v11 body no longer means what it meant,
+because it restores onto a materially different grid. Nothing new is persisted;
+the reservation and the lock are both DERIVED and rebuilt at load, which is why a
+`lot` key beside `footprint` would be the scattering C-17 forbids.
+
+### RR-239 — the ghost, the site searches and the scripted agents
+
+A rule the sim enforces and the searches do not agree with is not a rule, it is a
+refusal loop. Three seams moved, all of them to `lot_for` / `water_lot_for`:
+
+* **the ghost** — `BuildController.enter()` sizes to the lot, so a store's ghost
+  is 2×2 from the first frame (doc 12 D-128). §2.7's rule is that a ghost asks
+  the command rather than re-implementing it.
+* **the scripted agents** — `tools/playtest.gd::Harness.footprint()` fed
+  `candidate_site()` and `unserved_footprint()`. It looked for a 1×1 hole and then
+  asked the command for a 2×2 reservation, so every agent would have reported
+  `E_FOOTPRINT` as a *balance* result — "the city ran out of room on day 31" —
+  when what had run out was the agreement between two functions.
+* **the test helpers** — five `_serviceable_vacant_tile`-shaped searches in
+  `tests/` did the same thing and now take an archetype.
+
+### 74.1 The four `profile_sim --hash-only` baselines: UNCHANGED, and why
+
+| `profile_sim --hash-only` | at the fork (`4d78f30`) | after this lane |
+|---|---|---|
+| starter, coarse 24h | `9004573df161a57e…` | **identical** |
+| starter, fine 2.0h | `d5c6678de64cb5de…` | **identical** |
+| bench, coarse 24h | `ebb5f4762e4f2412…` | **identical** |
+| bench, fine 2.0h | `307a6a27ad6f1801…` | **identical** |
+
+**This is not a no-op and the isolation says so.** The migration demonstrably
+ran: the founding city's reserved tiles go 77 → 109 (+32 = 5 stores ×3, the plant
++7, the yard +5, the tank +5) and eight buildings now hold more ground than they
+cover. The hashes do not move because `state_hash()` digests the SAVE BODY, and
+the only footprint in that body is `placed_records` — which carries **player**
+buildings (`P-` prefixed) and nothing else. Neither authored city has one, and a
+24-hour advance founds no building, so the ground this rule changes never reaches
+the digest. A city with a player-placed grower **does** move its hash, which is
+the honest behaviour and is what `test_a_legacy_body_gets_its_lots_on_restore`
+exercises.
+

@@ -423,7 +423,7 @@ class Api extends RefCounted:
 	func min_city_level(archetype: String) -> int:
 		return int(sim.catalog.stats(archetype, 1).get("min_city_level", 0))
 
-	## **The LOT the site search has to find** (Wave 29, doc 02 §2.3a, RR-233).
+	## **The LOT the site search has to find** (Wave 29, doc 02 §2.3a, RR-239).
 	##
 	## This read `stats(archetype, 1).footprint` — the ground the building covers
 	## on its first day — and `place()` handed it to `candidate_site`, so every

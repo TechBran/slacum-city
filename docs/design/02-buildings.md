@@ -392,6 +392,74 @@ Doc 05's published footprints for reference (**doc 05 §8 is the source of truth
 | 4 | 3x3 | 0 | 60 | 155 | 2.1 | 27 | 25 | 0.001123 | 0.00084 | 400 | 9.01 | 0.45 | 0.41 | 3 |
 | 5 | 3x3 | 0 | 92 | 365 | 4.9 | 38 | — | 0.001348 | 0.00107 | 800 | 14.42 | 0.60 | 0.56 | 4 |
 
+### 2.3a The LOT — a building reserves the ground its FINAL form needs
+
+**Ruled Wave 29 (2026-09-06), from the player's own words** (doc 93 §BE):
+*"The buildings should take up, when you initially set them at level one, the
+allowance for the block that it takes up should be the size of the FINAL form of
+that building … that way the buildings look like they belong when they get older."*
+
+A building has **two** extents. §2.3's `Foot` column is the second of them.
+
+| | definition | authority | read by |
+|---|---|---|---|
+| **LOT** | the `Foot` cell at the tallest rung this building can **reach** | this section (doc 05 §8 for a water shell) | the grid reservation, the ghost, every site search, the migration |
+| **BUILT** | the `Foot` cell at the level it stands at **today** | §2.3's tables above | the mesh, the far-LOD scale, doc 11 §2.16's lot dressing |
+
+**The rule: placement reserves the LOT.** `CitySim.cmd_place_building` and
+`cmd_place_water_component` both call `can_place`/`stamp_building` with the lot,
+so the ground a building will ever need is taken on the day it is founded. The
+accessors are `CitySim.lot_for(archetype)` / `built_for(archetype, level)` and
+`lot_of_building` / `built_of_building` for a standing one; **nothing in the
+project re-derives either by hand.**
+
+**Consequence for §2.11's check 12.** That check — *"if `footprint(L+1) >
+footprint(L)`, the added tiles … are owned, developed, empty, and not road"* —
+**is retired.** It is unreachable by construction: an upgrade only ever fills
+ground the building already holds. It was also never implemented (doc 93 §BE2)
+— `cmd_upgrade_building` has never had a footprint blocker and the
+`test_footprint_growth_gate` named in §5 has never existed — so at the fork a
+level-3 store had a 2×2 mesh over **one** reserved tile and the other three
+stayed legally placeable underneath it. The lot rule closes the hole rather than
+adding the guard.
+
+#### Which archetypes this actually moves
+
+The lot is measured to the **reachable** ceiling, not to the last row of the
+table, because ground reserved for a rung nobody can buy is ground taken from the
+player for nothing. `water_facility` is the case that forces the distinction:
+doc 05 ships `levels_4_5_enabled` **false**, so its shell caps at L3 and the 4×4
+in its L5 row is unreachable.
+
+| archetype | built L1 | **lot** | grows at | note |
+|---|---|---|---|---|
+| `store` | 1×1 | **2×2** | L3 | |
+| `power_facility` | 3×3 | **4×4** | L4 | |
+| `construction_yard` | 2×2 | **3×3** | L4 | |
+| `water_facility` | 3×3 | 3×3 | — | L5's 4×4 is behind `levels_4_5_enabled` |
+| the other eight | — | = built | — | flat at every rung |
+
+**And the water shell's lot is per VARIANT.** The `water_facility` rows above are
+flagged `footprints_are_reference_variant_only` and carry the **pump** ladder, so
+this table cannot answer for a treatment plant or a tank. Measured against doc
+05 §8's own columns and each variant's `placeable_levels`, **two more archetypes
+grow inside the shipped ceiling**: `treatment` 2×2 → 3×3 at L2, and `tank`
+2×2 → 3×3 at L3. `CitySim.water_lot_for(variant)` is the accessor. The founding
+city's `WTR-2` is a tank, which is why the migration expands **eight** of its
+buildings and not the seven doc 02's column alone would predict.
+
+#### Legacy cities: LOT-LOCKED
+
+Every city that already exists was laid out under the old rule.
+`CitySim.migrate_lots()` runs at the end of both load paths and after any
+demolition, walks the roster in **id order**, and gives each building the rest of
+its lot where the ground is free. Where it is not, the building is **lot-locked**:
+it keeps exactly the tiles it has, nothing is moved and nothing is bulldozed, and
+`lot_lock(sim_id)` reports the level that ground still reaches plus the neighbour
+standing on the rest. Doc 12 §2.9a is the surface; doc 08 §2.8 rung 12 is the
+save contract. Measured: the founding city migrates with **0** lot-locked, the
+1,500-building benchmark city with **206**.
+
 ### 2.4 Coverage reach table (the only "special output" this doc still owns)
 
 | Archetype | Field | L1 | L2 | L3 | L4 | L5 |
@@ -787,7 +855,7 @@ Cost is charged **in full at project start** by doc 03. Cancelling refunds a **f
 | 9 | `E_WATER_HEADROOM` | see below — doc 05 answers |
 | 10 | `E_FIRE_COVERAGE` | `coverage_fire(b) >= req_fire_coverage(L+1)` (§2.9) |
 | 11 | `E_POLICE_COVERAGE` | `coverage_police(b) >= req_police_coverage(L+1)` (§2.9) |
-| 12 | `E_FOOTPRINT` | if `footprint(L+1) > footprint(L)`, the added tiles (extending +X/+Z from origin) are owned, developed, empty, and not road |
+| 12 | ~~`E_FOOTPRINT`~~ | **RETIRED Wave 29 (§2.3a, doc 93 §BE).** It read: *"if `footprint(L+1) > footprint(L)`, the added tiles (extending +X/+Z from origin) are owned, developed, empty, and not road."* A building now reserves its **LOT** — the footprint of its final form — at placement, so an upgrade only ever fills ground it already holds and this check is unreachable by construction. It is struck rather than left standing because **it was never implemented**: `cmd_upgrade_building` has never had a footprint blocker, so for the whole life of the project this row described a gate that did not exist (A91-D-19's shape). The check count is therefore **12 preconditions, of which this one is now void** — see §2.3a for what replaced it. |
 | **13** | **`E_AVENUE`** | **`L+1 >= 4` requires an `AVENUE`-class road tile within 4 tiles (Chebyshev) of the building's access tile** *(report 98 C-62 — accepted as a hard gate)* |
 
 ```
@@ -1321,7 +1389,7 @@ Headless tests in `tests/sim/buildings/` and `tests/sim/construction/`, run by `
 13. `test_upgrade_blocked_each_code` — **13** fixtures, one per blocker code, each returning exactly that one code.
 14. `test_e_avenue_gate` — an L3 building with only `STREET` tiles within 4 tiles is blocked with `[E_AVENUE]` on the L3→L4 step and **not** on L2→L3; stamping an `AVENUE` 4 tiles away clears it; at 5 tiles it does not.
 15. `test_upgrade_multiple_blockers` — a fixture failing funds + coverage + city level returns all three, sorted stably.
-16. `test_footprint_growth_gate` — store L2→L3 blocked with `E_FOOTPRINT` when a +X tile holds a road; passes after the road moves; the 3 new tiles are claimed on completion.
+16. ~~`test_footprint_growth_gate`~~ — **RETIRED Wave 29, and it never existed** (`grep -rn test_footprint_growth_gate tests/` → nothing, at the fork and for every wave before it). It asserted §2.11 check 12, which was itself never implemented. Its replacement is `tests/test_lot_reservation.gd`, which holds the rule that made both unnecessary: `test_placement_reserves_the_lot_not_the_first_days_footprint` (all four tiles of a store's lot are reserved on the day it is founded, and a second building on any of them answers `E_FOOTPRINT`), `test_an_upgrade_never_has_to_find_room` (every rung of every growing ladder fits inside its own lot, so the gate has nothing to refuse), and `test_a_placed_store_reaches_l3_on_the_ground_it_reserved`.
 17. `test_level_only_via_upgrade` — `place_building` with any level ≠ 1 is rejected.
 18. `test_condition_gate` — an upgrade at condition 0.54 is blocked with `E_CONDITION`; at 0.55 it passes.
 

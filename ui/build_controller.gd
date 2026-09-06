@@ -1690,8 +1690,13 @@ func building_view(sim_id: String) -> Dictionary:
 		"condition": b.condition,
 		"condition_text": RequirementFormatter.percent(b.condition),
 		"origin": b.origin,
-		"footprint": Vector2i(int((b.stats.get("footprint", [1, 1]) as Array)[0]),
-				int((b.stats.get("footprint", [1, 1]) as Array)[1])),
+		# The BUILT extent — what the mesh covers at this level (doc 02 §2.3).
+		"footprint": sim.built_of_building(b),
+		# …and the LOT it reserved for life (doc 02 §2.3a). Two keys, because the
+		# panel now shows both and a reader that wanted "how big is this" was
+		# getting the answer that changes.
+		"lot": sim.lot_of_building(b),
+		"lot_block": _lot_block(sim_id, b),
 		"vitals": [
 			_vital("occupants", "ui_building_vital_occupants",
 					_occupants_text(sim_id, b)),
@@ -2097,6 +2102,84 @@ func _occupants_text(sim_id: String, b: Building) -> String:
 ## closed. The L4 curriculum teaches "stations and coverage" against a surface
 ## that could not turn green.
 ##
+## **The LOT row** (doc 12 §2.9a / D-128, doc 02 §2.3a, Wave 29). Three states,
+## and the third is the only one with a button:
+##
+##   * the archetype does not grow — `available: false`, no row is drawn. A house
+##     is 1×1 at every rung and a row saying so is noise.
+##   * it grows and it HOLDS its lot — the row says how much ground is reserved
+##     and what is standing on it, so a player looking at a one-tile store on a
+##     2×2 pad can see the pad is not a mistake.
+##   * it is LOT-LOCKED — it was standing when the rule arrived and the tiles it
+##     needed were already taken. The row says the level it can still reach, names
+##     the neighbour on the missing ground, and routes `FIX_BUILDING` to it with
+##     that neighbour's own demolition quote attached, because *"what freeing it
+##     costs"* is the half of the sentence that makes it actionable.
+##
+## Never a fourth state where a lot-locked building is silently short: the whole
+## reason this block exists is that a reservation the player cannot see is a
+## reservation they will read as a bug.
+func _lot_block(sim_id: String, b: Building) -> Dictionary:
+	var lot := sim.lot_of_building(b)
+	var built := sim.built_of_building(b)
+	var first := sim.built_for(String(b.archetype), 1)
+	if b.archetype == StringName(CitySim.WATER_SHELL_ARCHETYPE):
+		first = sim.water.data.footprint_of(b.variant, 1,
+				String(sim.water.data.placeable_rules(String(b.variant)).get("subtype", "")))
+	if lot == first:
+		# Not a grower: nothing about this building's ground ever changes.
+		return {"available": false, "locked": false, "lot": lot, "built": built}
+	var lock := sim.lot_lock(sim_id)
+	var out := {
+		"available": true,
+		"locked": not lock.is_empty(),
+		"lot": lot,
+		"built": built,
+		"lot_text": "%d×%d" % [lot.x, lot.y],
+		"built_text": "%d×%d" % [built.x, built.y],
+		"fix_target": {"kind": RequirementFormatter.FIX_NONE, "id": "", "params": {}},
+	}
+	if lock.is_empty():
+		out["text_key"] = "ui_building_lot_reserved"
+		out["params"] = {"lot": out["lot_text"], "built": out["built_text"]}
+		return out
+	var held: Vector2i = lock["held"]
+	out["held"] = held
+	out["held_text"] = "%d×%d" % [held.x, held.y]
+	out["reachable_level"] = int(lock["reachable_level"])
+	out["top_level"] = int(lock["top_level"])
+	out["blockers"] = (lock["blockers"] as Array).duplicate()
+	# The FIRST blocker that is a BUILDING is the one the player can act on; a
+	# road or an undeveloped block is a fact about the map, not a door. The
+	# blocker list is already in a deterministic order, so this picks the same
+	# neighbour on every machine.
+	var neighbour := ""
+	for entry in (lock["blockers"] as Array):
+		if sim.buildings.has(String(entry)):
+			neighbour = String(entry)
+			break
+	if neighbour == "":
+		out["text_key"] = "ui_building_lot_locked_ground"
+		out["params"] = {"held": out["held_text"], "lot": out["lot_text"],
+				"level": int(lock["reachable_level"]), "top": int(lock["top_level"])}
+		return out
+	var quote := sim.cmd_demolish_building(neighbour, true)
+	var refund := int((quote.get("payload", {}) as Dictionary).get("refund", 0))
+	var other: Building = sim.buildings[neighbour]
+	out["blocked_by"] = neighbour
+	out["blocked_by_name_key"] = BuildController.card_name_key(
+			String(other.archetype), String(other.variant))
+	out["free_refund"] = refund
+	out["free_refund_text"] = HudModel.money(refund)
+	out["text_key"] = "ui_building_lot_locked"
+	out["params"] = {"held": out["held_text"], "lot": out["lot_text"],
+			"level": int(lock["reachable_level"]), "top": int(lock["top_level"]),
+			"neighbour": neighbour, "refund": out["free_refund_text"]}
+	out["fix_target"] = {"kind": RequirementFormatter.FIX_BUILDING, "id": neighbour,
+			"params": {"sim_id": neighbour}}
+	return out
+
+
 ## Each tile is banded the way its own doc bands it, and `—` survives in exactly
 ## one place per slot: the honest one. No station in range at all reads OFFLINE
 ## with the scalar beside it; a lot no pressure zone reaches reads OFFLINE with

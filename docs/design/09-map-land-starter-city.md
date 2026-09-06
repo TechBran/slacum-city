@@ -47,6 +47,37 @@ Goals:
 
 Axes: +x east, +z south, +y up.
 
+### 2.1a Occupancy is a building's LOT, and a building may grow into its own reservation
+
+**Ruled Wave 29 (doc 02 §2.3a, doc 93 §BE).** What `TileGrid` stamps for a
+building is its **LOT** — the footprint of its final form — not the footprint it
+covers on its first day. The grid itself is unchanged in shape: occupancy is
+still the parallel `_building_ids` array, still one id per tile, still derived
+and never persisted. Only the rectangle placement asks for is bigger.
+
+That created one question the grid could not previously express, and it now has
+a primitive for it:
+
+| call | question | own tiles |
+|---|---|---|
+| `can_place(origin, size)` | may a **new** building take this rectangle? | in its own way |
+| `can_expand(id, origin, size)` | may **this** building hold this rectangle? | skipped |
+| `expand_building(id, origin, size)` | take it | idempotent |
+
+`can_place` cannot answer the second question, and the difference is not
+pedantic: a legacy store growing from the 1×1 it was placed on to the 2×2 it
+reserves is asking about **three** tiles, and `can_place` refuses on the
+fourth — the one the store is standing on — because `stamp_building` set
+`FLAG_OCCUPIED` there itself. Every other rule is the one `can_place` applies,
+read from the same bitfield, so a tile `can_expand` accepts is a tile
+`can_place` would accept once the building were gone. **A lot is never taken out
+of a neighbour**, a road or a water tile: `expand_building` fails as a whole and
+the building is reported lot-locked instead (doc 02 §2.3a).
+
+`expand_building` is idempotent, which is what lets `CitySim.migrate_lots()` run
+on every boot, every restore and after every demolition without keeping a
+"have I done this" flag anywhere.
+
 ### 2.2 Land block schema
 
 Authored attributes:

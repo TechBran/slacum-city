@@ -1443,7 +1443,39 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## would have produced — with more money in it, which is the feature.
 ## `state_hash()` moves for every city, played or founding, because the treasury
 ## block has one more key; that is the honest record of a shape that grew.
-const SAVE_SECTION_VERSION := 11
+## **v12 — 2026-09-06, the LOT epoch (Wave 29, doc 02 §2.3a, doc 93 §BE).**
+##
+## A RULES rung, like v2 and v4, and it takes the identity migrator for exactly
+## their reason: the city body's SHAPE is byte-for-byte what v11 wrote. Not one
+## key is added, removed or renamed. `placed_records[*].footprint` still means
+## what it has always meant — **the extent the grid reserves for this building**,
+## which is precisely the number `_restore_records` hands `stamp_building`.
+##
+## What moved is the rule under which that body is advanced. A building now
+## reserves the footprint of its FINAL form rather than its first day's, so a v11
+## body restored under this binary lands on a **materially different grid**: the
+## player's stores hold four tiles where they held one, and a placement that
+## would have succeeded on the tile beside one now correctly answers
+## `E_FOOTPRINT`. Doc 08 §2.8's own test for whether a rung is owed — *"does an
+## old body still mean what it meant?"* — answers **no**, and that is the whole
+## argument for the rung.
+##
+## **Nothing new is persisted, and that is deliberate.** The reservation is
+## DERIVED — from the archetype, its level and the ground around it — and is
+## rebuilt at load exactly as the rest of `TileGrid` is. `migrate_lots` is what
+## rebuilds it, on both load paths; a persisted `lot` key beside it would be a
+## second record of one fact, which is the scattering C-17 exists to stop. The
+## same goes for LOT-LOCKED: it is a function of the whole restored city, so it is
+## recomputed rather than stored, and it therefore cannot go stale against the
+## grid it describes.
+##
+## **It does NOT move `state_hash()` on either authored city**, which is worth
+## recording because it is surprising. The four `profile_sim --hash-only` digests
+## are byte-identical to the fork on both the founding and the benchmark city:
+## `placed_records` carries PLAYER buildings only (`P-` prefixed) and neither
+## authored city has one, so the ground this rule changes never reaches the body
+## that is hashed. A city with a player-placed grower does move, and honestly.
+const SAVE_SECTION_VERSION := 12
 
 
 func save_section_version() -> int:
@@ -1474,6 +1506,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			# in their branches; the merge ordered them by landing: v10 is the yard,
 			# v11 is the ledger.)
 			10: body = _v10_to_v11(body, from_version)
+			11: body = _v11_to_v12(body)
 		version += 1
 	return body
 
@@ -1677,6 +1710,30 @@ static func _v10_to_v11(body: Dictionary, from_version: int) -> Dictionary:
 	body["treasury"] = block
 	return body
 
+
+## v11 → v12: **the identity function, and that is the whole migration** — v2's
+## and v4's shape, for v2's and v4's reason (see `SAVE_SECTION_VERSION`).
+##
+## The rung records a RULES change: a building now reserves the footprint of its
+## final form. There is no field to add and no default to invent, because the one
+## key this rule touches — `placed_records[*].footprint` — already means "the
+## extent the grid reserves", and a v11 body's value is the honest record of what
+## the v11 binary reserved. Widening it is not this function's job and could not
+## be done here anyway: whether a store may have the other three tiles depends on
+## the neighbours, the roads and the block state, none of which exist yet when a
+## migrator runs and all of which a migrator is forbidden to read from `data/`.
+##
+## `migrate_lots` does it instead, at the end of the restore, when the whole city
+## is standing — and it does it for a v12 body too, because a lot-locked building
+## whose blocker was demolished in a later session must be offered its ground
+## again. That is why this rung can be the identity function and still be honest:
+## the work is real, it simply happens where the answer is knowable.
+##
+## Written out as a named step rather than an empty `while` body because the
+## ladder is a record — the next reader needs to see that v11 was considered and
+## deliberately left alone, not that a rung was skipped.
+static func _v11_to_v12(body: Dictionary) -> Dictionary:
+	return body
 
 
 ## One float, canonicalized. Integral values become ints (exactly representable
@@ -2814,7 +2871,7 @@ func _population_inputs() -> Array:
 # ------------------------------------------------- doc 02 §2.3a: the LOT rule
 #
 # **A building reserves its FINAL form's ground the day it is founded** (Wave 29,
-# doc 02 §2.3a, doc 93 §BE, RR-230). The player's words: *"the allowance for the
+# doc 02 §2.3a, doc 93 §BE, RR-236). The player's words: *"the allowance for the
 # block that it takes up should be the size of the FINAL form of that building …
 # that way the buildings look like they belong when they get older."*
 #
@@ -2869,7 +2926,7 @@ func built_for(archetype: String, level: int) -> Vector2i:
 
 
 ## **A water works's lot is doc 05's, per VARIANT — and doc 02's column cannot
-## answer it** (Wave 29, RR-231). `data/buildings.json`'s `water_facility` rows
+## answer it** (Wave 29, RR-237). `data/buildings.json`'s `water_facility` rows
 ## are flagged `footprints_are_reference_variant_only` and carry the **pump**
 ## ladder, which is 3×3 flat to L3; the variants a player can actually place are
 ## not all pumps, and two of them GROW inside the shipped ceiling:
@@ -3041,7 +3098,7 @@ func lot_locked_ids() -> Array:
 
 
 ## **The migration, and it never moves or bulldozes anything** (doc 08 §2.8 rung
-## 12, doc 93 §BE-3, RR-232).
+## 12, doc 93 §BE-3, RR-238).
 ##
 ## Every city that exists today — the founding city, the benchmark city, the
 ## player's own `tests/fixtures/player_save_0903` — was laid out under the old
@@ -3138,7 +3195,7 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 				"required_level": required_level, "city_level": progression.city_level,
 				"archetype": archetype})
 	var stats: Dictionary = catalog.stats(archetype, 1)
-	# **The LOT, not the level-1 footprint** (doc 02 §2.3a, RR-230). This used to
+	# **The LOT, not the level-1 footprint** (doc 02 §2.3a, RR-236). This used to
 	# read `stats.footprint` — the ground the building covers on its first day —
 	# and every tile its final form needed was left for somebody else to build on.
 	var size := lot_for(archetype)
@@ -4873,7 +4930,7 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	var shell_stats: Dictionary = catalog.stats(WATER_SHELL_ARCHETYPE, level)
 	if progression.city_level < int(shell_stats.get("min_city_level", 0)):
 		blockers.append(&"E_CITY_LEVEL")
-	# **The LOT, not this level's footprint** (doc 02 §2.3a, RR-231). Doc 05's
+	# **The LOT, not this level's footprint** (doc 02 §2.3a, RR-237). Doc 05's
 	# `treatment` goes 2×2 → 3×3 at L2 and `tank` 2×2 → 3×3 at L3, so a plant sited
 	# on exactly its L1 tiles could never buy the rung the player was being sold.
 	var size := water_lot_for(String(variant), subtype)
