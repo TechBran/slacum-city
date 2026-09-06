@@ -456,7 +456,15 @@ demolition, walks the roster in **id order**, and gives each building the rest o
 its lot where the ground is free. Where it is not, the building is **lot-locked**:
 it keeps exactly the tiles it has, nothing is moved and nothing is bulldozed, and
 `lot_lock(sim_id)` reports the level that ground still reaches plus the neighbour
-standing on the rest. Doc 12 §2.9a is the surface; doc 08 §2.8 rung 12 is the
+standing on the rest.
+
+**That reachable level is a §2.11 ceiling, not a caption.**
+`cmd_upgrade_building` caps `top_level` at it and answers **`E_MAX_LEVEL`** —
+because there is no `E_FOOTPRINT` on the upgrade path, so a boxed-in store left
+uncapped would climb to L3 and grow a 2×2 mesh over its neighbour's tile, which
+is the overlap this whole section exists to close. For a lot-locked building, on
+the ground it holds, that level IS the top of its ladder; clearing the neighbour
+lifts it again in the same call. Doc 12 §2.9a is the surface; doc 08 §2.8 rung 12 is the
 save contract. Measured: the founding city migrates with **0** lot-locked, the
 1,500-building benchmark city with **206**.
 

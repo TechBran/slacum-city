@@ -274,6 +274,61 @@ func test_freeing_the_ground_unlocks_the_lot_at_the_demolition() -> void:
 	assert_eq(sim.world.grid.building_at(origin.x + 1, origin.y), 901)
 
 
+func test_a_lot_locked_building_cannot_climb_past_the_ground_it_holds() -> void:
+	# **The half that makes the rule sound.** There is no `E_FOOTPRINT` on the
+	# upgrade path and this wave did not add one (doc 93 §BE2) — so without a cap
+	# a boxed-in store would climb to L3, grow a 2×2 mesh over its neighbour's
+	# tile, and put back the exact overlap the wave exists to close, for precisely
+	# the buildings the migration could not help.
+	var sim := CitySim.boot_from_files()
+	var origin := _lot_site(sim, "store")
+	assert_true(origin.x >= 0)
+	sim.cmd_place_building("house", origin + Vector2i(1, 0))
+	var store_id := "P-903"
+	var b := Building.new(903, &"store", origin)
+	b.level = 2
+	b.state = &"active"
+	b.condition = 1.0
+	b.stats = sim.catalog.stats("store", 2)
+	b.max_level = sim.catalog.max_level_of("store")
+	sim._stamp_building_rules(b)
+	sim.buildings[store_id] = b
+	sim._building_records[store_id] = {"id": store_id, "grid_id": 903, "type": "store",
+			"block": "", "footprint": Vector2i.ONE, "origin_global": origin}
+	sim.world.grid.stamp_building(903, origin, Vector2i.ONE)
+	sim.treasury.credit(500_000, &"test_grant")
+
+	var lock := sim.lot_lock(store_id)
+	assert_eq(int(lock["reachable_level"]), 2, "1×1 carries a store to L2 and no further")
+	# The panel says level 2 is the top. The COMMAND has to agree, or the panel
+	# was the only thing that believed it.
+	var preview := sim.cmd_upgrade_building(store_id, true)
+	assert_true((preview.get("payload", {}).get("blockers", []) as Array)
+			.has(&"E_MAX_LEVEL"),
+			"L2 IS the top of this building's ladder, on this ground: %s" % str(preview))
+	assert_false(bool(sim.cmd_upgrade_building(store_id)["ok"]),
+			"and the real command refuses too, so no mesh grows over the neighbour")
+	assert_eq(b.level, 2, "it is still a level-2 store")
+
+	# Free the ground and the ladder comes back — the remedy is real.
+	var blocker := _neighbour_at(sim, origin + Vector2i(1, 0))
+	assert_true(blocker != "", "the house is on the tile the lot wants")
+	assert_true(bool(sim.cmd_demolish_building(blocker)["ok"]))
+	assert_true(sim.lot_lock(store_id).is_empty(), "it holds its whole lot now")
+	assert_false((sim.cmd_upgrade_building(store_id, true)
+			.get("payload", {}).get("blockers", []) as Array).has(&"E_MAX_LEVEL"),
+			"…so level 3 is on the table again")
+
+
+## The sim id of whatever building occupies `tile`, or "".
+static func _neighbour_at(sim: CitySim, tile: Vector2i) -> String:
+	var grid_id := sim.world.grid.building_at(tile.x, tile.y)
+	for sim_id in sim.buildings:
+		if (sim.buildings[sim_id] as Building).id == grid_id:
+			return String(sim_id)
+	return ""
+
+
 func test_the_migration_is_idempotent_and_order_stable() -> void:
 	var a := CitySim.boot_from_files()
 	var b := CitySim.boot_from_files()

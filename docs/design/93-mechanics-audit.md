@@ -7486,6 +7486,19 @@ demolition** and not at the next reload — `_take_building_off_the_map` calls
 `migrate_lots("demolition")`. A verb whose door is a restart is the shape doc 91
 keeps filing.
 
+**And `reachable_level` is ENFORCED, not merely displayed** —
+`cmd_upgrade_building` caps `top_level` at it and answers `E_MAX_LEVEL`. This is
+the half that makes the whole rule sound. There is no `E_FOOTPRINT` on the
+upgrade path (§BE2: there never was, and this wave did not add one), so without
+the cap a legacy store boxed in at 1×1 would climb to L3, grow a 2×2 mesh over
+its neighbour's tile, and **put A91-D-154 straight back for exactly the buildings
+the migration could not help**. It is also what makes the panel's sentence true:
+*"it can only reach level 2 of 6"* would otherwise have been believed by the
+panel and by nothing else. `E_MAX_LEVEL` is the honest code — for this building,
+on this ground, level 2 IS the top of the ladder — and the LOT row beside it is
+what explains why and hands over the neighbour. Clear the neighbour and the
+ladder comes back in the same call.
+
 ### BE6. The census, measured
 
 | city | buildings | growers | **lot-locked after migration** |

@@ -3283,6 +3283,23 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 	# enlarge that treats and pumps exactly what it did before.
 	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
 		top_level = mini(top_level, water_shell_top_level(sim_id))
+	# **A LOT-LOCKED building may not climb past the ground it actually holds**
+	# (Wave 29, doc 02 §2.3a, doc 93 §BE5). This is the half that makes the whole
+	# rule sound, and leaving it out would have re-opened the very overlap the
+	# wave exists to close: a legacy store boxed in at 1×1 has no `E_FOOTPRINT`
+	# on the upgrade path — there is none, and this wave did not add one — so it
+	# would have climbed to L3, grown a 2×2 mesh over a neighbour's tile, and put
+	# back A91-D-154 for exactly the buildings the migration could not help.
+	#
+	# It is also what makes `lot_lock`'s `reachable_level` a FACT rather than a
+	# label. The panel says *"it can only reach level 2 of 6"*; without this the
+	# panel would have been the only thing that believed it, which is the shape
+	# this project keeps filing. `E_MAX_LEVEL` is the honest code: for this
+	# building, on this ground, level 2 IS the top of the ladder — and the LOT row
+	# beside it is what explains why and hands over the neighbour.
+	var lock := lot_lock(sim_id)
+	if not lock.is_empty():
+		top_level = mini(top_level, int(lock["reachable_level"]))
 	if b.level >= top_level:
 		blockers.append(&"E_MAX_LEVEL")
 	if b.condition < b.min_condition_to_upgrade():
