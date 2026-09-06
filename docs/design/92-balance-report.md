@@ -14526,6 +14526,20 @@ now names the purchase that answers it.
    it, because the seed that moved (4242 → L7) moved only under the arm that is
    switched off. The lane that turns KNOB 4 on should raise the floor in the same
    commit.
-4. **Seed 1337 still ends with a `power_facility` in no pressure zone at all**
+4. **`pressure_remedy_at` is exact only while doc 05 §2.3's `elev` term is
+   dormant, and it is dormant by one metre of coincidence.** Doc 09 §2.2's
+   elevation ladder tops out at **34 m** and doc 05 §8's L1 pump carries
+   `head_m = 34`, so `elev = clamp(1 − 0.015 × max(0, 34 − 34), 0.30, 1) = 1.0`
+   on every tile of every shipped city — verified on `data/starter_city.json` and
+   `tests/fixtures/bench_city.json`, both of which use all five classes. A
+   tank-only zone is the worst case at `head_m = 30` and reads 0.94. **The day a
+   map puts a block above its plant's head, a tile can be under the gate for
+   HEAD**, and the classifier would say "lay a main closer" where a main buys
+   nothing — the remedy is a booster (`boosters_enabled`, Phase 2) or a tank on
+   high ground, and §2.3 already says so in as many words. The answer publishes
+   `tile_factor` beside `main_distance_tiles` so the two halves are separable the
+   day it matters; splitting the remedy three ways before a map needs it would be
+   authoring a third answer with no verb behind it. Doc 93 §BH1.
+5. **Seed 1337 still ends with a `power_facility` in no pressure zone at all**
    (`P-485`, `press 0.00`). RR-252 gives that row its distance; nothing yet gives
    the agent a reason to act on it, because the service arm is off.

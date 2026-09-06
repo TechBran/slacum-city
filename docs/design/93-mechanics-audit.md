@@ -7614,6 +7614,21 @@ the camera to a pump. The player was being sold supply for a problem that was
 geometry. That is doc 05 §10 RR-250: `reason` splits into
 `BLOCKED_WATER_DISTANCE` and `BLOCKED_WATER_CAPACITY`.
 
+**And the one place that split could be wrong is checked, not assumed.** §2.3's
+tile factor is `prox × elev`, so *"the zone is fine and the tile is not"* is only
+a DISTANCE fact while `elev` is 1.0 — a building on high ground is short of HEAD,
+and no main laid closer moves that either. **On every city this project ships,
+`elev` is exactly 1.0**, and the arithmetic is short: doc 09 §2.2's elevation
+ladder tops out at `ELEVATION_M[4] = 34 m` (both `data/starter_city.json` and
+`tests/fixtures/bench_city.json` use all five classes and no more), doc 05 §8's
+L1 pump carries `head_m = 34`, and `elev = clamp(1 − 0.015 × max(0, 34 − 34),
+0.30, 1)` is **1.0**. A tank-only zone is the worst case at `head_m = 30` and
+still reads **0.94**. So the classification is exact on every shipped map rather
+than merely usual, and the case that would break it — a map block above the
+plant's head — is doc 92 §73.8's ranked question 4 rather than a live defect.
+`can_upgrade_water` publishes `tile_factor` beside `main_distance_tiles` so the
+day that changes is a number on a row and not a silent mis-sentence.
+
 ### BH2. Does that split re-open doc 93 §BD5, which ruled `E_WATER_HEADROOM` does NOT split?
 
 **Q.** Wave 28 ruled *"no — one code, and the ANSWER says which arm"*. Is a new
