@@ -538,6 +538,18 @@ func test_the_lot_row_fits_the_first_screenful_of_a_412x915_phone() -> void:
 
 # ------------------------------------- the door, on the four states it can face
 
+## Every lot row is a SENTENCE the player reads, so the key and its params have
+## to survive the string table: a `{placeholder}` left in the text is the finding
+## `UIAudit.KIND_PLACEHOLDER` exists for, and these four states are reached by
+## tests rather than by a screenshot.
+func _assert_row_reads(config: UIConfig, block: Dictionary) -> void:
+	var key := String(block.get("text_key", ""))
+	assert_true(config.has_string(key), "data/strings.en.json has %s" % key)
+	var text := config.t(key, block.get("params", {}) as Dictionary)
+	assert_false(text.contains("{"),
+			"%s left a placeholder unfilled: %s" % [key, text])
+
+
 ## Box `STR-005` in with a house on the tile its lot wants, exactly as
 ## `tools/ui_preview.gd` stages the lot-locked screen. The house is the ONLY
 ## blocker — the other two tiles of the 2×2 stay free — which is the one shape
@@ -580,6 +592,7 @@ func test_a_ruined_neighbour_is_quoted_and_routed_as_a_SALVAGE() -> void:
 	assert_true(bool(quote["ok"]), "…and takes the salvage")
 
 	var ruined: Dictionary = controller.building_view("STR-005")["lot_block"]
+	_assert_row_reads(controller.formatter.config, ruined)
 	assert_eq(String(ruined["text_key"]), "ui_building_lot_locked_salvage")
 	assert_eq(String(ruined["free_verb"]), "salvage")
 	assert_eq(int(ruined["free_refund"]),
@@ -613,6 +626,7 @@ func test_a_burning_neighbour_gets_a_sentence_and_no_button() -> void:
 	assert_false(bool(sim.cmd_salvage_building(blocker, true)["ok"]))
 
 	var block: Dictionary = controller.building_view("STR-005")["lot_block"]
+	_assert_row_reads(controller.formatter.config, block)
 	assert_eq(String(block["text_key"]), "ui_building_lot_locked_stuck")
 	assert_eq(String(block["free_verb"]), "")
 	assert_false(block.has("free_refund"), "no number, because there is no quote")
@@ -649,6 +663,7 @@ func test_a_neighbour_beside_unclearable_ground_is_not_offered_as_a_remedy() -> 
 			"…and a building as well")
 
 	var block: Dictionary = controller.building_view("STR-005")["lot_block"]
+	_assert_row_reads(controller.formatter.config, block)
 	assert_eq(String(block["text_key"]), "ui_building_lot_locked_partial")
 	assert_eq(String(block["blocked_by"]), blocker, "the row still NAMES the neighbour")
 	assert_eq(StringName(str((block["fix_target"] as Dictionary)["kind"])),
@@ -681,6 +696,7 @@ func test_no_lot_row_on_the_players_own_save_promises_what_it_cannot_do() -> voi
 	for sim_id in locked:
 		var block: Dictionary = controller.building_view(String(sim_id))["lot_block"]
 		assert_true(bool(block["locked"]), "%s is lot-locked" % sim_id)
+		_assert_row_reads(controller.formatter.config, block)
 		var neighbour := String(block.get("blocked_by", ""))
 		if neighbour == "":
 			assert_eq(String(block["text_key"]), "ui_building_lot_locked_ground")

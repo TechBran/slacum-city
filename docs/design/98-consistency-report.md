@@ -11723,7 +11723,7 @@ arm for *"buildable and empty"*, so every FREE tile of a lot fell through to the
 map was in the way when nothing was, and it is the list the row and
 `measure_lots --list` both read. It now spells `TileGrid.can_expand`'s own
 predicate, so the two answers cannot disagree. Query-only: no hashed state, no
-event, and all four baselines are unchanged by measurement. Filed as **A91-D-157**.
+event, and all four baselines are unchanged by measurement. Filed as **A91-D-158**.
 
 ### RR-241 — `record["footprint"]` is the LOT, and two more readers still meant the MESH
 

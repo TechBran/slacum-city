@@ -7526,7 +7526,7 @@ lot-locked, 7 naming a neighbour, **0 doors**.
 **And a blocker list must only list blockers.** `_lot_blockers` had no arm for
 *buildable and empty*, so free tiles were reported as `E_NOT_DEVELOPED`. It now
 spells `can_expand`'s own predicate. This is why the player fixture's rows read
-`[E_ROAD, P-047]` and not `[E_ROAD, E_NOT_DEVELOPED, P-047]` (A91-D-157).
+`[E_ROAD, P-047]` and not `[E_ROAD, E_NOT_DEVELOPED, P-047]` (A91-D-158).
 
 ### BE6. The census, measured
 
