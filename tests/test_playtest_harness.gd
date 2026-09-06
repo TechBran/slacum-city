@@ -934,3 +934,35 @@ func test_the_service_main_knob_is_off_by_default_and_is_the_only_difference() -
 	assert_eq(probe.tax_target, taught.tax_target)
 	assert_eq(probe.describe() == taught.describe(), false,
 			"and it says which one it is")
+
+
+## **The band the service arm stands down on, asserted where nothing else runs
+## it.** `Api.zone_utilization_at` is read by exactly one caller — `_lead_mains`'s
+## service arm — and that arm is behind a knob this build ships OFF, so without
+## this test the reading would be authored behaviour with no consumer in any
+## default path: the shape doc 91 A91-D-19 names and the one this project keeps
+## filing. It is `demand / supply` of doc 05's zone, which is what
+## `Balanced.WATER_RELIEF_RATIO` is a band on, and it must agree with the zone it
+## claims to be about.
+func test_the_zone_utilization_read_is_the_zones_own_demand_over_supply() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	sim.advance_hours(6.0)
+	var seen := 0
+	for raw: Variant in sim.water.topology.zones:
+		var z: PressureZone = raw
+		if z.dead or z.edge_ids.is_empty():
+			continue
+		var edge: WaterEdge = sim.water.edges[String(z.edge_ids[0])]
+		var tile: Vector2i = edge.path[0]
+		if sim.water.zone_at(tile) != z:
+			continue
+		seen += 1
+		assert_almost_eq(api.zone_utilization_at(tile),
+				z.demand_m3h / maxf(z.supply_m3h, 0.001), 0.0001,
+				"zone %s: the read is the zone's own two numbers" % z.zone_key)
+	assert_true(seen >= 1, "the founding city has a live zone with a main in it")
+	# Off the map, and on a tile no main reaches, it answers 0.0 rather than
+	# dividing by a zone that is not there — which is what lets `_lead_mains`
+	# ask the question before it knows whether there is a zone to ask about.
+	assert_eq(api.zone_utilization_at(Vector2i(-5, -5)), 0.0)
