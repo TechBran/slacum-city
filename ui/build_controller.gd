@@ -2496,6 +2496,17 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 ##     spare). No amount of supply moves a tile factor. The row keeps the
 ##     camera on the building's own tile and the sentence says the distance,
 ##     because the answer is a main and the player lays that with the path tool.
+##
+## **Wave 30 (doc 93 §BH): the branch reads `reason`, not `limit`.** The two arms
+## do not partition the two remedies — `limit == "no_zone"` is a DISTANCE wall
+## when the tile is out of every main's reach and a CAPACITY wall when the zone
+## is dead, and `limit == "pressure"` is the zone's shortage rather than the
+## tile's distance whenever the ZONE is under the gate too. This method used to
+## re-derive that classification itself (`limit == "pressure"`), which made it
+## the third of three surfaces deciding the same thing on three different
+## predicates. `WaterSystem.pressure_remedy_at` decides it once now, and the
+## `no_zone` arm gains a button it never had: `FIX_BUILDING` on the building no
+## main reaches, instead of `FIX_NONE` and a dead row.
 func _water_headroom_params(sim_id: String, b: Building,
 		next_stats: Dictionary) -> Dictionary:
 	var delta_water := float(next_stats.get("water_demand", 0.0)) \
@@ -2506,12 +2517,13 @@ func _water_headroom_params(sim_id: String, b: Building,
 	var zone: PressureZone = sim.water.zone_at(tile)
 	var zone_key := zone.zone_key if zone != null else ""
 	var limit := String(verdict.get("limit", "capacity"))
+	var reason := String(verdict.get("reason", WaterSystem.BLOCKED_CAPACITY))
 	var chain: Dictionary = sim.water.supply_chain_of(zone) if zone != null else {}
 	var binding := String(chain.get("binding", "none"))
 	var binding_ids: Array = chain.get("binding_ids", [])
 	var fix_kind := RequirementFormatter.FIX_NONE
 	var fix_id := ""
-	if limit == "pressure":
+	if reason == WaterSystem.BLOCKED_DISTANCE:
 		fix_kind = RequirementFormatter.FIX_BUILDING
 		fix_id = sim_id
 	elif not binding_ids.is_empty():
@@ -2532,13 +2544,21 @@ func _water_headroom_params(sim_id: String, b: Building,
 		"district_id": zone_key,
 		"at": zone_key,
 		"tile": b.origin,
-		# Which arm refused, and what it points at — read by the row's copy and
-		# by `FixRouter`, and published so a test can assert the two agree.
+		# Which arm refused, WHAT WOULD ANSWER IT, and what the row points at —
+		# read by the row's copy and by `FixRouter`, and published so a test can
+		# assert the three agree. `reason` is doc 05's own remedy class
+		# (`BLOCKED_WATER_DISTANCE` / `BLOCKED_WATER_CAPACITY`, doc 93 §BH); the
+		# row's advice line still keys off `limit`, which is finer.
 		"limit": limit,
+		"reason": reason,
 		"binding": binding,
 		"pressure": float(verdict.get("pressure", sim.water.pressure_at(tile))),
 		"zone_pressure": zone.pressure if zone != null else 0.0,
-		"main_distance_tiles": sim.water.topology.distance_at_tile(tile),
+		# The gate's own figure, which is the whole-map search on the `no_zone`
+		# arm and the BFS's cached step count everywhere else — never −1 in front
+		# of a player when a main exists anywhere on the map.
+		"main_distance_tiles": int(verdict.get("main_distance_tiles",
+				sim.water.topology.distance_at_tile(tile))),
 		"fix_target_id": fix_id,
 		# No zone and no node at all is not a place the camera can fly to; the
 		# row still blocks and still says why, and it offers no button rather

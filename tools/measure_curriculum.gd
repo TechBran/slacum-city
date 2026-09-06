@@ -141,8 +141,12 @@ func _initialize() -> void:
 						else "—")])
 
 	print("")
+	# `water_main_tiles` / `water_main_spend` join the column list in Wave 30:
+	# the arc now buys PIPE as well as plant, and a row that showed only the
+	# components would report a smaller water bill than the city actually paid.
 	for key: String in ["goal_level_end", "city_level_end", "road_tiles_built",
 			"road_spend", "repaired", "repair_spend", "water_placed", "water_spend",
+			"water_main_tiles", "water_main_spend",
 			"tax_changes", "treasury_end", "population_end"]:
 		var cells := ""
 		for run: Dictionary in runs:

@@ -1636,6 +1636,29 @@ rush_cost               = ceil( remaining_crew_hours × rush_rate )
 
 **Development phases are re-quoted, not remembered.** Four of the five live job kinds carry their cash price on the job record; doc 09's six phases are billed downstream by `_charge_development_phases`, so a phase's rush price is re-derived from §2.8's own `development_phase_cost()`. If the block's inputs moved since the phase started — a road built next door raises `arterial_connections` — the re-quote differs from what was charged, and that is correct: a rush is a **new purchase, quoted today**, exactly as `cmd_start_development`'s preview quotes the next phase today. A91-D-48 files the underlying asymmetry.
 
+
+#### (g) Water assets — per tile, and per component (report 98 §77, Wave 30)
+
+**C-07's currency monopoly covers doc 05 too, and this ladder never published the numbers.** `data/economy.json`'s `water` block has carried them since Wave 5 — with their derivations, in `_note` fields — and doc 05 §2.12 correctly says it owns no dollar. What was missing is the half a reader looks for: this doc's own table. A price whose only statement is a comment inside a data file is a price no reviewer can check, and the main is the one purchase doc 92 §73 measures a whole wave against.
+
+**The main — per tile, per tier.** A water main is a **buried utility run**, and §2.13(b) already prices exactly one of those.
+
+| tier | $/tile | capacity (doc 05 §8) | derivation |
+|---|---|---|---|
+| `service` | **$286** | 53.5 m³/h | feeder class 1 at **$110/tile** overhead × `UNDERGROUND_COST_MULT` **2.6** — §2.13(b)'s own numbers, not a new anchor |
+| `trunk` | **$804** | 213.0 m³/h | `service × 2.81`, doc 05 `price_inputs.main_cost_ratio_per_tile` — the dimensionless ratio table that exists for exactly this |
+| `arterial` | **$2,145** | 640.0 m³/h | `service × 7.5`, same table. Behind `levels_4_5_enabled`, so it is priced and not offered |
+
+`cost = tiles × main_build_cost_per_tile[tier] × M_build`. Repair capital is the **full** build price (`MAIN_REPAIR_CAPITAL_FRACTION 1.0`): unlike a road tile at 0.20, a broken main is dug up and replaced, excavation included.
+
+**Two independent cross-checks land on $286**, and both are recorded because a single derivation is an assertion. A 16-tile `service` segment (`M_TIE`'s length in doc 09 §2.9.6) is **$4,576** of capital, so §2.5 prices a total break at `4,576 × 1.00 × 0.85 = $3,890` against doc 05's **deleted** `main_break` base cost of $4,000 — a 2.8 % miss on the number this ladder replaced. And a pump's capital is then `45,000 / 4,576 = 9.8×` a service segment's, against doc 05 §2.12's *"a pump's capital is ~11× a service main segment's"*.
+
+**The component — off §2.13(a)'s `water_plant` anchor, no new ladder.** `build(variant, L) = round(45,000 × CAPITAL_VALUE_V[L] × price_inputs.variant_cost_ratio_l1[variant])` and `upgrade(variant, L → L+1) = round(upgrade_cost(water_plant, L) × the same ratio)`, both §2.3's own curves. At L1: `source_river` **$37,800** · `treatment` **$120,150** · `pump` **$45,000** (which IS the anchor — the reference variant) · `tank` **$59,850**. Demolition refunds `DEMOLITION_REFUND_FRACTION (0.25)`, as buildings, grid components and road tiles do.
+
+**What this buys, measured** (doc 92 §73.2). An 8-tile `service` main is **$2,288** and takes one building's doc 05 §2.3 tile factor from **0.40 to 1.00**; a 3-tile `trunk` at the plant is **$2,412** and adds **213.0 m³/h** to §2.5's `feed_capacity` — the one term of the supply chain no node purchase can move.
+
+**And the anomaly that pair exposes, which this ladder does NOT resolve.** §2.5 counts an edge's whole nameplate the moment the edge touches a supply node's tile, so the shortest legal trunk — **2 tiles, $1,608** — buys the same 213.0 m³/h as the longest: **$7.55 per m³/h, against a pump's $45,000 / 240 = $187.50**. That is doc 05's min-cut model rather than this doc's price, and moving a dollar to hide it would be the C-07 inversion this section exists to prevent. Filed as doc 91 **A91-D-168**, with the harness deliberately buying the run a player would draw (`Balanced.MAINS_TRUNK_TILES = 8`) rather than the stub that games it.
+
 ---
 
 ## 3. Data Schema

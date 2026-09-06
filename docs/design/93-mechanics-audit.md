@@ -7557,3 +7557,191 @@ archetype-appropriate apron — yard, parking, fence, planting — drawn on
 `lot − built` and **receding as the building grows into it**, which is the half
 of this wave the player actually sees. One MultiMesh, one governor knob, and it
 is in doc 11's draw-call census like every other layer.
+
+## BH. Wave-30 rulings — the distance wall, and the refusal that named the wrong purchase (2026-09-06)
+
+*(Measured doc 92 §73. Amendments doc 05 §10 RR-250..RR-252 and doc 03 §2.13(g).
+Report 98 §77 RR-250..RR-253. Defect rows doc 91 A91-D-165..A91-D-168.)*
+
+The question this lane was given is a tuning question — *is 0.55 at the tile
+right when the zone is at 1.00?* — and the answer is that **the threshold is
+right, the SUBJECT is right, and the sentence in front of the player was
+wrong**. Nothing in `data/water.json` moves.
+
+### BH1. Does §2.11's upgrade gate read the TILE's pressure or the ZONE's?
+
+**Q.** Doc 92 §67.8 measured a level-7 high-rise refused `E_WATER_HEADROOM` at
+its tile's `P_tile = 0.50` against `upgrade_min_pressure = 0.55`, standing in a
+zone whose own pressure was **1.00** with **57.1 m³/h** of unused headroom. Six
+different pressures — 0.50 / 0.60 / 0.70 / 0.80 / 0.90 / 1.00 — inside one zone.
+Should the gate instead read the ZONE's pressure and apply doc 05 §2.3's per-tile
+factor as a **discount on the served demand** the upgrade asks for?
+
+**Ruling: NO — the gate keeps reading the tile, at 0.55, and the alternative is
+refuted rather than declined.** Three independent arguments, and any one of them
+is sufficient.
+
+**1. §2.4 does not discount demand, and inventing a discount here would
+contradict it.** The demand aggregator is
+`D_build = res_base·ch_res + com_base·ch_com + proc_base`, and `res_base` and its
+siblings are sums of doc 02's `W_b` **undiscounted by anything**. A building
+eight tiles from a pipe draws its full magnitude out of the zone; §2.3's factor
+is a *delivery* term — what arrives at the tap — not a *demand* term. Folding it
+into the headroom check would make the gate ask a question the mass balance one
+section earlier does not model.
+
+**2. The alternative fails at its own boundary, and fails open.** At
+`d > max_service_distance_tiles (12)` the tile factor is exactly **0.0**. A
+discounted ask is then `delta × 0.0 = 0.0`, which passes any headroom test —
+so a high-rise with **no water at all** would clear the gate and be allowed to
+double its draw. The rule the brief asked about is not merely different; it is
+unsound in the region the current rule is strictest in.
+
+**3. 0.55 is where §2.11's own effect table puts it.** That table gives
+`P ≥ 0.60 → Normal, output 1.00` and `P = 0.45 → −7.6 happiness, output 0.79`.
+The gate sits one band under "Normal", which reads as exactly one sentence: *a
+building that is not already getting normal service may not be given more load
+to serve.* It is the same sentence doc 04's `UPGRADE_MAX_R` says about copper.
+`P_tile` is also the number every OTHER consumer of this building already reads —
+`water_output_mult`, `water_happiness_penalty`, `no_water_hours`, doc 03's
+`f_water` — so a gate on the zone would be the only reader in the project
+looking at a different number than the building actually experiences.
+
+**What was actually wrong, then.** Not the threshold: the **name**. The refusal
+came back `BLOCKED_WATER_CAPACITY` on both arms, the checklist row's remedy
+string said *add a pumping station or a storage tank*, and the fix button flew
+the camera to a pump. The player was being sold supply for a problem that was
+geometry. That is doc 05 §10 RR-250: `reason` splits into
+`BLOCKED_WATER_DISTANCE` and `BLOCKED_WATER_CAPACITY`.
+
+### BH2. Does that split re-open doc 93 §BD5, which ruled `E_WATER_HEADROOM` does NOT split?
+
+**Q.** Wave 28 ruled *"no — one code, and the ANSWER says which arm"*. Is a new
+`reason` value a way around that ruling?
+
+**Ruling: no, and the distinction is the ruling's own.** §BD5's subject is doc
+02 §2.11's **check code** — the thing that goes into `CODE_TABLE`,
+`UPGRADE_CHECKS` and every fixture that walks the checklist — and its argument
+was that the player needs the difference as a *remedy*, not as a *name*.
+`E_WATER_HEADROOM` is still one code; nothing is added to doc 02's check order.
+What changes is the ANSWER's own `reason` field, which §BD5 explicitly wanted to
+carry the distinction and which — as shipped — did not: it was the constant
+string `"BLOCKED_WATER_CAPACITY"` on all three refusal arms while `limit` carried
+the real information. §BD5 is executed here, not overturned.
+
+**And `reason` is not a second spelling of `limit`.** That would be the
+duplicate-surface defect this project keeps filing, so it is worth stating why it
+is not one. `limit` answers *which line of the gate refused*; `reason` answers
+*what the player has to buy*; and the map between them is **not a function in
+either direction**:
+
+| `limit` | condition | `reason` |
+|---|---|---|
+| `no_zone` | no live main within 12 tiles | `BLOCKED_WATER_DISTANCE` |
+| `no_zone` | mains reach, every supply node dead | `BLOCKED_WATER_CAPACITY` |
+| `capacity` | `headroom < delta × 1.10` | `BLOCKED_WATER_CAPACITY` |
+| `pressure` | tile under the gate, **zone at or above it** | `BLOCKED_WATER_DISTANCE` |
+| `pressure` | tile under the gate, **zone under it too** | `BLOCKED_WATER_CAPACITY` |
+
+The bottom row is the one that was measurably wrong in the shipped UI: three
+surfaces each classified it, on three different predicates, and
+`ui/water_panel_model.gd` called a tile at 0.32 inside a zone at 0.50 *"too far
+from a main"* — advice that would have cost the player a pipe and moved the
+pressure by nothing. `WaterSystem.pressure_remedy_at` is the one rule now, and
+doc 91 A91-D-165 records the shape.
+
+### BH3. §2.11 says "the building's 30-game-day average P". Should that average be built?
+
+**Q.** The sentence has been in doc 05 §2.11 since Wave 5. `can_upgrade_water`
+has always read the live `pressure_at(tile)`. Which one is right?
+
+**Ruling: the CODE is right and the sentence is STRUCK.** An averaged gate would
+mean that a player who reads the refusal, understands it, buys the main and
+watches the pressure go to 1.00 is *still refused for the next thirty game-days*
+— a door that does not open, which is the defect class doc 12 §2.7 exists to
+prevent and the one this project has filed most often. It would also make the
+refusal untestable in the only window a session has.
+
+**Nothing is being defended by keeping the average, either.** Its evident intent
+is to stop an upgrade being bought during a transient dip; §2.8's own
+`pressure_tau_h = 0.05` smoothing and doc 06's break penalties already bound how
+fast `P` can move, and a player who upgrades into a dip is refused nothing they
+cannot retry a game-minute later. Doc 05 §2.11's bullet now reads *"the
+building's tile pressure `P_tile`"*. **This is a documentation change with no
+behavioural half** — an authored claim nothing implemented, withdrawn rather than
+implemented. Doc 91 A91-D-167.
+
+### BH4. May the scripted agent lay a main, and on what trigger?
+
+**Q.** Doc 92 §67.9 item 2 and §69.5: the player has had `cmd_place_water_main`
+since Wave 10 and `tools/playtest.gd` has never called it, so every curriculum
+and balance figure this project has published was measured on a city that could
+only extend water by siting components near mains that already existed.
+
+**Ruling: yes, on TWO triggers, and they are the two walls §67.8 named.**
+
+* **A service main to a building §2.11 refuses for DISTANCE** — the refusal that
+  now has a name. `Api.water_distance_blocked_tile` asks the gate itself
+  (`reason == BLOCKED_WATER_DISTANCE`) rather than re-deriving the condition.
+* **A trunk main at the plant when §2.5's chain binds on `mains`** —
+  `feed_capacity`, the one term of the supply expression that is not a node, and
+  the term doc 93 §BD6 declined to raise the MVP ladder against precisely
+  because *"the ladder and this door belong in one wave, measured together"*.
+  This is that wave.
+
+**The route is doc 05's `WaterSystem.lateral_tiles`, not a second path-finder.**
+`Api.place_road`'s `road_run` answers a different question — *where can I lay N
+tiles of pavement that touch pavement* — while a main has a fixed start (the
+network) and a fixed end (the building, or the plant). Doc 05 already owns that
+shape and `CitySim.cmd_place_water_component` already uses it for every component
+lateral, so an agent's main and the game's lateral are the same tiles and the
+same price over the same span.
+
+### BH5. A main is a DEMAND purchase, and the agent's rule has to know it
+
+**Q.** Should the rule lay a main for every refusal that names distance?
+
+**Ruling: no — only for a building that is ALREADY INSIDE the zone, and only
+while the works is under doc 04 §5.10's warning band.** This is the wave's
+expensive finding and it was found by measuring, not by reading.
+
+§2.2's tile BFS enrols every tile within `max_service_distance_tiles` of a live
+main tile; §2.4 then bills the zone for every building whose access tile lands
+in it. **So a main laid into unserved ground does not only raise one building's
+tile factor — it moves a whole district's demand onto a works that was not sized
+for it.** An agent that laid a main on every distance refusal ended seed 1337 at
+**6,283 residents against the fork's 8,559**, with its one zone at pressure
+**0.21**: it had spent 45 game-days connecting new districts to a plant with
+nothing left to sell them (doc 92 §73.4).
+
+The two arms of §2.11's own refusal are exactly the two cases:
+
+* `limit == "pressure"` — the building **is** in the zone and §2.4 is **already
+  billing** its demand. Shortening `d` enrols almost nothing new. **Pure gain.**
+* `limit == "no_zone"` — the building is outside every zone and its demand is
+  counted nowhere. Connecting it is a supply commitment as much as a pipe.
+  **Not the growth rule's business**, and it is refused here.
+
+The trunk arm takes no band guard at all, and that asymmetry is the point: a zone
+that binds on `mains` is short **by definition**, so refusing the trunk for being
+short would be refusing the remedy on the strength of the symptom.
+
+### BH6. Is `feed_capacity`'s min-cut priced correctly? — NO, and it is filed, not fixed
+
+**Q.** §2.5 counts a main's whole nameplate toward `feed_capacity` the moment
+the edge touches a supply node's tile. A **two-tile** trunk stub off a pump
+therefore adds the full **213.0 m³/h** for doc 03 §2.13(g)'s **$1,608** —
+**$7.55 per m³/h**, against a pump's $45,000 for 240 m³/h, i.e. **$187.50**. A
+24× arbitrage on a term the player can buy in one drag.
+
+**Ruling: the harness does NOT exploit it, and the model — not the price — is
+what would have to change.** `Balanced.MAINS_TRUNK_TILES` is **8**, which is
+`main_tap_radius_tiles` and half a land block: the run a player would actually
+draw, and the same span doc 09's `utility_corridor` phase runs to a block's
+centre. Moving doc 03's dollar to hide a doc 05 modelling artefact would be the
+C-07 inversion in reverse. The honest fix is for §2.5's min-cut to count a
+feed edge's capacity **against the length or the count of the supply tiles it
+actually serves**, which is a doc 05 §2.5 re-derivation with every `feed_capacity`
+figure in doc 92 hanging off it — a lane of its own, with the MVP ladder question
+§BD6 deferred. Doc 91 **A91-D-168**, ranked first among this lane's open
+questions.

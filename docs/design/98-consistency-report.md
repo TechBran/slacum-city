@@ -11845,3 +11845,113 @@ is a QUERY, its emptiness and its `reachable_level` are computed from the record
 and the catalog before the blocker list is built, and the only sim caller —
 `cmd_upgrade_building`'s ceiling — reads `reachable_level` and never `blockers`.
 The four hashes say the same thing from the other side.
+
+## 77. WAVE 30 — the mains the agent can lay, and the distance wall RULED (binding)
+
+*Lane C. Fork `9aecbf9` (Waves 23–29 merged). Rulings doc 93 §BH. Measured doc 92
+§73. Amendments doc 05 §10 and doc 03 §2.13(g). Defect rows doc 91
+A91-D-165..A91-D-168. Ids RR-250..RR-253, and `tools/check_doc_refs.py` prints
+"all resolving; no id assigned twice" on this tree.*
+
+**The lane was given two findings from Wave 26, re-confirmed by Wave 28, and it
+closes one and RULES the other. It also closes a third the two of them were
+hiding.**
+
+### RR-250 — the refusal names the truth: `BLOCKED_WATER_DISTANCE`
+
+Doc 92 §67.8's finding, in one line: *seed 9001's high-rise is refused
+`E_WATER_HEADROOM` at tile pressure 0.50 against doc 05 §2.11's 0.55 gate, inside
+a zone whose own pressure is 1.00 with 57.1 m³/h spare.* The wall is doc 05
+§2.3's per-tile factor — Chebyshev steps to the nearest live main — and the
+refusal came back `BLOCKED_WATER_CAPACITY`, the only value `can_upgrade_water`
+could ever return. Every number in the sentence said *buy supply*; no cubic metre
+of supply can move a tile factor.
+
+`reason` now splits into **`BLOCKED_WATER_DISTANCE`** and
+**`BLOCKED_WATER_CAPACITY`**, and doc 05 §4's published interface line — which
+carried the single constant since Wave 5 — is amended to match. Wave 28's `limit`
+is unchanged and is not a second spelling of it; doc 93 §BH2 has the five-row
+table that shows the map between them is not a function in either direction.
+
+**Measured on the player's own committed save**
+(`tools/measure_water_chain.gd --saves=res://tests/fixtures/player_save_0903
+--days=0 --spread`): 89 buildings in one zone at pressure 0.64 with 31.3 m³/h
+spare, pressures spread **0.32 / 0.45 / 0.51 / 0.64** (min / p25 / median / max),
+**46 of 89 under the 0.55 gate — and all 46 want a MAIN, none wants supply.**
+That is 52 % of a real player's city being told to buy the wrong thing.
+
+### RR-251 — one rule, one place: `WaterSystem.pressure_remedy_at`
+
+The split is not merely published, it is **centralised**, and the reason is a
+defect. Three UI surfaces were each deciding the same classification with a
+predicate of their own — `ui/build_controller.gd` on `limit == "pressure"`,
+`ui/water_panel_model.gd` on `pressure < gate and zone.pressure >= gate`,
+`ui/requirement_formatter.gd` on a third arrangement — and none of the three was
+the gate's. They part company on a real case: **a tile at 0.32 inside a zone at
+0.50** is a zone shortage, and the panel row called it *"too far from a main"*.
+All three read `reason` now. The `no_zone` arm also gains a `Fix this →` it never
+had (`FIX_BUILDING` on the building no main reaches, instead of `FIX_NONE`). Doc
+91 A91-D-165, doc 05 §10 RR-251.
+
+### RR-252 — a refusal about distance can state a distance
+
+`WaterTopology.distance_at_tile` answers **−1** outside doc 05 §2.2's
+`max_service_distance_tiles` cutoff, and the `no_zone` arm is exactly the tiles
+outside it — so the one refusal whose whole content is a distance was the one
+that could not state one, and `BuildController` published the sentinel straight
+into `main_distance_tiles`. Measured at the fork on the 45-game-day arc, seed
+1337: `power_facility P-234 E_WATER_HEADROOM $69,000 | zone (none) press 0.00`.
+The gate falls back to doc 05's own whole-map `nearest_main_tile` on the refusal
+path only — the read `cmd_place_water_component` has done for `E_NO_MAIN` since
+Wave 10, re-used rather than re-written. Doc 91 A91-D-166.
+
+### RR-253 — the agent lays a main, and the SERVICE half is measured and held
+
+Doc 92 §67.9 item 2 and §69.5: `cmd_place_water_main` has been on the harness
+verb roster since Wave 10 and called by nothing, so **every curriculum and
+balance figure this project has published was measured on a city that could only
+extend water by siting a component near a main that already existed.**
+`Balanced._lead_mains` closes that, through the same command
+`ui/path_tool.gd` already drives and with doc 05's own `lateral_tiles` as the
+route — no second door, no second path-finder.
+
+**It has two arms and only one of them ships on.**
+
+* **TRUNK — on.** A run laid at the plant when doc 05 §2.5's chain binds on
+  `mains`. `feed_capacity` is the one term of the supply expression that is not a
+  node, it is what doc 92 §67.8 measured seeds 1337 and 4242 both ending capped
+  at (**214.0**), and doc 93 §BD6 declined to raise doc 05 §6's MVP ladder
+  precisely because *"the ladder and this door belong in one wave"*. Measured on
+  the founding city: `feed_capacity` **160.5 → 373.5** for a three-tile,
+  **$2,412** run.
+* **SERVICE — OFF, behind KNOB 4, and the measurement is the reason.** A main
+  laid to a building refused for distance is a **demand purchase**: doc 05 §2.2's
+  BFS enrols every tile within twelve of the new pipe and §2.4 bills the zone for
+  all of it. Over 45 game-days it won seed 4242 a whole city level — the capstone
+  doc 92 §67.8 measured the distance wall taking from it — and it took seed 1337
+  from **8,559 to 6,283** residents and seed 9001's one zone to **supply 0.0,
+  pressure 0.00**, which is `test_balance_gates.gd` gate 21's own per-seed
+  assertion failing. Four variants are tabled in doc 92 §73.4 and each delta is
+  isolated to one cause. The knob has a strategy on it
+  (`curriculum_service_mains`) so the A/B stays one command rather than a diff.
+
+**What this lane did NOT do, and it is the honest half.** It did not make the
+service arm work. The rule needs a planner that buys SUPPLY for the district it
+just connected, and building that is the next lane's — ranked first in doc 92
+§73.7 with the measurement that says how much it is worth.
+
+### The four `profile_sim --hash-only` baselines: UNCHANGED
+
+Taken at the fork `9aecbf9` and again at the tip, by this lane, on this tree:
+
+| city | coarse 24 h | fine 2.0 h |
+|---|---|---|
+| starter | `9004573df161a57ed6203a7e77ac97e0588bb3d86a6781daf18b457184c204ea` | `d5c6678de64cb5de8c5154d47b409a1e7eabe3caf823a4c8fc1a3737538b69b1` |
+| bench | `ebb5f4762e4f241245d3fd87bb056d4d2c008ac34065dfb9fac67c2886893e91` | `307a6a27ad6f180140fede7d6746a005ab27fc4eddb9a5fae1f72a86686adc84` |
+
+**All four are bit-identical before and after**, and that includes the `sim/`
+change. It has to be: `can_upgrade_water` is reached only from
+`CitySim.cmd_upgrade_building` and `ui/build_controller.gd`, `profile_sim` calls
+neither, and every arm of the gate returns the same `ok` it returned before — the
+wave adds a `reason` and two payload keys and moves no threshold. **No save rung
+is taken**: nothing persisted changes shape, so the tree stays at **v12**.
