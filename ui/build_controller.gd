@@ -2180,7 +2180,6 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 				neighbour = String(entry)
 		else:
 			ground.append(String(entry))
-	out["ground_blockers"] = ground
 	var params := {"held": out["held_text"], "lot": out["lot_text"],
 			"level": int(lock["reachable_level"]), "top": int(lock["top_level"])}
 	if neighbour == "":
@@ -2192,7 +2191,6 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 	out["blocked_by"] = neighbour
 	out["blocked_by_name_key"] = BuildController.card_name_key(
 			String(other.archetype), String(other.variant))
-	out["blocked_by_state"] = String(other.state)
 	# **WHICH VERB CLEARS IT IS THE NEIGHBOUR'S OWN STATE'S BUSINESS** (Wave 29
 	# fix, doc 93 §BE5a, report 98 §74b RR-240). The first cut quoted `cmd_demolish_building`
 	# unconditionally and never read the quote's `ok`, and the city that found it

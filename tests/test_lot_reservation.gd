@@ -465,8 +465,8 @@ func test_the_panel_actually_draws_the_lot_row_and_wires_its_button() -> void:
 	assert_true((section as Control).visible)
 	var button := panel.lot_fix_button()
 	assert_true(button != null, "a lot-locked building gets its `Fix this →`")
-	assert_eq(button.tooltip_text, blocker,
-			"…and the button names the neighbour standing on its ground")
+	assert_eq(button.tooltip_text, "DEMOLISH %s" % blocker,
+			"…and the button names the VERB and the neighbour standing on its ground")
 
 	(Engine.get_main_loop() as SceneTree).root.remove_child(root)
 	root.free()
@@ -654,11 +654,8 @@ func test_a_neighbour_beside_unclearable_ground_is_not_offered_as_a_remedy() -> 
 	sim.world.grid.set_flag(boxed.origin.x, boxed.origin.y + 1, TileGrid.FLAG_ROAD)
 
 	var lock := sim.lot_lock("STR-005")
-	var ground: Array = []
-	for entry in (lock["blockers"] as Array):
-		if not sim.buildings.has(String(entry)):
-			ground.append(String(entry))
-	assert_false(ground.is_empty(), "the lot has ground on it no verb takes")
+	assert_false(_ground_blockers(sim, "STR-005").is_empty(),
+			"the lot has ground on it no verb takes")
 	assert_true((lock["blockers"] as Array).has(StringName(blocker)),
 			"…and a building as well")
 
@@ -713,7 +710,7 @@ func test_no_lot_row_on_the_players_own_save_promises_what_it_cannot_do() -> voi
 		if StringName(str((block["fix_target"] as Dictionary)["kind"])) \
 				!= RequirementFormatter.FIX_NONE:
 			doors += 1
-			assert_true((block["ground_blockers"] as Array).is_empty(),
+			assert_true(_ground_blockers(sim, String(sim_id)).is_empty(),
 					"%s offers a door onto a lot that ground also holds" % sim_id)
 	assert_eq(named, 7, "seven of the ten name a neighbour")
 	assert_eq(doors, 0,
@@ -725,11 +722,24 @@ func test_no_lot_row_on_the_players_own_save_promises_what_it_cannot_do() -> voi
 		var neighbour := String(block.get("blocked_by", ""))
 		if neighbour == "":
 			continue
-		assert_eq(String(block["blocked_by_state"]), "destroyed", "%s's blocker" % sim_id)
+		assert_eq(String((sim.buildings[neighbour] as Building).state), "destroyed",
+				"%s's blocker is a ruin" % sim_id)
 		assert_false(bool(sim.cmd_demolish_building(neighbour, true)["ok"]),
 				"the demolition the first cut quoted refuses %s" % neighbour)
 		assert_true(bool(sim.cmd_salvage_building(neighbour, true)["ok"]),
 				"the salvage takes it")
+
+
+## The blockers on a lot that are NOT buildings — road, water, an occupied tile,
+## undeveloped land. Derived from the lock rather than published as a view-model
+## key: the panel draws neither, and a field nothing reads is the shape this wave
+## is named after.
+static func _ground_blockers(sim: CitySim, sim_id: String) -> Array:
+	var out: Array = []
+	for entry in (sim.lot_lock(sim_id).get("blockers", []) as Array):
+		if not sim.buildings.has(String(entry)):
+			out.append(String(entry))
+	return out
 
 
 ## The fixture, copied into this process's own `user://` and loaded through the

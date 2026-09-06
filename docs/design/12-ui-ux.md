@@ -490,8 +490,13 @@ the real S5 and asserts the button carries the neighbour's id (A91-D-150).
 `BuildController.building_view()` gains `lot` (the reservation) beside the
 existing `footprint` (now explicitly the BUILT extent), plus `lot_block` — the
 plain-data block `BuildingPanel._render_lot` binds and computes nothing from. It
-carries `free_verb` (`"demolish"`, `"salvage"` or `""`), `blocked_by_state` and
-`ground_blockers` so a test can assert the row and the verb agree. Eight strings:
+carries `free_verb` (`"demolish"`, `"salvage"` or `""`) on every drawn row, which
+the panel spends on the button's tooltip — a target's accessible name (A15) that
+now says what pressing it leads to (`SALVAGE P-047`) instead of only which
+building. Nothing else was added to the block: *which* ground is in the way and
+*what state* the neighbour is in are both answers `CitySim.lot_lock` already
+gives, and a view-model field nothing draws is the shape this wave is named
+after. Eight strings:
 `ui_building_lot_title`, `ui_building_lot_reserved`, `ui_building_lot_locked`,
 `ui_building_lot_locked_salvage`, `ui_building_lot_locked_partial`,
 `ui_building_lot_locked_stuck`, `ui_building_lot_locked_ground`,

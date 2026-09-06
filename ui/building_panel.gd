@@ -1411,9 +1411,15 @@ func _render_lot(block: Dictionary) -> void:
 	if StringName(str(fix_target.get("kind", RequirementFormatter.FIX_NONE))) \
 			== RequirementFormatter.FIX_NONE:
 		return
+	# The tooltip is this target's accessible NAME (A15), so it says what pressing
+	# it leads to and not merely which building: `SALVAGE P-047` on a ruin,
+	# `DEMOLISH HSE-014` on something standing. `free_verb` is the row's own
+	# answer to which verb it quoted — the panel computes nothing.
+	var verb_key := "ui_building_salvage" if String(block.get("free_verb", "")) == "salvage" \
+			else "ui_building_demolish"
 	var button := UIWidgets.button("LotFix",
 			_text("ui_building_fix_this", "Fix this →"),
-			str(block.get("blocked_by", "")),
+			"%s %s" % [_text(verb_key, verb_key), str(block.get("blocked_by", ""))],
 			Vector2(_touch_min * 2.0, _touch_min), &"GhostButton")
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.pressed.connect(func() -> void: fix_requested.emit(fix_target))
