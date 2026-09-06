@@ -13505,9 +13505,10 @@ and measure the two together.**
 
 ### 69.7 What the suite said
 
-`tools/run_suite.sh` on this branch: **158 files, 2,910 tests, 596,841 asserts,
-failed 0, silent 0.** (2,888 → 2,910 is this wave's twenty-two new tests, all in
-`tests/test_water_chain.gd`.) **No gate is re-fitted and no bound moves** — gate
+`tools/run_suite.sh` on this branch: **158 files, 2,921 tests, 597,422 asserts,
+failed 0, silent 0, `ALL TESTS PASSED`.** (2,888 → 2,910 is this wave's
+twenty-two new tests and 2,910 → 2,921 the fix pass's eleven, all in
+`tests/test_water_chain.gd` — 33 tests and 211 asserts in that one file.) **No gate is re-fitted and no bound moves** — gate
 21's capstone cell, which §67.12 turned green, is still green with the water
 system supplying a third more on the arc it measures, and every gate whose
 assertion reads `sim.water` passes at its published bound.
