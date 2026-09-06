@@ -58,12 +58,12 @@ extends SceneTree
 ## It is a MEASURING instrument (constitution §3): it boots the real `CitySim`,
 ## owns no balance constant, and is never imported by `sim/`.
 
-## `data/time.json.clock.real_seconds_per_game_minute` at 1× speed. Restated
-## here as a PRESENTATION factor only — this tool prices no rule, and the file
-## stays the authority (asserted in `_check_real_seconds`).
 ## RR-239's one site search, shared (Wave 29 fix).
 const SiteSearch := preload("res://tools/site_search.gd")
 
+## `data/time.json.clock.real_seconds_per_game_minute` at 1× speed. Restated
+## here as a PRESENTATION factor only — this tool prices no rule, and the file
+## stays the authority (asserted in `_check_real_seconds`).
 const REAL_SECONDS_PER_GAME_MINUTE := 1.0
 const TIME_PATH := "res://data/time.json"
 

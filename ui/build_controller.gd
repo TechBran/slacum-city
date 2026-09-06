@@ -2151,6 +2151,11 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 		"built": built,
 		"lot_text": "%d×%d" % [lot.x, lot.y],
 		"built_text": "%d×%d" % [built.x, built.y],
+		# The verb that would free this ground, for a reader that wants to know
+		# WHICH one was quoted: `"demolish"`, `"salvage"`, or empty where no verb
+		# is offered. Always present on a drawn row, so no consumer has to guess
+		# whether the key exists.
+		"free_verb": "",
 		"fix_target": {"kind": RequirementFormatter.FIX_NONE, "id": "", "params": {}},
 	}
 	if lock.is_empty():
@@ -2189,7 +2194,7 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 			String(other.archetype), String(other.variant))
 	out["blocked_by_state"] = String(other.state)
 	# **WHICH VERB CLEARS IT IS THE NEIGHBOUR'S OWN STATE'S BUSINESS** (Wave 29
-	# fix, doc 93 §BE-4a). The first cut quoted `cmd_demolish_building`
+	# fix, doc 93 §BE5a, report 98 §74b RR-240). The first cut quoted `cmd_demolish_building`
 	# unconditionally and never read the quote's `ok`, and the city that found it
 	# was the player's own: 77 of `tests/fixtures/player_save_0903`'s 89
 	# buildings are `destroyed`, so all seven lot-locked stores whose blocker is
@@ -2216,7 +2221,6 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 	# offers a remedy which cannot work is the same defect as the row that offers
 	# a verb which refuses.
 	if not ground.is_empty():
-		out["free_verb"] = ""
 		out["text_key"] = "ui_building_lot_locked_partial"
 		out["params"] = params
 		return out
@@ -2228,7 +2232,6 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 		# No verb clears it in this state. The lowercase state text is
 		# deliberate: it lands mid-sentence ("…while it is on fire"), and the
 		# table's own entry is capitalised for a badge.
-		out["free_verb"] = ""
 		params["state"] = _t("ui_building_state_%s" % String(other.state), {},
 				String(other.state).replace("_", " ")).to_lower()
 		out["text_key"] = "ui_building_lot_locked_stuck"

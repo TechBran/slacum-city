@@ -44,11 +44,11 @@ extends SceneTree
 ## seed + same strategy + same mode ⇒ byte-identical sample stream (asserted by
 ## `tests/test_playtest_harness.gd`).
 
-## 2 — pass 2 added the maintenance/land/grid/tax columns to `samples` and
-## `summary`. `tools/playtest_report.py` reads the version and refuses older files.
 ## RR-239's one site search, shared (Wave 29 fix).
 const SiteSearch := preload("res://tools/site_search.gd")
 
+## 2 — pass 2 added the maintenance/land/grid/tax columns to `samples` and
+## `summary`. `tools/playtest_report.py` reads the version and refuses older files.
 const SCHEMA_VERSION := 2
 const DEFAULT_DAYS := 21
 const DEFAULT_SEEDS: Array[int] = [1337, 4242, 9001]
