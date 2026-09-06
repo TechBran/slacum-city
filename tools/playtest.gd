@@ -46,6 +46,9 @@ extends SceneTree
 
 ## 2 — pass 2 added the maintenance/land/grid/tax columns to `samples` and
 ## `summary`. `tools/playtest_report.py` reads the version and refuses older files.
+## RR-239's one site search, shared (Wave 29 fix).
+const SiteSearch := preload("res://tools/site_search.gd")
+
 const SCHEMA_VERSION := 2
 const DEFAULT_DAYS := 21
 const DEFAULT_SEEDS: Array[int] = [1337, 4242, 9001]
@@ -437,8 +440,11 @@ class Api extends RefCounted:
 	## One seam, because `place()` and `unserved_footprint()` both take their size
 	## from here: the harness now looks for exactly the ground the command will
 	## reserve.
+	## One seam for the whole project since the Wave-29 fix pass: four more
+	## copies of this sentence were still asking for the level-1 footprint
+	## (`tools/site_search.gd`).
 	func footprint(archetype: String) -> Vector2i:
-		return sim.lot_for(archetype)
+		return SiteSearch.reservation(sim, archetype)
 
 	## Sorted archetype ids the player may build right now, filtered by category
 	## set and by the build sheet's own `locked` rule (min_city_level). NOTE the

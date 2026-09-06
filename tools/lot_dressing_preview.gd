@@ -20,8 +20,11 @@ extends SceneTree
 ##       -s res://tools/lot_dressing_preview.gd -- --out=DIR [options]
 ##
 ##   --out=DIR          where the PNGs go (`<archetype>_L<n>.png`)
-##   --archetypes=a,b   which growers to walk
-##                      (default store,construction_yard,power_facility)
+##   --archetypes=a,b   which growers to walk. A doc-05 water grower is named
+##                      `water_facility:<variant>` — its ladder is doc 05's, per
+##                      variant, not doc 02's `water_facility` column
+##                      (default store,construction_yard,power_facility,
+##                      water_facility:treatment,water_facility:tank)
 ##   --hour=H           hour of day, 0..24                     (default 13)
 ##   --resolution=WxH   render size                     (default 1280x720)
 ##   --dist=M           camera distance from the lot centre    (default 30)
@@ -32,8 +35,21 @@ extends SceneTree
 const RENDER_JSON := "res://data/render.json"
 const MESH_MANIFEST := "res://game/meshes/generated/manifest.json"
 const TILE_M := 8.0
-## The growers, in the order the report lists them.
-const DEFAULT_ARCHETYPES := ["store", "construction_yard", "power_facility"]
+## **All FIVE growers, in the order the report lists them** (Wave 29 fix).
+##
+## The first cut shipped three, and the two it left out are the two the wave had
+## to INVENT a rule for: doc 02's `water_facility` column is the pump reference
+## row, and doc 05's own per-variant table grows `treatment` (2×2 → 3×3 at L2)
+## and `tank` (2×2 → 3×3 at L3) — A91-D-156, which this lane filed itself. So the
+## deck said "every rung of every grower" and photographed three fifths of them,
+## including none of the archetype whose lot rule was new. The founding city's
+## own `WTR-2` is a tank.
+const DEFAULT_ARCHETYPES := ["store", "construction_yard", "power_facility",
+		"water_facility:treatment", "water_facility:tank"]
+## How long to let a shell this harness had to PLACE finish building. Doc 02's
+## water shell is a 12-hour job; 48 game-hours is four times that and costs a
+## preview nothing.
+const BUILD_OUT_HOURS := 48.0
 
 var _opts: Dictionary = {}
 var _render_data: Dictionary = {}
@@ -111,26 +127,111 @@ func _stage(shot: Dictionary) -> void:
 	_aim(sim_id)
 
 
+## One walk per subject, and **only for a subject that actually grows**.
+##
+## `BuildingCatalog.grows()` is the reader here (Wave 29 fix): the set of growers
+## is doc 02's table plus doc 05's per-variant one, and asking the catalog is the
+## only way this list cannot drift from the rule. A named archetype that does not
+## grow is skipped out loud rather than photographed — its lot IS its footprint,
+## there is no apron, and sixteen identical shots of a house would say nothing.
 func _plan() -> void:
 	var dir := String(_opts["out"])
-	for archetype in (_opts["archetypes"] as Array):
-		var sim_id := _subject(String(archetype))
-		if sim_id == "":
-			printerr("lot_dressing_preview: no %s in the founding city" % archetype)
+	for spec in (_opts["archetypes"] as Array):
+		var archetype := _archetype_of(String(spec))
+		var variant := _variant_of(String(spec))
+		if not _grows(archetype, variant):
+			printerr("lot_dressing_preview: %s does not grow — nothing to dress" % spec)
 			continue
-		for level in range(1, _sim.archetype_top_level(String(archetype)) + 1):
-			_shots.append({"archetype": String(archetype), "level": level,
+		var sim_id := _subject(archetype, variant)
+		if sim_id == "":
+			printerr("lot_dressing_preview: no %s in the founding city, and none "
+					% spec + "could be placed")
+			continue
+		for level in range(1, _top_level(archetype, variant) + 1):
+			_shots.append({"archetype": String(spec), "level": level,
 					"sim_id": sim_id,
-					"path": dir.path_join("%s_L%d.png" % [archetype, level])})
+					"path": dir.path_join("%s_L%d.png"
+							% [String(spec).replace(":", "_"), level])})
+
+
+## `store` → `store`; `water_facility:tank` → `water_facility`.
+static func _archetype_of(spec: String) -> String:
+	return spec.split(":")[0]
+
+
+## …and the variant half, empty for a doc-02 archetype.
+static func _variant_of(spec: String) -> String:
+	var parts := spec.split(":")
+	return parts[1] if parts.size() > 1 else ""
+
+
+## Does this subject's footprint grow at all, under the ceiling it can REACH?
+## Doc 02's answer comes from the catalog; doc 05's comes from its own per-variant
+## table, because doc 02's `water_facility` column is the pump reference row and
+## says `no` for both of the water growers (A91-D-156).
+func _grows(archetype: String, variant: String) -> bool:
+	if variant == "":
+		return _sim.catalog.grows(archetype, _sim.archetype_top_level(archetype))
+	return _sim.water_lot_for(variant) != _first_water_footprint(variant)
+
+
+func _first_water_footprint(variant: String) -> Vector2i:
+	var rules := _sim.water.data.placeable_rules(variant)
+	return _sim.water.data.footprint_of(StringName(variant), 1,
+			String(rules.get("subtype", "")))
+
+
+func _top_level(archetype: String, variant: String) -> int:
+	if variant == "":
+		return _sim.archetype_top_level(archetype)
+	return _sim.water_variant_top_level(variant)
 
 
 ## The founding city's own instance of this archetype — a real building on real
 ## ground, not a synthetic one dropped in an empty block.
-func _subject(archetype: String) -> String:
+##
+## **Except where the founding city has none.** It ships two water shells, a pump
+## (`WTR-1`) and a tank (`WTR-2`), and no `treatment` shell at all: doc 09 §2.9.6
+## puts the treatment NODE inside `WTR-1`, whose own shell variant is `pump`. So
+## a treatment subject is PLACED, through the real `cmd_place_water_component`
+## and built out through the real construction queue — the same ground, the same
+## verb and the same 3×3 reservation a player would get.
+func _subject(archetype: String, variant: String) -> String:
 	for sim_id in _sim.buildings:
 		var b: Building = _sim.buildings[sim_id]
-		if String(b.archetype) == archetype:
-			return String(sim_id)
+		if String(b.archetype) != archetype:
+			continue
+		if variant != "" and String(b.variant) != variant:
+			continue
+		return String(sim_id)
+	if variant == "":
+		return ""
+	return _place_water_subject(variant)
+
+
+func _place_water_subject(variant: String) -> String:
+	# The founding city opens with $25,000 and doc 03 prices a treatment plant
+	# above that, so every otherwise-legal site answers `E_FUNDS`. The grant is
+	# `measure_envelope.gd`'s: an instrument may buy what it has to photograph,
+	# and it may not author what anything costs.
+	_sim.treasury.credit(5_000_000, &"preview_grant")
+	for z in range(32, 80):
+		for x in range(32, 80):
+			var tile := Vector2i(x, z)
+			if not bool(_sim.cmd_place_water_component(variant, tile, 1, true)
+					.get("ok", false)):
+				continue
+			var placed := _sim.cmd_place_water_component(variant, tile, 1)
+			if not bool(placed.get("ok", false)):
+				continue
+			var sim_id := String((placed["payload"] as Dictionary).get("sim_id", ""))
+			# Through the real queue, not by writing `state`: a shell forced
+			# active by hand would be the one thing in this picture that a player
+			# could not produce.
+			_sim.advance_hours(BUILD_OUT_HOURS)
+			print("lot_dressing_preview: placed %s %s at %s (the founding city "
+					% [variant, sim_id, str(tile)] + "ships none)")
+			return sim_id
 	return ""
 
 

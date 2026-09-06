@@ -53,6 +53,9 @@ extends SceneTree
 ##       | tee /tmp/soak.log
 ##   grep -qE "SCRIPT ERROR|Parse Error|Cannot call method" /tmp/soak.log && exit 1
 
+## RR-239's one site search, shared (Wave 29 fix).
+const SiteSearch := preload("res://tools/site_search.gd")
+
 const DEFAULT_HOURS := 2.0
 const DEFAULT_SEED := 20250819
 const DEFAULT_SIM_SEED := 1337
@@ -364,9 +367,11 @@ func _play_one(verb: String) -> void:
 	match verb:
 		"place_building":
 			var archetype := _archetypes[_rng.randi_range(0, _archetypes.size() - 1)]
-			var foot: Array = _sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-			var size := Vector2i(int(foot[0]), int(foot[1]))
-			var tile := _served_site(size)
+			# The LOT the command reserves, not the first day's footprint (Wave
+			# 29 fix, RR-239): at the level-1 size the soak found sites
+			# `cmd_place_building` refuses, so `E_FOOTPRINT` entered the verb mix
+			# as a *result* and the soak's own place/refuse ratio drifted.
+			var tile := _served_site(SiteSearch.reservation(_sim, archetype))
 			if tile.x < 0:
 				return _skip(verb, "no served site")
 			result = _sim.cmd_place_building(archetype, tile)

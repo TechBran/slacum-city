@@ -3424,12 +3424,16 @@ tier.
 
 **It draws at GRADE, not at the block's elevation.** Doc 09 §2.2 gives each block
 an integer elevation and `TileGrid.elev_m`'s own docstring says *"elevation is a
-per-block integer the render layer applies"*. **It does not.** At this fork
-`grep -rn 'elev_m(' game/ ui/ tools/` finds **no consumer at all**, and every
-building, road and prop in the project is drawn at `y = 0`. The first cut of this
-layer honoured the elevation and its aprons floated 12 m above the two raised
-blocks' own buildings — which showed up in the preview as no apron at all. One
-row in `rows_from_sim` is where a future elevation pass arrives.
+per-block integer the render layer applies"*. **The RENDER layer does not**:
+`grep -rn 'elev_m(' game/ ui/` finds no consumer at all, and every building, road
+and prop in the project is drawn at `y = 0`. **The SIM does** — doc 05's pressure
+model reads it on every tile of every zone (`sim/water/water_topology.gd:407`,
+wired by `water_boot.gd:21`), so elevation is live arithmetic and `elev_m()` is
+not a dead accessor; A91-D-155 carries the correction and the reproduction. The
+first cut of this layer honoured the elevation and its aprons floated 12 m above
+the two raised blocks' own buildings — which showed up in the preview as no apron
+at all. One row in `rows_from_sim` is where a future elevation pass arrives, and
+what arrives there is the render half only.
 
 **The per-instance colour needs a channel to land in, and that channel is
 LINEAR.** Two separate faults, both of which the first cut shipped:

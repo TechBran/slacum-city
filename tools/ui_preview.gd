@@ -35,6 +35,11 @@ extends Node
 ## `tests/test_ui_audit.gd` runs the frame-free half of the same checks inside the
 ## suite; this is the pixel-accurate pass, and the one that can take a picture.
 
+## RR-239's one site search, shared (Wave 29 fix). Four instruments and one test
+## each sized their own scan to the level-1 footprint and then asked a command
+## that reserves the LOT.
+const SiteSearch := preload("res://tools/site_search.gd")
+
 const SHOT_AT_S := 0.6
 const DEFAULT_SIZE := Vector2i(880, 400)
 
@@ -1735,18 +1740,14 @@ func _first_building() -> String:
 	return str(keys[0]) if not keys.is_empty() else ""
 
 
-## A buildable, vacant, power-serviceable lot of this archetype's footprint
-## inside the core — the same scan `tests/test_city_commands.gd` uses, so the
-## preview places where a player could.
+## A buildable, vacant, power-serviceable site for this archetype inside the
+## core — the same scan `tests/test_city_commands.gd` uses, so the preview places
+## where a player could. Sized to the LOT the command reserves (Wave 29 fix,
+## RR-239): at the level-1 footprint this found sites `cmd_place_building`
+## refuses, and a preview state that cannot place is a preview state that
+## photographs the wrong screen.
 func _serviceable_lot(archetype: String) -> Vector2i:
-	var foot: Array = _sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-	var size := Vector2i(int(foot[0]), int(foot[1]))
-	for z in range(32, 80):
-		for x in range(32, 80):
-			var origin := Vector2i(x, z)
-			if _sim.world.grid.can_place(origin, size) and _sim.grid.would_serve(origin):
-				return origin
-	return Vector2i(-1, -1)
+	return SiteSearch.serviceable_site(_sim, archetype)
 
 
 ## Burn TWO buildings down through doc 02 §2.12's own transitions and answer the
@@ -1849,6 +1850,48 @@ func _report(screen: String) -> void:
 	_findings += findings.size()
 	print(UIAudit.format(findings, "── %s @ %s" % [screen,
 			str(get_window().size if get_window() != null else DEFAULT_SIZE)]))
+	_fold_report(screen)
+
+
+## **The one check `UIAudit` deliberately cannot make** (Wave 29 fix).
+##
+## `UIAudit`'s `offscreen` finding exempts anything inside a `ScrollContainer`,
+## and rightly: content in a scroller is MEANT to run past the viewport, and
+## flagging all of it would bury every real finding. But that exemption is
+## exactly what let the LOT row ship at y = 943 in a 915-tall viewport and still
+## be called clean — the sweep photographed a screen whose only door was 270 px
+## below the fold and reported nothing.
+##
+## So a screen may nominate controls that must be ON the first screenful even
+## though they live in a scroller. This is a deliberately tiny list: the general
+## rule stays "scrolling is fine", and a row is added only where a state exists
+## precisely to put a specific control in front of the player. Findings count
+## into `_findings`, so `--audit --strict` exits non-zero on a regression.
+const MUST_BE_ON_SCREEN := {
+	"building_lot": ["LotSection", "LotSection/LotTitle", "LotSection/LotBody"],
+	"building_lot_locked": ["LotSection", "LotSection/LotTitle",
+			"LotSection/LotBody", "LotSection/LotFix"],
+}
+
+
+func _fold_report(screen: String) -> void:
+	var wanted: Array = MUST_BE_ON_SCREEN.get(screen, [])
+	if wanted.is_empty() or _building_panel == null:
+		return
+	var viewport := get_viewport().get_visible_rect()
+	for suffix: String in wanted:
+		var control := _building_panel.get_node_or_null(
+				"%s/%s" % [_building_panel.body_path(), suffix]) as Control
+		if control == null or not control.is_visible_in_tree():
+			print("  below_the_fold  %-40s NOT DRAWN on %s" % [suffix, screen])
+			_findings += 1
+			continue
+		var rect := control.get_global_rect()
+		if viewport.encloses(rect):
+			continue
+		_findings += 1
+		print("  below_the_fold  %-40s rect %s outside viewport %s"
+				% [suffix, str(rect), str(viewport)])
 
 
 ## `--rects=`: what a named part of the tree actually measured. A finding names

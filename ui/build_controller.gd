@@ -2111,12 +2111,26 @@ func _occupants_text(sim_id: String, b: Building) -> String:
 ##     and what is standing on it, so a player looking at a one-tile store on a
 ##     2×2 pad can see the pad is not a mistake.
 ##   * it is LOT-LOCKED — it was standing when the rule arrived and the tiles it
-##     needed were already taken. The row says the level it can still reach, names
-##     the neighbour on the missing ground, and routes `FIX_BUILDING` to it with
-##     that neighbour's own demolition quote attached, because *"what freeing it
-##     costs"* is the half of the sentence that makes it actionable.
+##     needed were already taken. The row says the level it can still reach and
+##     names what is on the missing ground.
 ##
-## Never a fourth state where a lot-locked building is silently short: the whole
+## **The locked state is four states, and only one of them has a button** (Wave
+## 29 fix). The ground grows all at once or not at all, so a door is drawn only
+## where pressing it actually frees the lot:
+##
+##   * a BUILDING is the only thing on the missing ground, and a verb takes it —
+##     the row quotes that verb (`cmd_demolish_building` for anything standing,
+##     `cmd_salvage_building` for a ruin) and routes `FIX_BUILDING` at it,
+##     because *"what freeing it pays"* is the half of the sentence that makes it
+##     actionable;
+##   * a building is the only blocker but NO verb takes it — it is on fire — the
+##     row says so and draws nothing to press;
+##   * a building AND ground the player cannot clear (road, water, undeveloped,
+##     an occupied tile) — clearing the building would move nothing, so the row
+##     says that instead of offering it;
+##   * ground only — the original `ui_building_lot_locked_ground`.
+##
+## Never a fifth state where a lot-locked building is silently short: the whole
 ## reason this block exists is that a reservation the player cannot see is a
 ## reservation they will read as a bug.
 func _lot_block(sim_id: String, b: Building) -> Dictionary:
@@ -2154,27 +2168,84 @@ func _lot_block(sim_id: String, b: Building) -> Dictionary:
 	# blocker list is already in a deterministic order, so this picks the same
 	# neighbour on every machine.
 	var neighbour := ""
+	var ground: Array = []
 	for entry in (lock["blockers"] as Array):
 		if sim.buildings.has(String(entry)):
-			neighbour = String(entry)
-			break
+			if neighbour == "":
+				neighbour = String(entry)
+		else:
+			ground.append(String(entry))
+	out["ground_blockers"] = ground
+	var params := {"held": out["held_text"], "lot": out["lot_text"],
+			"level": int(lock["reachable_level"]), "top": int(lock["top_level"])}
 	if neighbour == "":
 		out["text_key"] = "ui_building_lot_locked_ground"
-		out["params"] = {"held": out["held_text"], "lot": out["lot_text"],
-				"level": int(lock["reachable_level"]), "top": int(lock["top_level"])}
+		out["params"] = params
 		return out
-	var quote := sim.cmd_demolish_building(neighbour, true)
-	var refund := int((quote.get("payload", {}) as Dictionary).get("refund", 0))
+	params["neighbour"] = neighbour
 	var other: Building = sim.buildings[neighbour]
 	out["blocked_by"] = neighbour
 	out["blocked_by_name_key"] = BuildController.card_name_key(
 			String(other.archetype), String(other.variant))
-	out["free_refund"] = refund
-	out["free_refund_text"] = HudModel.money(refund)
-	out["text_key"] = "ui_building_lot_locked"
-	out["params"] = {"held": out["held_text"], "lot": out["lot_text"],
-			"level": int(lock["reachable_level"]), "top": int(lock["top_level"]),
-			"neighbour": neighbour, "refund": out["free_refund_text"]}
+	out["blocked_by_state"] = String(other.state)
+	# **WHICH VERB CLEARS IT IS THE NEIGHBOUR'S OWN STATE'S BUSINESS** (Wave 29
+	# fix, doc 93 §BE-4a). The first cut quoted `cmd_demolish_building`
+	# unconditionally and never read the quote's `ok`, and the city that found it
+	# was the player's own: 77 of `tests/fixtures/player_save_0903`'s 89
+	# buildings are `destroyed`, so all seven lot-locked stores whose blocker is
+	# a building named a RUIN. Demolition refuses a ruin (`E_STATE` — that is
+	# `cmd_salvage_building`'s job, doc 02 §2.12), so the row read "clearing it
+	# refunds $0" and armed a button behind a verb that answers no. Salvage
+	# succeeds on every one of them and pays $390 — $27,000 for the destroyed
+	# data centre. A wrong number in front of a verb that refuses is the defect
+	# this project is named after, one screen further in.
+	#
+	# So: the ruin's verb for a ruin, the demolition for anything standing, and
+	# the QUOTE's own `ok` decides whether there is a door at all. `on_fire` is
+	# the one state neither verb takes — the row says so and draws no button
+	# rather than inventing a third verb.
+	#
+	# **And a door only exists where the door OPENS something.** The ground grows
+	# all at once or not at all — `migrate_lots` asks `TileGrid.can_expand` for
+	# the WHOLE lot rectangle, which refuses if a single tile of it is taken — so
+	# clearing one of two blockers moves nothing. Measured on the player's save:
+	# every one of those seven stores is blocked by a ruin AND by the kerb
+	# (`blockers = [E_ROAD, P-047]`), and salvaging the ruin leaves the shop at
+	# 1×1 of its 2×2 with its `reachable_level` still 2. So a lot with ground the
+	# player cannot clear says exactly that and draws no button: the row that
+	# offers a remedy which cannot work is the same defect as the row that offers
+	# a verb which refuses.
+	if not ground.is_empty():
+		out["free_verb"] = ""
+		out["text_key"] = "ui_building_lot_locked_partial"
+		out["params"] = params
+		return out
+	var salvaging := other.state == &"destroyed"
+	var quote := sim.cmd_salvage_building(neighbour, true) if salvaging \
+			else sim.cmd_demolish_building(neighbour, true)
+	var payload: Dictionary = quote.get("payload", {})
+	if not bool(quote.get("ok", false)):
+		# No verb clears it in this state. The lowercase state text is
+		# deliberate: it lands mid-sentence ("…while it is on fire"), and the
+		# table's own entry is capitalised for a badge.
+		out["free_verb"] = ""
+		params["state"] = _t("ui_building_state_%s" % String(other.state), {},
+				String(other.state).replace("_", " ")).to_lower()
+		out["text_key"] = "ui_building_lot_locked_stuck"
+		out["params"] = params
+		return out
+	# `cmd_salvage_building` pays `value` and `cmd_demolish_building` pays
+	# `refund`; both are "what freeing this ground puts in the treasury", which
+	# is the half of the sentence that makes the row actionable.
+	var pays := int(payload.get("value", 0)) if salvaging \
+			else int(payload.get("refund", 0))
+	out["free_verb"] = "salvage" if salvaging else "demolish"
+	out["free_refund"] = pays
+	out["free_refund_text"] = HudModel.money(pays)
+	params["refund"] = out["free_refund_text"]
+	out["text_key"] = "ui_building_lot_locked_salvage" if salvaging \
+			else "ui_building_lot_locked"
+	out["params"] = params
 	out["fix_target"] = {"kind": RequirementFormatter.FIX_BUILDING, "id": neighbour,
 			"params": {"sim_id": neighbour}}
 	return out

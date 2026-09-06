@@ -65,10 +65,20 @@ static func building_view(sim: CitySim, sim_id: String,
 	var b: Building = sim.buildings.get(sim_id)
 	if b == null:
 		return {}
-	# PA-100: the public accessor, not `sim._building_records[...]`. The `[]`
-	# form raised on any id the roster did not carry — inside a `_process` frame,
-	# for a building the renderer had already been told about.
-	var size: Vector2i = sim.building_record(sim_id).get("footprint", Vector2i.ONE)
+	# **The BUILT extent, not the reservation** (Wave 29 fix, doc 02 §2.3a).
+	# `record["footprint"]` is the LOT now — the ground held for the final form —
+	# and a service drop is landed on a WALL, not on a property line.
+	# `PowerInfraModel.service_point` clamps the drop into this rectangle and
+	# pushes it back out, so a lot-sized rectangle put a young store's weatherhead
+	# 4 m clear of the shop, hanging in mid-air over its own empty forecourt.
+	# Measured on a fresh level-1 store: lot centre (344, 0, 272) / 16×16 m
+	# against a mesh that is 8 m wide centred on (340, 0, 268).
+	#
+	# PA-100 still holds for the id: `built_of_building` takes the Building the
+	# roster handed us, and never `sim._building_records[...]`, whose `[]` form
+	# raised on any id the roster did not carry — inside a `_process` frame, for a
+	# building the renderer had already been told about.
+	var size := sim.built_of_building(b)
 	var center := Vector3(b.origin.x * tile_m + size.x * tile_m * 0.5, 0.0,
 			b.origin.y * tile_m + size.y * tile_m * 0.5)
 	var height := DEFAULT_HEIGHT_M

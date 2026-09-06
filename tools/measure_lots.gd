@@ -138,15 +138,21 @@ func _boot(city: String) -> CitySim:
 
 ## Which archetypes actually grow, measured to the ceiling each can REACH — not
 ## to the last row of doc 02's table (doc 93 §BE3).
+##
+## The `grows` column asks `BuildingCatalog.grows()` rather than comparing the
+## two extents here (Wave 29 fix): the catalog owns "does this ladder change
+## footprint", the comparison was a second spelling of it, and a public accessor
+## with no caller is the A91-D-19 shape this whole wave is named after.
 func _ladders(sim: CitySim) -> void:
 	print("LADDERS (lot is measured to the reachable ceiling)")
 	print("  archetype            L1     lot    top   grows")
 	for archetype in GROWERS:
 		var first := sim.built_for(archetype, 1)
 		var lot := sim.lot_for(archetype)
+		var top := sim.archetype_top_level(archetype)
 		print("  %-20s %dx%d    %dx%d    L%d    %s" % [archetype, first.x, first.y,
-				lot.x, lot.y, sim.archetype_top_level(archetype),
-				"YES" if lot != first else "no"])
+				lot.x, lot.y, top,
+				"YES" if sim.catalog.grows(archetype, top) else "no"])
 	print("  -- doc 05's per-variant water ladders (doc 02's column is the PUMP row) --")
 	for variant in ["source", "treatment", "pump", "tank"]:
 		var rules := sim.water.data.placeable_rules(variant)

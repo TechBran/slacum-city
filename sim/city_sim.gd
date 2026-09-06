@@ -3078,6 +3078,17 @@ func _lot_blockers(sim_id: String, origin: Vector2i, held: Vector2i,
 				if other != sim_id:
 					_note_lot_blocker(out, seen, StringName(other))
 				continue
+			# **Free ground is not a blocker** (Wave 29 fix). The first cut had
+			# no arm for "buildable and empty", so every free tile of a lot fell
+			# through to `E_NOT_DEVELOPED` and the list said the map was in the
+			# way when nothing was. `TileGrid.can_expand`'s own predicate, spelled
+			# once here so the two answers cannot disagree: this is precisely the
+			# tile it would accept.
+			var flags := world.grid.flags_at(x, z)
+			if (flags & TileGrid.FLAG_BUILDABLE) != 0 and (flags & (TileGrid.FLAG_ROAD
+					| TileGrid.FLAG_WATER | TileGrid.FLAG_BLOCKED
+					| TileGrid.FLAG_OCCUPIED)) == 0:
+				continue
 			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
 				_note_lot_blocker(out, seen, &"E_ROAD")
 			elif world.grid.has_flag(x, z, TileGrid.FLAG_WATER):

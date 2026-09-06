@@ -476,5 +476,279 @@ func test_every_lot_string_the_panel_can_ask_for_exists() -> void:
 	var table: Dictionary = StarterCityLoader.read_json("res://data/strings.en.json")
 	for key in ["ui_building_lot_title", "ui_building_lot_reserved",
 			"ui_building_lot_locked", "ui_building_lot_locked_ground",
-			"ui_building_lot_locked_badge"]:
+			"ui_building_lot_locked_badge", "ui_building_lot_locked_salvage",
+			"ui_building_lot_locked_partial", "ui_building_lot_locked_stuck"]:
 		assert_true(table.has(key), "data/strings.en.json is missing %s" % key)
+
+
+## **The row has to be ON THE SCREEN** (Wave 29 fix). The first two cuts put this
+## section at the bottom of the panel body and `ui_preview --screen=
+## building_lot_locked --size=412x915 --rects=Lot` laid it out at y = 943, with
+## its `Fix this →` at y = 1033, in a viewport 915 px tall: the player had to
+## scroll ~270 px past the whole panel to reach the one control that decides
+## whether the building has a future, and the strict audit called the screen
+## clean because content inside a scroller is exempt from `offscreen`.
+##
+## A headless run never flushes a `Container`'s queued sort, so `size` is zero
+## everywhere and this cannot measure pixels — but `get_combined_minimum_size()`
+## is live, which is what `tests/test_ui_audit.gd` is built on. So the budget is
+## the arithmetic one: everything above the row, plus the row, has to fit the
+## scroller. `tools/ui_preview.gd`'s `MUST_BE_ON_SCREEN` is the pixel-accurate
+## companion and fails `--audit --strict`.
+func test_the_lot_row_fits_the_first_screenful_of_a_412x915_phone() -> void:
+	var sim := CitySim.boot_from_files()
+	var packed: PackedScene = load("res://game/ui/ui_root.tscn")
+	var root: UIRoot = packed.instantiate()
+	root.apply_content_scale = false
+	(Engine.get_main_loop() as SceneTree).root.add_child(root)
+	root.initialize()
+	var controller := BuildController.new(sim, RequirementFormatter.new(root.config))
+	var panel := root.get_node_or_null(
+			"SafeArea/PanelLayer/BuildingPanel") as BuildingPanel
+	panel.setup(root.config, controller)
+	_box_in_a_store(sim)
+	panel.show_building("STR-005")
+
+	var body := panel.get_node(panel.body_path()) as VBoxContainer
+	var section := body.get_node_or_null("LotSection") as Control
+	assert_true(section != null and section.visible, "the lot row is drawn")
+	var vitals := body.get_node_or_null("Vitals") as Control
+	assert_eq(section.get_index(), vitals.get_index() + 1,
+			"the LOT row sits directly under the vitals, above the checklist")
+
+	var separation := float(body.get_theme_constant(&"separation"))
+	var above := 0.0
+	for child in body.get_children():
+		var control := child as Control
+		if control == section:
+			break
+		if control == null or not control.visible:
+			continue
+		above += control.get_combined_minimum_size().y + separation
+	var bottom := above + section.get_combined_minimum_size().y
+	# The scroller's own height at 412×915, measured with
+	# `ui_preview --screen=building_lot_locked --size=412x915 --rects=BuildingPanel`:
+	# `Panel/Frame/Scroll` is P(116, 68) S(284, 719), the panel's verbs being
+	# pinned below it since PA-47.
+	assert_true(bottom <= 719.0,
+			"the lot row ends %d px into a 719 px scroller" % int(bottom))
+	(Engine.get_main_loop() as SceneTree).root.remove_child(root)
+	root.free()
+
+
+# ------------------------------------- the door, on the four states it can face
+
+## Box `STR-005` in with a house on the tile its lot wants, exactly as
+## `tools/ui_preview.gd` stages the lot-locked screen. The house is the ONLY
+## blocker — the other two tiles of the 2×2 stay free — which is the one shape
+## where clearing something actually frees the ground.
+static func _box_in_a_store(sim: CitySim) -> String:
+	var boxed: Building = sim.buildings["STR-005"]
+	var record: Dictionary = sim.building_record("STR-005")
+	var lot: Vector2i = record.get("footprint", Vector2i.ONE)
+	sim.world.grid.remove_building(boxed.id, boxed.origin, lot)
+	sim.world.grid.stamp_building(boxed.id, boxed.origin, Vector2i.ONE)
+	record["footprint"] = Vector2i.ONE
+	return String(sim.cmd_place_building("house",
+			boxed.origin + Vector2i(1, 0))["payload"]["sim_id"])
+
+
+## **The verb the row quotes is the verb the neighbour's STATE answers** (Wave 29
+## fix). The first cut quoted `cmd_demolish_building` unconditionally and never
+## read the quote's `ok`, so a RUIN on the missing ground produced "clearing it
+## refunds $0" over a verb that answers `E_STATE`.
+func test_a_ruined_neighbour_is_quoted_and_routed_as_a_SALVAGE() -> void:
+	var sim := CitySim.boot_from_files()
+	var controller := BuildController.new(sim, RequirementFormatter.load_from_files())
+	var blocker := _box_in_a_store(sim)
+
+	# Standing: the demolition, with its own refund.
+	var standing: Dictionary = controller.building_view("STR-005")["lot_block"]
+	assert_eq(String(standing["text_key"]), "ui_building_lot_locked")
+	assert_eq(String(standing["free_verb"]), "demolish")
+	assert_eq(int(standing["free_refund"]),
+			int((sim.cmd_demolish_building(blocker, true)["payload"] as Dictionary)["refund"]),
+			"the row quotes the verb it names, not a number of its own")
+
+	# …and the same neighbour as a RUIN: the other verb, the other number.
+	var other: Building = sim.buildings[blocker]
+	other.state = &"destroyed"
+	other.level_at_destruction = maxi(other.level, 1)
+	assert_false(bool(sim.cmd_demolish_building(blocker, true)["ok"]),
+			"a ruin refuses the demolition — this is the state that found the bug")
+	var quote := sim.cmd_salvage_building(blocker, true)
+	assert_true(bool(quote["ok"]), "…and takes the salvage")
+
+	var ruined: Dictionary = controller.building_view("STR-005")["lot_block"]
+	assert_eq(String(ruined["text_key"]), "ui_building_lot_locked_salvage")
+	assert_eq(String(ruined["free_verb"]), "salvage")
+	assert_eq(int(ruined["free_refund"]),
+			int((quote["payload"] as Dictionary)["value"]),
+			"the money on the row is the salvage's own value")
+	assert_true(int(ruined["free_refund"]) > 0, "and it is not the $0 the row used to read")
+	var target: Dictionary = ruined["fix_target"]
+	assert_eq(StringName(str(target["kind"])), RequirementFormatter.FIX_BUILDING)
+	assert_eq(String(target["id"]), blocker)
+
+	# **The door opens.** Buy the verb the row named and the ground comes back in
+	# the same call — which is what makes it a remedy rather than a label.
+	assert_true(bool(sim.cmd_salvage_building(blocker)["ok"]))
+	assert_eq(sim.building_record("STR-005").get("footprint"), Vector2i(2, 2),
+			"the store took its lot the moment the rubble left")
+	assert_true(sim.lot_lock("STR-005").is_empty(), "…and it is not lot-locked any more")
+	var freed: Dictionary = controller.building_view("STR-005")["lot_block"]
+	assert_false(bool(freed["locked"]))
+	assert_eq(String(freed["text_key"]), "ui_building_lot_reserved")
+
+
+## A BURNING neighbour takes neither verb. The row says so and arms nothing —
+## the quote's `ok` is what decides, so a state nobody thought of gets the honest
+## branch rather than a $0.
+func test_a_burning_neighbour_gets_a_sentence_and_no_button() -> void:
+	var sim := CitySim.boot_from_files()
+	var controller := BuildController.new(sim, RequirementFormatter.load_from_files())
+	var blocker := _box_in_a_store(sim)
+	(sim.buildings[blocker] as Building).state = &"on_fire"
+	assert_false(bool(sim.cmd_demolish_building(blocker, true)["ok"]))
+	assert_false(bool(sim.cmd_salvage_building(blocker, true)["ok"]))
+
+	var block: Dictionary = controller.building_view("STR-005")["lot_block"]
+	assert_eq(String(block["text_key"]), "ui_building_lot_locked_stuck")
+	assert_eq(String(block["free_verb"]), "")
+	assert_false(block.has("free_refund"), "no number, because there is no quote")
+	assert_eq(StringName(str((block["fix_target"] as Dictionary)["kind"])),
+			RequirementFormatter.FIX_NONE, "nothing to press")
+	assert_true(String(block["params"]["state"]) == "on fire",
+			"the sentence names the state, in the case a sentence wants")
+
+
+## **A lot grows all at once or not at all**, so a neighbour beside ground the
+## player cannot clear is not a door. `TileGrid.can_expand` refuses the whole
+## rectangle if one tile of it is taken, which is what makes this a rule and not
+## a preference.
+func test_a_neighbour_beside_unclearable_ground_is_not_offered_as_a_remedy() -> void:
+	var sim := CitySim.boot_from_files()
+	var controller := BuildController.new(sim, RequirementFormatter.load_from_files())
+	var blocker := _box_in_a_store(sim)
+	# A second house on the diagonal tile of the same lot: now the store is
+	# blocked by two buildings, and freeing one leaves the other.
+	var boxed: Building = sim.buildings["STR-005"]
+	var second := sim.cmd_place_building("house", boxed.origin + Vector2i(1, 1))
+	assert_true(bool(second["ok"]), "the diagonal tile of the lot is free to build on")
+	# …and then make that second one un-clearable ground rather than a building,
+	# which is the player's own case: a kerb.
+	sim.world.grid.set_flag(boxed.origin.x, boxed.origin.y + 1, TileGrid.FLAG_ROAD)
+
+	var lock := sim.lot_lock("STR-005")
+	var ground: Array = []
+	for entry in (lock["blockers"] as Array):
+		if not sim.buildings.has(String(entry)):
+			ground.append(String(entry))
+	assert_false(ground.is_empty(), "the lot has ground on it no verb takes")
+	assert_true((lock["blockers"] as Array).has(StringName(blocker)),
+			"…and a building as well")
+
+	var block: Dictionary = controller.building_view("STR-005")["lot_block"]
+	assert_eq(String(block["text_key"]), "ui_building_lot_locked_partial")
+	assert_eq(String(block["blocked_by"]), blocker, "the row still NAMES the neighbour")
+	assert_eq(StringName(str((block["fix_target"] as Dictionary)["kind"])),
+			RequirementFormatter.FIX_NONE,
+			"but it does not offer a remedy that would move nothing")
+	# The arithmetic that makes that the honest answer: clearing the building
+	# leaves the lot exactly as locked as it was.
+	var before := int(sim.lot_lock("STR-005")["reachable_level"])
+	assert_true(bool(sim.cmd_demolish_building(blocker)["ok"]))
+	assert_false(sim.lot_lock("STR-005").is_empty(), "still boxed in")
+	assert_eq(int(sim.lot_lock("STR-005")["reachable_level"]), before,
+			"and not one rung better for it")
+
+
+## **The player's own city, through the real `SaveService`** — the city the fix
+## was found on. 77 of its 89 buildings are `destroyed`, so every lot-locked
+## building whose blocker is a building names a RUIN, and every one of them is
+## also blocked by the kerb. Nothing on this city may claim a refund it cannot
+## pay or a remedy that would not free the ground.
+func test_no_lot_row_on_the_players_own_save_promises_what_it_cannot_do() -> void:
+	var sim := _restore_player_save()
+	if sim == null:
+		assert_true(false, "tests/fixtures/player_save_0903 did not restore")
+		return
+	var controller := BuildController.new(sim, RequirementFormatter.load_from_files())
+	var locked := sim.lot_locked_ids()
+	assert_eq(locked.size(), 10, "the player's own city, counted through the restore path")
+	var named := 0
+	var doors := 0
+	for sim_id in locked:
+		var block: Dictionary = controller.building_view(String(sim_id))["lot_block"]
+		assert_true(bool(block["locked"]), "%s is lot-locked" % sim_id)
+		var neighbour := String(block.get("blocked_by", ""))
+		if neighbour == "":
+			assert_eq(String(block["text_key"]), "ui_building_lot_locked_ground")
+			continue
+		named += 1
+		# Whatever the row says, a quoted verb must ANSWER and a quoted number
+		# must be that verb's own.
+		if block.has("free_refund"):
+			var verb := String(block["free_verb"])
+			var quote := sim.cmd_salvage_building(neighbour, true) if verb == "salvage" \
+					else sim.cmd_demolish_building(neighbour, true)
+			assert_true(bool(quote["ok"]),
+					"%s quotes %s on %s, which refuses" % [sim_id, verb, neighbour])
+		if StringName(str((block["fix_target"] as Dictionary)["kind"])) \
+				!= RequirementFormatter.FIX_NONE:
+			doors += 1
+			assert_true((block["ground_blockers"] as Array).is_empty(),
+					"%s offers a door onto a lot that ground also holds" % sim_id)
+	assert_eq(named, 7, "seven of the ten name a neighbour")
+	assert_eq(doors, 0,
+			"and none of them can be freed by a verb, because the kerb holds part of every one")
+	# The measurement the fix was made from: every one of those seven neighbours
+	# is a RUIN, which is the state the old row quoted a demolition on.
+	for sim_id in locked:
+		var block: Dictionary = controller.building_view(String(sim_id))["lot_block"]
+		var neighbour := String(block.get("blocked_by", ""))
+		if neighbour == "":
+			continue
+		assert_eq(String(block["blocked_by_state"]), "destroyed", "%s's blocker" % sim_id)
+		assert_false(bool(sim.cmd_demolish_building(neighbour, true)["ok"]),
+				"the demolition the first cut quoted refuses %s" % neighbour)
+		assert_true(bool(sim.cmd_salvage_building(neighbour, true)["ok"]),
+				"the salvage takes it")
+
+
+## The fixture, copied into this process's own `user://` and loaded through the
+## real `SaveService` — never read in place, because a load can promote a legacy
+## file and roll a generation, and a test must not edit the fixture it reads.
+func _restore_player_save() -> CitySim:
+	var dest := "user://test_saves/lot_fixture"
+	DirAccess.make_dir_recursive_absolute(dest)
+	if _copy_tree("res://tests/fixtures/player_save_0903", dest) == 0:
+		return null
+	var sim := CitySim.boot_from_files(1337)
+	var service := SaveService.new()
+	service.base_dir = dest
+	(Engine.get_main_loop() as SceneTree).root.add_child(service)
+	var ok := service.load_slot(sim, 0)
+	(Engine.get_main_loop() as SceneTree).root.remove_child(service)
+	service.free()
+	return sim if ok else null
+
+
+static func _copy_tree(source: String, dest: String) -> int:
+	var dir := DirAccess.open(source)
+	if dir == null:
+		return 0
+	var copied := 0
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		var from := source.path_join(entry)
+		var to := dest.path_join(entry)
+		if dir.current_is_dir():
+			DirAccess.make_dir_recursive_absolute(to)
+			copied += _copy_tree(from, to)
+		elif DirAccess.copy_absolute(from, to) == OK:
+			copied += 1
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return copied
