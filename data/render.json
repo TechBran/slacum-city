@@ -374,6 +374,16 @@
                    "body_alpha": 0.50, "body_m": [0.62, 0.78, 0.82, 0.0],
                    "body_lift_m": 0.60 },
 
+  "_lot_dressing": "Doc 11 §2.16a, LOT DRESSING: the un-built part of every reserved LOT, drawn by LotDressingView off LotDressingModel (doc 02 §2.3a, doc 93 §BE7). A building reserves the footprint of its FINAL form at placement, so a young store stands on one tile of a 2x2 lot and a new plant on nine of sixteen; bare ground there reads as a bug rather than as room to grow. The layer draws an apron on `lot - built` and on NOTHING else, so it RECEDES on its own as the building grows into its ground and contributes exactly zero instances once the building fills its lot. THREE SITE KINDS, by what the archetype actually is: store -> asphalt forecourt with painted bays (a shop's spare ground is where its customers park); construction_yard -> gravel yard with hashed stockpiles (the one site that should not look laid out); power_facility and the doc-05 water shells -> fenced gravel compound (fenced because that is what keeps people out of switchgear). TWO DRAW CALLS CITY-WIDE, flat rather than per-chunk, for the road surface's arithmetic (§2.5): aprons appear wherever a growing building stands, which on the benchmark city is 332 buildings spread over every chunk, so per-chunk buckets would be 98 calls against 71 of headroom. Every prop -- stripe, bollard, stockpile, fence post -- is the SAME unit box scaled per instance, so one mesh serves all four kinds. Shadows are OFF on both buffers: a 0.16 m painted stripe and a 0.14 m fence post cast nothing a player can see at any of §2.5's three poses, and this keeps the whole layer out of the shadow pass. Nothing here is persisted and nothing draws from an RNG stream -- every position, angle and shade is an integer mix of (sim_id, tile) -- so the state hash cannot move and two devices dress a lot identically. pad_inset_m is the bare strip round each pad tile that keeps adjacent tiles reading as tiles; pad_lift_m beats z-fighting with the ground; props_per_tile is the authored density BEFORE the governor's lot_prop_ratio, which thins what STANDS on an apron and never the apron itself.",
+  "lot_dressing": { "pad_inset_m": 0.35, "pad_lift_m": 0.02, "props_per_tile": 3,
+                    "stripe_len_m": 4.6, "stripe_w_m": 0.16,
+                    "bollard_h_m": 0.85, "bollard_w_m": 0.22,
+                    "stockpile_h_m": 1.15, "stockpile_w_m": 2.4,
+                    "post_h_m": 1.9, "post_w_m": 0.14,
+                    "visible_radius_m": 520.0,
+                    "pad_color": ["1d1e22", "3a3529", "2f2e2b"],
+                    "prop_color": ["e8e6dc", "a35f10", "4a4238", "6e7176"] },
+
   "overlay": { "desaturate_blend": 0.55, "emission_mult": 0.40, "render_priority": 5,
                "superblock_chunks": 4, "flow_scroll_speed": 0.35, "max_extra_draw_calls": 6 },
 
@@ -433,6 +443,7 @@
                            {"id":"particle_ratio","mult":0.60,"floor":0.30},
                            {"id":"far_cull_m","delta":-128.0,"floor":600.0},
                            {"id":"street_lights","delta":-4,"floor":4},
+                           {"id":"lot_prop_ratio","mult":0.50,"floor":0.0},
                            {"id":"preset_drop","latch":true} ],
                 "protected": ["emissive","blackout","glow_enabled"],
                 "_thermal": "doc 13 §2.8's statuses (PowerManager.THERMAL_STATUS_*, 0 NONE .. 6 SHUTDOWN), pushed through AndroidNative.thermal_status_changed. At/above thermal_block_up_status the governor stops stepping UP; at/above thermal_step_down_status it steps down on the next evaluation WITHOUT waiting out step_down_hold_s, because thermal headroom does not return by itself; at/above thermal_force_preset_status it latches the preset one rung down immediately. Cooling is hysteretic: a lower status only takes effect after thermal_recover_s at that status (doc 13 §2.8), so a device sitting on a boundary cannot oscillate. NOTE, flagged: doc 13 §2.8 also lists 'glow off' at SEVERE. glow_enabled is on `protected` above and doc 11 owns rendering, so the governor drops the preset instead and the signature moment survives.",

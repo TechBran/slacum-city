@@ -197,11 +197,20 @@ func preset_row(preset_name: String) -> Dictionary:
 	return (cfg.get("presets", {}) as Dictionary).get(preset_name, {})
 
 
-## The knob's ceiling for a preset. `particle_ratio` is the one knob the preset
-## table does not carry: it is a MULTIPLIER on whatever `amount` the weather
-## profile asked for, so its ceiling is 1.0 by definition.
+## The knob's ceiling for a preset. Two knobs the preset table does not carry,
+## both for the same reason: they are MULTIPLIERS on a density some other file
+## authored, so their ceiling is 1.0 by definition.
+##
+##   * `particle_ratio` multiplies whatever `amount` the weather profile asked for;
+##   * `lot_prop_ratio` (Wave 29, doc 11 §2.16a) multiplies
+##     `lot_dressing.props_per_tile`, which is doc 11's number and not a per-tier
+##     one — an apron has the same density on every device, and what changes under
+##     pressure is how much of it is drawn.
+const RATIO_KNOBS := ["particle_ratio", "lot_prop_ratio"]
+
+
 func _preset_value(row: Dictionary, id: String) -> float:
-	if id == "particle_ratio":
+	if RATIO_KNOBS.has(id):
 		return 1.0
 	return float(row.get(id, 1.0))
 

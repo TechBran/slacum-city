@@ -924,7 +924,10 @@ func _build_ground(stage: Node3D) -> void:
 func _building_view(sim_id: String) -> Dictionary:
 	var b: Building = _sim.buildings.get(sim_id)
 	var record: Dictionary = _sim.building_record(sim_id)  # PA-100
-	var size: Vector2i = record["footprint"]
+	# The BUILT extent, not the record's reservation (Wave 29, doc 02 §2.3a):
+	# `record["footprint"]` is the LOT now, and a mesh centred on it would sit
+	# half a tile off the ground it stands on. See `construction_preview.gd`.
+	var size := _sim.built_of_building(b)
 	var centre := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
 			b.origin.y * 8.0 + size.y * 4.0)
 	return {
