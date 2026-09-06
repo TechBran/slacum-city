@@ -7499,6 +7499,35 @@ on this ground, level 2 IS the top of the ladder — and the LOT row beside it i
 what explains why and hands over the neighbour. Clear the neighbour and the
 ladder comes back in the same call.
 
+### BE5a. The remedy the panel offers must be a verb that ANSWERS, on ground that would actually come free (fix pass)
+
+Two rulings the first cut of §BE5's door got wrong, both found by opening the
+panel on the player's own save rather than on a hand-built city (report 98 §74b
+RR-240).
+
+**The verb belongs to the neighbour's STATE.** The row quoted
+`cmd_demolish_building(neighbour, true)` for its number and never read the
+quote's `ok`. Doc 02 §2.12 gives a `destroyed` building to `cmd_salvage_building`
+and refuses the demolition with `E_STATE`; on a save where 77 of 89 buildings are
+rubble that is every single named neighbour, so the row said *"clearing it
+refunds $0"* over a verb that answers no. **Ruling:** the panel asks the verb the
+state answers — salvage a ruin, demolish anything standing — and the QUOTE's own
+`ok` decides whether a door is drawn at all. `on_fire` takes neither verb and now
+gets a sentence rather than a zero.
+
+**A door is only a door if pressing it frees the ground.** §BE1's reservation is
+a RECTANGLE and `TileGrid.can_expand` grants it all at once or not at all, so a
+lot held by a neighbour *and* by a kerb does not come free when the neighbour
+goes. Driven on the player's save: salvage `P-047` → ok, $390 → `P-048` still
+1×1 of its 2×2, `reachable_level` still 2. **Ruling:** where the lot carries
+ground no verb clears, the row says so and offers nothing. On that city: 10
+lot-locked, 7 naming a neighbour, **0 doors**.
+
+**And a blocker list must only list blockers.** `_lot_blockers` had no arm for
+*buildable and empty*, so free tiles were reported as `E_NOT_DEVELOPED`. It now
+spells `can_expand`'s own predicate. This is why the player fixture's rows read
+`[E_ROAD, P-047]` and not `[E_ROAD, E_NOT_DEVELOPED, P-047]` (A91-D-157).
+
 ### BE6. The census, measured
 
 | city | buildings | growers | **lot-locked after migration** |

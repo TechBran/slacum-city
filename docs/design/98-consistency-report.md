@@ -11675,3 +11675,152 @@ reported `E_MAX_LEVEL` missing from the blocker list, which is exactly the defec
 the cap closes, caught by its own test on a tree that did not yet contain the
 fix. The run above is the first whose tree has both, and it is the one this lane
 reports.
+
+## 74b. WAVE 29 FIX PASS — what the adversarial verifier sent back (binding)
+
+*Same lane, same fork. The verifier merged the branch, drove it on the player's
+own save with the lead's `main.gd` snippets applied, reproduced all twelve
+numbered claims cell for cell — and then found four things the lane had shipped
+anyway. Ids **RR-240..RR-243**; `tools/check_doc_refs.py` is the gate.*
+
+### RR-240 — the lot row's door quoted a verb that refuses, and offered a remedy that would not work
+
+**Two defects, one row, both found by opening the panel on the city the lane had
+chosen as its own fixture and never looked at.**
+
+**(a) The verb.** `BuildController._lot_block` quoted
+`cmd_demolish_building(neighbour, true)` and never read the quote's `ok`.
+`tests/fixtures/player_save_0903` is a city where **77 of 89 buildings are
+`destroyed`**, so all seven lot-locked buildings whose blocker is a building name
+a RUIN. Doc 02 §2.12 gives a ruin to `cmd_salvage_building` and refuses the
+demolition with `E_STATE`, so the row read *"P-047 stands on the rest — clearing
+it refunds **$0**"* and armed `Fix this →` over a verb that answers no. Salvage
+takes every one of them: **$390** for each store, **$27,000** for the destroyed
+data centre `P-076`. Fixed: the ruin's verb for a ruin, the demolition for
+anything standing, and the quote's own `ok` decides whether there is a door —
+which gives `on_fire`, the one state neither verb takes, a sentence
+(`ui_building_lot_locked_stuck`) instead of a `$0`.
+
+**(b) The remedy.** A lot grows **all at once or not at all** — `migrate_lots`
+asks `TileGrid.can_expand` for the whole lot rectangle, which refuses if a single
+tile of it is taken. So clearing one of two blockers moves nothing, and on that
+same save every one of those seven stores is blocked by a ruin **and** by the
+kerb (`blockers = [E_ROAD, P-047]`). Driven: salvaging `P-047` succeeds, pays
+$390 — and leaves `P-048` at 1×1 of its 2×2 with `reachable_level` still **2**.
+Fixed: a lot that carries ground no verb clears says exactly that
+(`ui_building_lot_locked_partial`) and draws no button.
+
+**On the player's own city: 10 lot-locked, 7 that name a neighbour, 0 doors** —
+and no row that promises a number it cannot pay or a remedy that would not work.
+The door remains real where it is real, which
+`test_a_ruined_neighbour_is_quoted_and_routed_as_a_SALVAGE` drives end to end: a
+ruin as the sole blocker → the salvage quote on the row → buy it → the store
+takes its 2×2 in the same call and the row goes back to `ui_building_lot_reserved`.
+
+**Under it, a sim defect the new tests found.** `CitySim._lot_blockers` had no
+arm for *"buildable and empty"*, so every FREE tile of a lot fell through to the
+`else` and was reported as an `E_NOT_DEVELOPED` **blocker** — the list said the
+map was in the way when nothing was, and it is the list the row and
+`measure_lots --list` both read. It now spells `TileGrid.can_expand`'s own
+predicate, so the two answers cannot disagree. Query-only: no hashed state, no
+event, and all four baselines are unchanged by measurement. Filed as **A91-D-157**.
+
+### RR-241 — `record["footprint"]` is the LOT, and two more readers still meant the MESH
+
+RR-236 changed what the record's `footprint` MEANS, and the lane snippeted
+`game/main.gd` and fixed its own tools — and left two live readers behind.
+
+* `game/render/power_infra_feed.gd:71`. Measured on a fresh level-1 store at
+  (42, 33): `building_view` returned `world_pos (344, 0, 272)` and
+  `footprint_m (16, 16)` for a mesh that is **8 m wide centred on (340, 0, 268)**.
+  `PowerInfraModel.service_point` clamps the drop into that rectangle and pushes
+  it back out, so the weatherhead landed on the LOT LINE — 8 m past the east
+  wall, hanging over the shop's own empty forecourt.
+* `ui/world_locator.gd:200`. The same store located at its lot centre
+  (344, 0, 272) instead of (340, 0, 268): half a tile in both axes, on every
+  `Fix this →` focus and every alert this locator aims.
+
+Both now ask `sim.built_of_building(b)`. Tests carry the measured numbers
+(`test_a_young_growers_service_drop_lands_on_its_wall_not_its_lot_line`,
+`test_a_young_grower_is_located_by_what_is_built_not_by_its_lot`), and the second
+asserts the two answers converge at L3 when the mesh finally fills the lot.
+
+**The sweep, so the next reader is not a third surprise.** Every remaining reader
+of the record's `footprint` was classified: `game/main.gd:616`
+(`_add_construction_site` — a hoarding round the whole reservation is correct),
+`game/render/lot_dressing_model.gd:180` (the ground it dresses IS the
+reservation), `tools/lot_dressing_preview.gd::_aim` and
+`tools/construction_preview.gd::_pick_target` (framing the lot, deliberate),
+`tools/ui_preview.gd:909` (staging a legacy body), and inside `sim/city_sim.gd`
+the occupancy readers — `_take_building_off_the_map`, `_footprint_near`,
+`_terminal_of`, `_feeder_source` — every one of which means *the ground this
+building holds* and is right to. `game/main.gd:593` is the lead's S1.
+
+### RR-242 — the wave's own remedy was below the fold on the target device
+
+`ui_preview --screen=building_lot_locked --size=412x915 --rects=Lot` laid
+`LotSection` out at **y = 943** and `LotFix` at **y = 1033** in a viewport
+**915** tall. The lane disclosed it as an open question; the verifier's ruling is
+that a door nobody sees is the same defect one step earlier, and it is right.
+
+The row moved to **directly under the vitals, above the checklist** — the honest
+place, because it is the fact that decides the building's future and the
+checklist is a list of errands about a level this ground may not reach. Measured
+after: **`LotSection` y = 322, `LotFix` y = 412**, in a scroller 719 px tall.
+
+**And the audit now tests the fold, because it could not before.** `UIAudit`'s
+`offscreen` finding deliberately exempts anything inside a `ScrollContainer` —
+content in a scroller is *meant* to run past the viewport — which is exactly why
+`--audit --strict` called the below-the-fold deck clean. `tools/ui_preview.gd`
+gains `MUST_BE_ON_SCREEN`: a small, per-screen list of controls that must lie
+inside the viewport even inside a scroller, counted into `_findings` so
+`--strict` exits non-zero. Proved by regression: pointing the rule at
+`Checklist` prints `below_the_fold  Checklist  rect [P: (116, 564), S: (276,
+441)] outside viewport [P: (0, 0), S: (412, 915)]` and exits **1**.
+
+### RR-243 — one site search, five copies; and the preview deck's missing two fifths
+
+**The search.** RR-239 fixed `tools/playtest.gd` and left four more helpers
+sized to the level-1 footprint, each of which hands `cmd_place_building` a site
+it refuses: `tools/qa_soak.gd:367` (the soak's `place_building` verb, for every
+grower), `tools/measure_population_lag.gd:341`, `tools/ui_preview.gd:1742` and
+`tests/test_goals_system.gd:81`. Five copies of one sentence is five chances to
+fix it four times, so there is now one: **`tools/site_search.gd`** —
+`reservation(sim, archetype)`, `water_reservation(sim, variant)` and
+`serviceable_site(sim, archetype)` — and all five call it, `playtest.gd`
+included. It lives in `tools/`, which `export_presets.cfg` excludes from every
+build, so nothing under `game/` or `ui/` may preload it: `game/main.gd`'s
+dev-only `_place_demo` (line 806) is the lead's snippet S6 and asks
+`sim.lot_for(archetype)` inline.
+
+**The deck.** `tools/lot_dressing_preview.gd` shipped 16 shots described as
+*"every rung of every grower"* and its default set was three archetypes. The
+growing set is **five** — doc 05's `treatment` (2×2 → 3×3 at L2) and `tank`
+(2×2 → 3×3 at L3), which is A91-D-156, filed by this lane itself — so the two
+growers whose lot rule the wave had to invent were the two nobody photographed,
+including the founding city's own `WTR-2`. The default set is now all five, named
+`water_facility:<variant>` where doc 05 owns the ladder; the founding city ships
+no `treatment` shell (doc 09 §2.9.6 puts that node inside `WTR-1`, whose shell is
+a `pump`), so one is **placed through the real `cmd_place_water_component` and
+built out through the real construction queue**, on a `measure_envelope`-style
+grant because doc 03 prices it above the founding city's $25,000. **21 shots per
+deck**, wide and close.
+
+**And `BuildingCatalog.grows()` now has callers.** It was a public documented
+accessor with zero call sites anywhere — the A91-D-19 shape inside the wave named
+after it. Its two natural readers took it: `tools/measure_lots.gd`'s `grows`
+column (which had a second spelling of the same comparison) and the preview's own
+plan, which skips a named archetype that does not grow instead of photographing
+sixteen identical pictures of a house.
+
+### 74b.1 The numbers the fix pass moves, and the ones it does not
+
+| measurement | before the fix pass | after |
+|---|---|---|
+| lot-locked, player save (`measure_lots --saves=… --slot=0`) | 10 | **10 — unchanged** |
+| …of those, rows naming a neighbour | 7 | **7 — unchanged** |
+| …of those, rows with an armed `Fix this →` | 7, every one behind `E_STATE` | **0, and each says why** |
+| `LotSection` y at 412×915 | 943 (button 1033) | **322 (button 412)** |
+| lot-dressing preview shots per deck | 16 (3 of the 5 growers) | **21 (all five)** |
+| founding city census (`measure_lots`) | 34 buildings, 8 growers, 0 locked, 109 reserved / 77 built | **identical** |
+| four `profile_sim --hash-only` baselines | fork's values | **identical** |

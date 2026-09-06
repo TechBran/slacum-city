@@ -458,6 +458,15 @@ it keeps exactly the tiles it has, nothing is moved and nothing is bulldozed, an
 `lot_lock(sim_id)` reports the level that ground still reaches plus the neighbour
 standing on the rest.
 
+**The reservation comes back all at once or not at all.** `migrate_lots` asks
+`TileGrid.can_expand` for the whole lot RECTANGLE, which refuses if a single tile
+of it is taken, so a building blocked by two things gains nothing when one of them
+goes. That is a rule about ground and it is also the rule doc 12 §2.9a's door
+obeys: the panel offers a remedy only where the named neighbour is the ONLY thing
+on the missing ground (report 98 §74b RR-240). Measured on the player's own save,
+where every lot-locked store is boxed in by a ruin *and* by the kerb: clearing the
+ruin leaves the store exactly where it was.
+
 **That reachable level is a §2.11 ceiling, not a caption.**
 `cmd_upgrade_building` caps `top_level` at it and answers **`E_MAX_LEVEL`** —
 because there is no `E_FOOTPRINT` on the upgrade path, so a boxed-in store left

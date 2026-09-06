@@ -3364,18 +3364,34 @@ the moment it reaches L3, and a building at the top of its ladder contributes
 `tools/lot_dressing_preview.gd`:
 
 Every row starts from the founding city's whole apron set — **32 pads, 124
-props**, its eight growers together — and shows what walking that one subject up
-its ladder removes:
+props**, its eight growers together — and shows what walking that ONE subject up
+its ladder removes. **One archetype per run**, which is the half the first
+write-up left off its command line: `--archetypes=<one>` re-boots the city, so
+each row is measured against the same 32/124 base. The default invocation walks
+every grower in one city and therefore reports the numbers CUMULATIVELY (store
+32→29, then yard 29→24, then plant 24→17) — the same deltas, a different column.
 
-| subject | grows at | pads | props |
-|---|---|---|---|
-| `store` (`STR-001`) | L3 | 32 → **29** | 124 → 113 |
-| `construction_yard` (`YARD-1`) | L4 | 32 → **27** | 124 → 109 |
-| `power_facility` (`PLANT-1`) | L4 | 32 → **25** | 124 → 94 |
+| subject | grows at | pads | props | command |
+|---|---|---|---|---|
+| `store` (`STR-001`) | L3 | 32 → **29** | 124 → 113 | `--archetypes=store` |
+| `construction_yard` (`YARD-1`) | L4 | 32 → **27** | 124 → 109 | `--archetypes=construction_yard` |
+| `power_facility` (`PLANT-1`) | L4 | 32 → **25** | 124 → 94 | `--archetypes=power_facility` |
+| `tank` (`WTR-2`) | L3 | 32 → **27** | 124 → 100 | `--archetypes=water_facility:tank` |
+| `treatment` (placed) | L2 | 37 → **32** | 148 → 124 | `--archetypes=water_facility:treatment` |
 
-The pad deltas are **3, 5 and 7** — exactly each grower's own remainder
-(2×2 − 1×1, 3×3 − 2×2, 4×4 − 3×3), which is the arithmetic proof that the layer
-draws the reservation and nothing else.
+The pad deltas are **3, 5, 7, 5 and 5** — exactly each grower's own remainder
+(2×2 − 1×1, 3×3 − 2×2, 4×4 − 3×3, 3×3 − 2×2 twice), which is the arithmetic proof
+that the layer draws the reservation and nothing else.
+
+**The last two rows are the Wave 29 fix pass's** (report 98 §74b RR-243). The
+growing set is five, not three: doc 02's `water_facility` column is the PUMP
+reference row and doc 05's own table grows `treatment` and `tank` (A91-D-156).
+The founding city ships no `treatment` shell — doc 09 §2.9.6 puts that node
+inside `WTR-1`, whose shell variant is `pump` — so the harness places one through
+the real `cmd_place_water_component` and builds it out through the real
+construction queue, which is why its base is 37/148 rather than 32/124: the new
+shell brings its own 5-tile apron with it. `tools/device_results/lot_dressing/`
+and `…_close/` hold **21 shots each**, every rung of all five.
 
 **It also dresses only ground the building HOLDS, never the lot it wants.** A
 lot-locked building (doc 02 §2.3a) holds less than its lot, and dressing the lot
