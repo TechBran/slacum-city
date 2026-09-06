@@ -12016,3 +12016,181 @@ filter, and it is a sim read-path memo with an invalidation nobody has audited
 (A91-D-160). And 1,073 s of this file is the sim advance over 690 preset-days,
 200 decay-days, 60 director-days and 3,240 curriculum game-hours — a doc 92
 question about what a gate needs, not a performance one (A91-D-161).
+## 76. WAVE 30 — the ghost paints where a source can legally go (Lane B, binding)
+
+*Lane B of Wave 30: render + UI, hash-neutral by construction (nothing under
+`sim/` is touched). Doc 12 D-130/D-131, doc 11 §2.20, doc 93 §BG1/§BG2, defects
+doc 91 A91-D-162..A91-D-164. All four `profile_sim --hash-only` baselines are
+byte-identical across this branch: founding `9004573df161a57e…` /
+`d5c6678de64cb5de…`, bench `ebb5f4762e4f2412…` / `307a6a27ad6f1801…`.*
+
+### RR-247 — `site_hint()["tiles"]` had no renderer, and the tile it must be drawn on is not the tile it returns
+
+Doc 12 D-127's own row says `tiles` is *"the set the shell paints"*. Nothing
+painted it (`A91-D-162`): the whole of Wave 28's window reached the player as a
+count in a sentence. It is drawn now — `ui/site_paint_model.gd` +
+`game/render/site_paint_view.gd` + `game/shaders/site_paint.gdshader`, one
+translucent MultiMesh of 8 m tile quads, **+1 draw call while a refused ghost is
+up and +0 the rest of the game**.
+
+**The ruling that decides whether it is an answer or a decoration is the tile.**
+`placement_sites` returns footprint ORIGINS — the tile `cmd_place_building`
+stamps from. The shell's tap is `BuildSheet.move_ghost →
+BuildController.move_to_ground`, which *centres* the footprint:
+
+    origin_for_ground(p) = tile_at(p) − centre_offset()
+
+So a paint drawn on origins invites a tap that lands the ghost **one tile
+up-left** of the site that was verified, for every footprint bigger than 1×1 —
+`store` 2×2, `water_facility` 3×3, `power_facility` 4×4, doc 05's whole roster.
+The paint is drawn on `origin + centre_offset()`, the exact inverse, so the door
+the paint implies is the tap `main.gd::_handle_tap` already had and no second
+verb is added anywhere. `tests/test_site_paint.gd` pins the round trip on a 1×1
+(`house`), a 2×2 (`store`) and a 3×3 (`construction_yard`), tapping through the
+shell's own call and asserting `controller.origin` came back equal to the origin
+the window verified.
+
+**Two channels beside the colour**, because §11/A5 forbid colour carrying a
+reading alone: the mark (`●` clean, `▲` for §BD9's warned site — rows 0 and 1 of
+`data/ui.json.state_glyphs`, so the legend's vocabulary and no fifth glyph) and
+the alpha ramp, which fades with distance from the ghost. The site the bar's
+sentence NAMES gets the ring, so *"the nearest is 3 tiles away"* points at
+something. `BuildSheet.set_palette_variant` carries the colourblind palettes to
+the ground, because `rebuild_theme()` rebuilds a `Theme` and reaches no
+MultiMesh.
+
+**Not `set_overlay_channel`, which D-127 named** — that channel is
+`{render_id: state}`, per BUILDING, and a legal site is bare ground with no
+instance to tint. Doc 93 §BG1 carries the ruling; the machinery used instead is
+doc 12 §2.5 mode 5's, which is a per-TILE MultiMesh for exactly the same reason.
+
+**Measured, founding city, ghost on the shoreline at (38, 51):** 441 scanned,
+**3 legal, 3 clean**, nearest `(35, 49)` at 3 tiles, **$38,086**, three quads,
+**1 draw call**. **On `tests/fixtures/player_save_0903`, ghost on his own
+plant:** 441 scanned, **0 legal** (`E_NOT_OWNED ×210`, `E_FOOTPRINT ×133`,
+`E_NO_WATER ×98`), **nothing lit, 0 draw calls**, and the bar carrying *"the
+nearest water is 41 tiles away, at 38, 51"* with the door under it.
+
+**Four NAMED preview states, not four argv incantations.**
+`tools/site_paint_preview.gd`'s `STATES` is this layer's deck the way
+`tools/ui_preview.gd`'s `SCREENS` is the sheet deck's: `founding_source`
+(3 lit), `founding_yard` (32 lit — the 3×3 the anchor exists for),
+`player_none` (0 lit) and `player_three` (3 lit, the freeze lifted). Each row
+carries the tile count it claims and the harness errors when a shot does not
+match it, and `test_every_named_preview_state_is_one_the_game_can_reach` drives
+all four headlessly inside the suite. RR-243's lesson applied on the way in:
+**a preview state that is not swept is a preview state that is already wrong.**
+
+### RR-248 — the memo's other half: the batch that changed the ground
+
+Doc 93 §BD8 recomputes the window only when the ghost walks out of it, and its
+reason is right about the finger — *"the answer does not change while the finger
+moves inside the window it is about"*. It is silent about the world. On the
+player's own save **all three shoreline intakes refuse for `E_AUSTERITY` and
+nothing else**, and doc 03 §2.10 layer 2 lifts that freeze at the first hourly
+settlement after the load: a window memoised for the length of a placement
+session would have shown him an empty shore for as long as he held the card,
+one game-hour after the game had started saying yes.
+
+`UIRoot._check_placement_ground(batch)` — in `ui/`, on `feed_events`, which is
+the one place this layer already sees the bus — throws the scanned window away
+when a batch carries any of `BuildSheet.SITE_GROUND_EVENTS`. Fourteen names,
+each on the list because it moves a refusal code the window itself publishes
+(`block_purchased`/`block_ready` → `E_NOT_OWNED`/`E_NOT_DEVELOPED`,
+`building_placed_sim`/`_removed`/`_completed` → `E_FOOTPRINT`,
+`grid_component_placed`/`_removed` and `grid_node_commissioned`/`_retired` →
+`E_UNSERVED`/`E_TRANSFORMER_FULL`, `water_main_placed` → `E_NO_MAIN`,
+`water_component_placed`, `road_built` → frontage,
+`austerity_entered`/`_exited` → `E_AUSTERITY`).
+
+`test_every_event_that_may_throw_the_window_away_is_one_the_sim_emits` greps
+`sim/` for every one of the fourteen. **An invalidation keyed on an event name
+nothing publishes is a guard that never fires and looks exactly like a guard
+that works** — this wave's own subject, one layer up, so the census is not
+optional.
+
+**And the project's own census answered back.** The first full-suite run of this
+branch failed two tests, both of them registers doing exactly what they exist
+for. `test_asset_completeness.gd::test_17` refused an unregistered
+`site_paint.gdshader` (now a row in `SHADERS` and in `SHADER_OWNER`, and the
+count assertion goes 20 → 21). And
+`test_event_matrix.gd::test_the_register_names_a_consumer_that_is_no_longer_needed`
+reported `road_built`: it had carried the exemption *"covered: road_graph_changed
+rebuilds the street surface"* and this branch gave it a real consumer, so the
+exemption is deleted. That is the right way round —
+`TileGrid.can_place` refuses `FLAG_ROAD`, so a street laid across a tile **takes
+a placement site away**, and a window memoised across it would keep offering
+ground that has become a road. The classified-exemption count goes 67 → 66.
+
+**The budget it protects, measured:** one `placement_sites` at radius 10 is
+**60.6 ms** for `source` on the founding city, **66.8 ms** on the player's save,
+**14.2 ms** for `house`. That is why the paint reads the memo and never scans:
+`SitePaintView.apply` is idempotent on a fingerprint of the picture, and
+`test_the_buffer_is_not_rewritten_while_the_picture_has_not_changed` measures
+**31 applies → 1 upload**. The scan cost itself is filed unfixed as
+`A91-D-164`.
+
+### RR-249 — the shell snippet, and the price the funds sentence was not naming
+
+**(a) `game/main.gd` — three lines, the lead's to apply** (this lane touches no
+file in `game/` but its own new one). Anchors are the existing function names.
+
+*In `_build_build_ui()`, immediately after the `path_ghost_view` block:*
+
+    site_paint_view = SitePaintView.new()
+    site_paint_view.name = "SitePaint"
+    add_child(site_paint_view)
+    site_paint_view.setup(SitePaintModel.new(cfg), build_controller.tile_m)
+
+*with `var site_paint_view: SitePaintView` beside `var ghost_view: GhostView`;
+and in `_on_placement_changed()`, after the `path_ghost_view.apply(...)` line:*
+
+    if site_paint_view != null and build_sheet != null:
+        site_paint_view.apply(build_sheet.site_paint())
+
+**That is the whole shell change — two blocks, not three.** A6's colourblind
+hand-off does NOT need a `_on_setting_changed()` arm: `UIRoot._on_settings_changed`
+routes it to `BuildSheet.set_palette_variant` on the tap that changed the row,
+which is where §2.14's haptics rows and PA-58's camera rows already go and for
+the same reason — the player switching palettes mid-placement is looking at the
+ground while they do it, not one `game/main.gd` branch later.
+
+`_on_placement_changed()` is the right feed and the only one: the shell emits it
+when placement starts, when the ghost moves and when it ends — never per frame —
+which is the whole of D-130's budget clause. Until it lands,
+`tools/site_paint_preview.gd::_wire_paint()` is the only place those lines
+exist, and they are the same lines, so the preview photographs the layer the
+game will have rather than one of its own.
+
+**(b) `A91-D-163`, found by driving the shell for (a)'s screenshot.**
+`_site_advice`'s `E_FUNDS` branch is reached exactly when every buyable tile
+refuses for money — so `legal` is empty, so `found["cost"]` (the cheapest LEGAL
+site's price) is **0**, and the founding city's placement bar read, verbatim:
+*"A spot 3 tiles away would take this and it costs **$0**; the treasury holds
+$24.1K."* The verdict that refused carries the true number in `params.cost`:
+**$38,086**, which is $286 above the card's own $37,800 headline because that
+tile needs a one-tile lateral. The scan keeps it on the buyable row and the
+sentence spends it. Doc 12 D-131, doc 93 §BG2.
+
+**Every Wave-28 test of that sentence passed before and after**, because they
+assert the KEY the advice chose and the SHAPE of its arguments and both were
+right. Nothing in the project read the rendered words until a preview harness
+printed `placement_issue_text()` beside a screenshot. Third time (RR-242,
+RR-243, this): **the preview deck is the only instrument that reads the sentence
+the player reads.**
+
+### The gates, at the head of this lane
+
+| gate | command | result |
+|---|---|---|
+| determinism, founding | `profile_sim.gd -- --hash-only` | `9004573df161a57e…` / `d5c6678de64cb5de…` — **identical to the fork** |
+| determinism, bench | `… --city=res://tests/fixtures/bench_city.json` | `ebb5f4762e4f2412…` / `307a6a27ad6f1801…` — **identical to the fork** |
+| suite | `tools/run_suite.sh` | 162 files, **3,008 tests, 605,236 asserts, 0 failed, 0 silent** |
+| this lane's file | `tools/run_suite.sh --one=test_site_paint.gd` | **20 tests, 833 asserts, 0 failed** |
+| screens | `ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0** |
+| ledger | `python3 tools/check_doc_refs.py` | 6,793 references, all resolving; no id assigned twice |
+
+Hash-neutrality is not an achievement here, it is the shape of the lane:
+**nothing under `sim/` is touched at all**, and the one file in `game/` is a new
+one. The four baselines were recorded at the fork (`9aecbf9`) before any edit
+and again at the head, and they are the same four strings.

@@ -7667,3 +7667,90 @@ themselves — 690 preset-days for one insolvency reading — are a doc 92 quest
 about what a gate needs, not a performance one. Neither is hash-neutral
 tests-and-tools work, and a lane whose brief says hash-neutral does not take a
 memo into the hottest correctness predicate in the project on its last hour.
+## BG. Wave-30 rulings — the answer is a place, so it is drawn in the place (2026-09-06)
+
+### BG1. Where does the set the build sheet computed actually go?
+
+**On the ground, on the tile the finger has to land on, and nowhere else.**
+
+Doc 93 §BD8 settled that the build sheet may answer *"where CAN this go"* and
+gave it `BuildController.placement_sites()`. It stopped one step short: the
+window's own note says `tiles` is *"the set the shell paints"*, and no file in
+`game/` ever read it. What shipped was a **count** — *"3 spots for this within
+10 tiles"* — which is a true sentence that leaves the player exactly where the
+ghost left them, hunting one tile at a time for three tiles the game has already
+found and is not saying.
+
+Three rules keep the paint honest, and the first of them is the one that decides
+whether it is an answer at all.
+
+1. **The lit tile is the one that WORKS when tapped.** `placement_sites` returns
+   footprint ORIGINS. The shell's tap path is
+   `BuildSheet.move_ghost → BuildController.move_to_ground`, and that function
+   centres the footprint on the tapped tile:
+   `origin_for_ground(p) = tile_at(p) − centre_offset()`. So a paint drawn on
+   origins is **off by `centre_offset()` for every footprint bigger than 1×1** —
+   which is doc 05's entire roster (2×2 and 3×3) and most of doc 02's. The paint
+   is drawn on `origin + centre_offset()`, the exact inverse, and the door the
+   paint implies is therefore the tap the shell already had rather than a second
+   verb bolted beside it. **The ruling: a paint that invites a tap must be drawn
+   in tap coordinates, not in command coordinates.**
+2. **It is the same window, and it is lit exactly when the sentence is spoken.**
+   Not "recomputed with the same arguments" — the same memoised call, through
+   `BuildSheet.site_hint()`, gated on the one flag `_refresh_bar` sets when it
+   prints the window's sentence. Two conditions that ought to agree are two
+   conditions that will eventually not.
+3. **The marks are the legend's four, not five.** Clean is `normal` (`●`),
+   warned is `warning` (`▲`) — §BD9's "legal, and not the site to recommend" —
+   out of `data/ui.json.state_glyphs`, the same table the overlay legend and the
+   placement bar draw from. Colour is one of three channels and the only one
+   that does not survive greyscale (A5).
+
+**And the memo gets the guard §BD8 did not give it.** §BD8's reason for
+recomputing only when the ghost leaves the window is right and complete about
+the FINGER: the answer does not change while it moves inside the window it is
+about. It is silent about the world. On `tests/fixtures/player_save_0903` all
+three shoreline intakes refuse for `E_AUSTERITY` **and nothing else**, and doc
+03 §2.10 layer 2 lifts that freeze at the first hourly settlement after the load
+— so a memo held for the length of a placement session would have shown the
+player an empty shore for as long as he kept the card open, one game-hour after
+the game had said yes. `UIRoot._check_placement_ground` throws the window away
+on a named set of events (`BuildSheet.SITE_GROUND_EVENTS`), every one of which
+moves a refusal code the window itself publishes, and a test greps `sim/` for
+each name — because an invalidation keyed on an event nothing emits is a guard
+that never fires and looks exactly like one that works.
+
+**Why not `RenderStateModel.set_overlay_channel`, which D-127 named.** That
+channel is `{render_id: state}`: it is per BUILDING, riding the two
+`overlay_state` bits doc 11 packs into the instance buffer (C-64). **A legal
+site is bare ground.** There is no instance to tint, and there cannot be — the
+whole point of the read is that nothing is standing there yet. The machinery
+that carries a per-TILE paint is the one doc 12 §2.5 mode 5 already uses for
+congestion, for the same reason (an edge is not a building): a second
+translucent MultiMesh over the surface, one call, hidden when empty. The legend
+is honoured where honouring it matters — one palette, one glyph table — and the
+sentence D-127 wrote is corrected in D-130 rather than obeyed to the letter into
+a channel that cannot hold the data.
+
+### BG2. A quote that refuses still knows the price
+
+**Yes, and the sentence that names a price must take it from the quote that
+refused, not from the answer that was not found.**
+
+`_site_advice`'s `E_FUNDS` branch is reached exactly when every buyable tile in
+the window refuses for money — which means `legal` is empty, which means
+`found["cost"]` (the cheapest LEGAL site's price) is **0**. The bar therefore
+told a founding-city player, in words: *"A spot 3 tiles away would take this and
+it costs $0; the treasury holds $24.1K."* The `preview = true` verdict that
+raised `E_FUNDS` carries `params.cost = 38086` — the true, tile-specific price,
+$286 above the card's headline because that tile needs a one-tile lateral — and
+that is now what the scan keeps and the sentence spends.
+
+The general form, which is worth stating because this is the third instance:
+**a number an advice string names must come from the same call that made the
+advice necessary.** Reading it from a sibling field that happens to be zero in
+exactly the branch you are in is how a correct-looking path ships with a lie in
+it. And the reason no test caught it is the reason to keep taking screenshots:
+every Wave-28 test asserted the KEY the advice chose and the SHAPE of its
+arguments, both of which were right. Nothing read the rendered words until a
+preview harness printed them (`A91-D-163`).
