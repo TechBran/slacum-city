@@ -3363,14 +3363,19 @@ the moment it reaches L3, and a building at the top of its ladder contributes
 **zero** instances. Measured on the founding city through
 `tools/lot_dressing_preview.gd`:
 
-| subject | rungs | pads | props |
+Every row starts from the founding city's whole apron set — **32 pads, 124
+props**, its eight growers together — and shows what walking that one subject up
+its ladder removes:
+
+| subject | grows at | pads | props |
 |---|---|---|---|
-| `store` (`STR-001`) | L1–L2 → L3–L6 | 32 → 29 | 142 → 131 |
-| `construction_yard` (`YARD-1`) | L1–L3 → L4–L5 | 32 → 27 | 142 → 128 |
-| `power_facility` (`PLANT-1`) | L1–L3 → L4–L5 | 24 → 17 | 98 → 68 |
+| `store` (`STR-001`) | L3 | 32 → **29** | 124 → 113 |
+| `construction_yard` (`YARD-1`) | L4 | 32 → **27** | 124 → 109 |
+| `power_facility` (`PLANT-1`) | L4 | 32 → **25** | 124 → 94 |
 
 The pad deltas are **3, 5 and 7** — exactly each grower's own remainder
-(2×2 − 1×1, 3×3 − 2×2, 4×4 − 3×3).
+(2×2 − 1×1, 3×3 − 2×2, 4×4 − 3×3), which is the arithmetic proof that the layer
+draws the reservation and nothing else.
 
 **It also dresses only ground the building HOLDS, never the lot it wants.** A
 lot-locked building (doc 02 §2.3a) holds less than its lot, and dressing the lot
