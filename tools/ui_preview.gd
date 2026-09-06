@@ -51,6 +51,14 @@ const SCREENS: Array[String] = [
 	"placement_unowned",
 	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
 	"building", "building_blocked", "building_repairable", "building_water",
+	# Wave 29 (doc 12 §2.9a / D-128, D-129): the LOT row, in both of the states
+	# that draw it. `building_lot` is a store holding the 2×2 it reserved on the
+	# day it was founded — the row that stops three empty tiles beside a young
+	# shop reading as a bug. `building_lot_locked` is the one with a door: a
+	# store that was already standing when the rule arrived, boxed in by a
+	# neighbour, told the level its ground still reaches and handed the
+	# neighbour's name and what clearing it refunds.
+	"building_lot", "building_lot_locked",
 	# Wave 24 (doc 12 D-100): the panel of a house the player tapped SECONDS
 	# ago. Its occupants vital reads `0 of 4` while the shell is going up, which
 	# is the state the whole of report 98 §67 is about — nobody has moved in
@@ -880,6 +888,30 @@ func _apply(screen: String) -> void:
 				var b: Building = _sim.buildings[_first_building()]
 				b.condition = 0.35
 				_building_panel.show_building(_first_building())
+		"building_lot":
+			# Doc 12 §2.9a's first state. `STR-001` is a founding store: 1×1
+			# built, and the migration gave it the whole 2×2 it reserves, so the
+			# row is a STATEMENT with no button. Nothing is staged — this is the
+			# founding city as it boots.
+			if _building_panel != null:
+				_building_panel.show_building("STR-001")
+		"building_lot_locked":
+			# …and the state with a door. The founding city has NO lot-locked
+			# building (doc 93 §BE6 — it was authored with its stores two tiles
+			# apart), so one is staged: a house on the tile `STR-005`'s lot wants,
+			# and the store handed back the single tile the old rule gave it. That
+			# is exactly the shape 202 of the benchmark city's stores are in after
+			# migration, and it is staged rather than found because a preview must
+			# photograph the state, not wait for a city that happens to have one.
+			if _building_panel != null:
+				var boxed: Building = _sim.buildings["STR-005"]
+				var record: Dictionary = _sim.building_record("STR-005")
+				var lot: Vector2i = record.get("footprint", Vector2i.ONE)
+				_sim.world.grid.remove_building(boxed.id, boxed.origin, lot)
+				_sim.world.grid.stamp_building(boxed.id, boxed.origin, Vector2i.ONE)
+				record["footprint"] = Vector2i.ONE
+				_sim.cmd_place_building("house", boxed.origin + Vector2i(1, 0))
+				_building_panel.show_building("STR-005")
 		"building_repairable":
 			# §2.9 item 6's actions row with everything live: a repair to buy, a
 			# shed tier to pick, and a demolition to hold for.

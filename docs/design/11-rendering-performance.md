@@ -3426,19 +3426,29 @@ layer honoured the elevation and its aprons floated 12 m above the two raised
 blocks' own buildings — which showed up in the preview as no apron at all. One
 row in `rows_from_sim` is where a future elevation pass arrives.
 
-**Its colours are picked against the rendered frame, not against a swatch.** The
-city is lit by sun-plus-sky ambient with glow over it, and a mid-value ground
-albedo comes back off that pipeline nearly white: measured, a pure `Color.RED`
-pad renders as a light salmon, and an authored `3d3e42` asphalt read as pale
-lavender. The shipped values are roughly half the swatch value for that reason.
+**The per-instance colour needs a channel to land in, and that channel is
+LINEAR.** Two separate faults, both of which the first cut shipped:
 
-**And the per-instance colour needs a channel to land in.**
-`MultiMesh.set_instance_color` reaches `StandardMaterial3D` through the `COLOR`
-varying, but Godot's `BoxMesh` and `PlaneMesh` ship **no `ARRAY_COLOR`**, so the
-first cut drew the entire apron in flat cream. `LotDressingView._vertex_coloured`
-takes a stock primitive's arrays, adds a white COLOR channel and returns an
-`ArrayMesh` — which is what every other MultiMesh layer in the directory gets for
-free from its own mesh builder.
+* `MultiMesh.set_instance_color` reaches `StandardMaterial3D` through the `COLOR`
+  varying, but Godot's `BoxMesh` and `PlaneMesh` ship **no `ARRAY_COLOR`** — so
+  there was nothing for the instance colour to multiply into and the entire apron
+  drew in flat cream. `LotDressingView._vertex_coloured` takes a stock
+  primitive's arrays, adds a white COLOR channel and returns an `ArrayMesh`,
+  which is what every other MultiMesh layer here gets free from its own builder.
+* A vertex COLOR reaches the shader as a **linear** value, so an authored sRGB
+  hex written straight into it renders about two stops light (A91-D-36, RR-95).
+  Both uploads call `srgb_to_linear()`.
+
+**The second one is worth recording as a process fact.** Before it was found, the
+layer compensated by authoring `pad_color` roughly half its true value and
+justifying it in a comment as *"picked against the rendered frame, not against
+the swatch"* — a plausible-sounding rule that was really a bug wearing an art
+direction's clothes, and one that would have broken the moment anyone fixed the
+real thing. `tests/test_render_polish.gd::
+test_every_procedural_mesh_decodes_its_authored_vertex_colour` is a source-level
+census — *any* file in `game/render` that writes `Mesh.ARRAY_COLOR` must call
+`srgb_to_linear` — and it caught this file on the wave's own full-suite run. The
+shipped swatches are now honest sRGB.
 
 #### Determinism
 

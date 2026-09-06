@@ -158,6 +158,15 @@ func _build_props() -> void:
 ## `ArrayMesh` its own builder made (`ConstructionRigMesh`, `VehicleMesh`), all of
 ## which bake vertex COLOR. This does the same thing to a stock primitive: take
 ## its arrays, add a white COLOR channel, and hand back an `ArrayMesh`.
+##
+## **The channel is LINEAR, which is why the two uploads call `srgb_to_linear`**
+## (doc 91 A91-D-36, report 98 RR-95). A vertex COLOR reaches the shader as a
+## linear value, so an authored sRGB hex written straight into it renders about
+## two stops light. The white filled here is 1.0 in both spaces and needs no
+## conversion; the per-instance tints are authored sRGB and get one.
+## `tests/test_render_polish.gd::test_every_procedural_mesh_decodes_its_authored_
+## vertex_colour` is the gate, and it caught this file — the first cut compensated
+## by darkening the authored swatches, which is treating the symptom.
 static func _vertex_coloured(source: PrimitiveMesh, material: Material) -> ArrayMesh:
 	var arrays := source.get_mesh_arrays()
 	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -202,7 +211,7 @@ func _upload_pads() -> void:
 		var pos: Vector3 = rec["world_pos"]
 		_pad_mm.set_instance_transform(i, Transform3D(
 				Basis.IDENTITY.scaled(Vector3(size, 1.0, size)), pos))
-		_pad_mm.set_instance_color(i, rec["color"])
+		_pad_mm.set_instance_color(i, (rec["color"] as Color).srgb_to_linear())
 		bounds = AABB(pos, Vector3.ZERO) if i == 0 else bounds.expand(pos)
 	_pad_node.custom_aabb = bounds.grow(TileGrid.METRES_PER_TILE)
 
@@ -222,6 +231,6 @@ func _upload_props() -> void:
 		var basis := Basis.from_euler(Vector3(0.0, float(rec["yaw"]), 0.0))
 		_prop_mm.set_instance_transform(i, Transform3D(
 				basis.scaled(rec["size"] as Vector3), pos))
-		_prop_mm.set_instance_color(i, rec["color"])
+		_prop_mm.set_instance_color(i, (rec["color"] as Color).srgb_to_linear())
 		bounds = AABB(pos, Vector3.ZERO) if i == 0 else bounds.expand(pos)
 	_prop_node.custom_aabb = bounds.grow(TileGrid.METRES_PER_TILE)

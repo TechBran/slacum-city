@@ -5,7 +5,9 @@ extends SceneTree
 ## city that already existed was laid out under the old rule. `migrate_lots()`
 ## gives each standing building the rest of its lot where the ground is free and
 ## reports the rest as LOT-LOCKED. **This is the instrument that publishes those
-## counts**, and it is the named consumer of the `lots_migrated` event.
+## counts**. It ASKS — `lot_locked_ids()` and `lot_lock()` — rather than
+## listening: a census is a question, and an event announcing one would have been
+## a publication with no subscriber (see `CitySim.migrate_lots`).
 ##
 ## It also prints the DENSITY the rule costs — how much ground the lots take and
 ## how much is left — because bigger lots mean fewer sites per block, and doc 92

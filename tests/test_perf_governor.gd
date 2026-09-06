@@ -34,8 +34,13 @@ func test_ladder_is_doc11s_and_in_order() -> void:
 	var ids: Array = []
 	for rung in g.ladder:
 		ids.append(String((rung as Dictionary).get("id", "")))
+	# Wave 29 (doc 11 §2.16a) adds `lot_prop_ratio`, and WHERE it sits is the
+	# claim: after the four rungs that shipped before it, so no device's existing
+	# ladder position moves, and before `preset_drop`, because taking the props
+	# off a lot's apron is strictly gentler than latching the whole preset down a
+	# tier. The pads are never thinned — see `LotDressingView.apply_governor`.
 	assert_eq(ids, ["render_scale", "particle_ratio", "far_cull_m", "street_lights",
-			"preset_drop"], "§2.13's down order, verbatim")
+			"lot_prop_ratio", "preset_drop"], "§2.13's down order, verbatim")
 	assert_almost_eq(g.budget_ms, BALANCED_BUDGET_MS, 1e-3,
 			"the budget is 1000 / target_fps of the ACTIVE preset")
 	assert_almost_eq(g.knob("render_scale"), 0.85, 1e-6, "balanced render_scale ceiling")

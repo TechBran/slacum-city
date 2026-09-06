@@ -85,25 +85,27 @@ var stockpile_w_m: float = 2.4
 var post_h_m: float = 1.9
 var post_w_m: float = 0.14
 var visible_radius_m: float = 520.0  ## past this a lot contributes nothing
-## Pad tints, sRGB, indexed by `SITE_*`.
+## Pad tints, indexed by `SITE_*`. **Authored sRGB, like every other swatch in
+## the project** — `LotDressingView` converts them with `srgb_to_linear()` on the
+## way to the instance buffer, because a vertex COLOR reaches the shader as a
+## LINEAR value (doc 91 A91-D-36, report 98 RR-95).
 ##
-## **These are darker than an eyedropper on a reference photo would give**, and
-## deliberately: the city is lit by doc 11's own sun-plus-sky ambient with glow
-## over it, and a mid-value ground albedo comes back off that pipeline nearly
-## white. Measured, in `tools/lot_dressing_preview.gd`: pure `Color.RED` renders
-## as a light salmon, so an authored `3d3e42` asphalt read as pale lavender and
-## the whole apron looked like poured concrete. These values are picked against
-## the rendered frame rather than against the swatch.
+## That conversion is not decoration: without it these render about two stops
+## light, and the first cut of this layer compensated by authoring the swatches
+## dark instead — which made the file lie about what colour asphalt is and would
+## have broken the moment anyone fixed the real bug.
+## `tests/test_render_polish.gd::test_every_procedural_mesh_decodes_its_authored_
+## vertex_colour` is the gate that caught it.
 var pad_color: Array[Color] = [
-	Color(0.114, 0.118, 0.133),   # asphalt
-	Color(0.227, 0.208, 0.161),   # gravel
-	Color(0.184, 0.180, 0.169),   # compound gravel
+	Color(0.239, 0.243, 0.259),   # asphalt
+	Color(0.404, 0.376, 0.325),   # gravel
+	Color(0.353, 0.345, 0.329),   # compound gravel
 ]
 var prop_color: Array[Color] = [
-	Color(0.910, 0.902, 0.863),   # stripe paint
-	Color(0.639, 0.373, 0.063),   # bollard
-	Color(0.290, 0.259, 0.220),   # stockpile
-	Color(0.431, 0.443, 0.463),   # fence post
+	Color(0.831, 0.824, 0.776),   # stripe paint
+	Color(0.741, 0.482, 0.157),   # bollard
+	Color(0.451, 0.404, 0.337),   # stockpile
+	Color(0.549, 0.557, 0.569),   # fence post
 ]
 
 ## The governor's one knob (doc 11 §2.13). 1.0 is the authored density; 0.0

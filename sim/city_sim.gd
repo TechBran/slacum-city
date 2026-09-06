@@ -3136,12 +3136,21 @@ func migrate_lots(reason: String = "load") -> Dictionary:
 			expanded.append(String(sim_id))
 		else:
 			locked.append(String(sim_id))
-	if not expanded.is_empty() or not locked.is_empty():
-		# Named consumers, so this is not one more event nothing reads (A91-D-19):
-		# `ui/building_panel_model.gd` refreshes the lot row, `tools/measure_lots.gd`
-		# prints the census, and `tests/test_lot_reservation.gd` asserts the counts.
-		bus.emit(&"lots_migrated", {"reason": reason, "expanded": expanded.size(),
-				"locked": locked.size(), "locked_ids": locked})
+	# **There is no `lots_migrated` event, and its absence is the ruling.**
+	#
+	# The first cut of this function emitted one, with a comment naming three
+	# consumers. None of them was real: the building panel reads [lot_lock] live
+	# because a lock can change under it (a demolition frees ground), and
+	# `tools/measure_lots.gd` reads [lot_locked_ids] because a census is a
+	# question you ask, not a thing you have to have been listening for.
+	# `tests/test_event_matrix.gd` caught it — *"every event sim/ emits is
+	# consumed or carries a written classification"* — which is the A91-D-19
+	# shape this whole wave is named after, committed by the wave itself.
+	#
+	# So the census is RETURNED and not announced. If a later wave wants to tell
+	# a returning player that three of their buildings are boxed in, that is a
+	# doc 12 notification with a row in `data/notifications.json`, and it should
+	# be built when there is a screen to put it on.
 	return {"reason": reason, "expanded": expanded, "locked": locked}
 
 
