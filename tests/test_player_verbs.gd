@@ -23,11 +23,15 @@ static func _transformer_spot(sim: CitySim, centre: Vector2i, radius: int) -> Ve
 	return Vector2i(-1, -1)
 
 
-static func _serviceable_vacant_tile(sim: CitySim) -> Vector2i:
+## A serviceable vacant site big enough for `archetype`'s LOT (doc 02 §2.3a).
+## Defaults to the store's 2×2, which is the largest lot this file asks it for.
+static func _serviceable_vacant_tile(sim: CitySim,
+		archetype: String = "store") -> Vector2i:
+	var size := sim.lot_for(archetype)
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var origin := Vector2i(x, z)
-			if sim.world.grid.can_place(origin, Vector2i.ONE) and sim.grid.would_serve(origin):
+			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
 				return origin
 	return Vector2i(-1, -1)
 
@@ -342,13 +346,16 @@ func test_plant_shell_generates_and_re_rates_on_upgrade() -> void:
 	for z in range(32, 78):
 		for x in range(32, 78):
 			var candidate := Vector2i(x, z)
-			if sim.world.grid.can_place(candidate, Vector2i(3, 3)) \
+			# The power plant's LOT is 4×4 (3×3 built, 4×4 at L4 — doc 02 §2.3a),
+			# and `cmd_place_building` reserves the lot, so a 3×3 search would
+			# hand it a site it then refuses.
+			if sim.world.grid.can_place(candidate, sim.lot_for("power_facility")) \
 					and sim.grid.would_serve(candidate):
 				origin = candidate
 				break
 		if origin.x >= 0:
 			break
-	assert_true(origin.x >= 0, "a 3×3 site exists somewhere in the core")
+	assert_true(origin.x >= 0, "a power-plant lot exists somewhere in the core")
 	var placed := sim.cmd_place_building("power_facility", origin)
 	assert_true(bool(placed["ok"]), str(placed))
 	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])

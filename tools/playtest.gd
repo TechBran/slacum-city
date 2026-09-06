@@ -423,9 +423,22 @@ class Api extends RefCounted:
 	func min_city_level(archetype: String) -> int:
 		return int(sim.catalog.stats(archetype, 1).get("min_city_level", 0))
 
+	## **The LOT the site search has to find** (Wave 29, doc 02 §2.3a, RR-233).
+	##
+	## This read `stats(archetype, 1).footprint` — the ground the building covers
+	## on its first day — and `place()` handed it to `candidate_site`, so every
+	## scripted agent in the project looked for a 1×1 hole to put a store in and
+	## then asked `cmd_place_building` for a 2×2 reservation. Under the lot rule
+	## that is a search that finds sites the command then refuses: the agent would
+	## have reported `E_FOOTPRINT` as a *balance* result — "the city ran out of
+	## room on day 31" — when what had actually run out was the agreement between
+	## two functions about how big a store is.
+	##
+	## One seam, because `place()` and `unserved_footprint()` both take their size
+	## from here: the harness now looks for exactly the ground the command will
+	## reserve.
 	func footprint(archetype: String) -> Vector2i:
-		var foot: Array = sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-		return Vector2i(int(foot[0]), int(foot[1]))
+		return sim.lot_for(archetype)
 
 	## Sorted archetype ids the player may build right now, filtered by category
 	## set and by the build sheet's own `locked` rule (min_city_level). NOTE the
@@ -1076,9 +1089,10 @@ class Api extends RefCounted:
 	func place_water_component(kind: String, level: int = 1) -> Dictionary:
 		if not has_verb("cmd_place_water_component"):
 			return _log("water", kind, CommandQueue.fail(&"E_NO_VERB"), {})
-		var rules: Dictionary = sim.water.data.placeable_rules(kind)
-		var size: Vector2i = sim.water.data.footprint_of(StringName(kind), level,
-				String(rules.get("subtype", "")))
+		# The LOT, for `footprint()`'s reason: `cmd_place_water_component` reserves
+		# doc 05's whole ladder now, and a search sized to this level's row would
+		# offer a `tank` site the command refuses (2×2 found, 3×3 reserved).
+		var size: Vector2i = sim.water_lot_for(kind)
 		var previews := 0
 		for block_id in _ready_blocks():
 			var block: LandBlock = sim.world.block(block_id)

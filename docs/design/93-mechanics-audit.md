@@ -7371,3 +7371,139 @@ the player's save: the nearest pump site was exactly that, and the pump built on
 it ran at `power_fraction 0.00` — 40 m³/h of rated capacity bought, zero
 delivered (A91-D-153). The warned tiles stay in the set, behind the clean ones,
 because a player who has understood the warning is entitled to take one.
+
+## BE. Wave-29 rulings — a building reserves the ground its final form needs (2026-09-06)
+
+*The player, on the device, 2026-09-05:* **"The buildings should take up, when
+you initially set them at level one, the allowance for the block that it takes
+up should be the size of the FINAL form of that building. For instance the
+stores start off as one block but then grow to four blocks or more. We should
+immediately take up the amount that it needs at maximum level — that way the
+buildings look like they belong when they get older."**
+
+### BE1. The rule: a building's LOT is its maximum-level footprint, reserved at placement
+
+**A building has two extents, and until this wave the project only had one.**
+
+| | what it is | who owns it | who reads it |
+|---|---|---|---|
+| **LOT** | the footprint at the tallest rung this building can ever REACH | doc 02 §2.3a (doc 05 §2.1 for a water shell) | the grid reservation, the ghost, the site search, the migration |
+| **BUILT** | the footprint at the level it stands at today | doc 02 §2.3 `Foot` | the mesh, the lot dressing, the far-LOD scale |
+
+`CitySim.lot_for(archetype)` and `CitySim.built_for(archetype, level)` are the
+two accessors; `lot_of_building`/`built_of_building` route a standing building to
+whichever document owns its ladder. **Nothing re-derives either by hand.**
+
+Placement reserves the LOT (`cmd_place_building`, `cmd_place_water_component`).
+The ghost shows the LOT. The upgrade gate needs no footprint check at all,
+because an upgrade only ever fills ground the building already holds.
+
+### BE2. What was actually there, which is worse than "the feature was missing"
+
+Doc 02 §2.11's check **12** authors an `E_FOOTPRINT` on the UPGRADE — *"if
+`footprint(L+1) > footprint(L)`, the added tiles (extending +X/+Z from origin)
+are owned, developed, empty, and not road"* — and doc 02 §1324 names a
+`test_footprint_growth_gate` that asserts it. **Neither exists.**
+
+```
+grep -n 'E_FOOTPRINT' sim/city_sim.gd        -> placement, roads, water. NEVER cmd_upgrade_building.
+grep -rn 'test_footprint_growth_gate' tests/ -> nothing
+```
+
+`on_construction_completed` re-stats the building and never re-stamps the grid,
+so at the fork a store that reached L3 had `stats.footprint == [2, 2]`, a 2×2
+mesh, and **one** occupied tile. Measured on the founding city's `STR-001` at
+(49, 49), forced to L3 the way the completion path does it:
+
+```
+record.footprint STILL = (1, 1)
+can something else be placed where the L3 mesh stands?  true
+```
+
+Three of the four tiles under a grown store were legally placeable, so the game
+would happily found a second building **inside** the first one's mesh. This is
+the project's signature defect (A91-D-19: authored behaviour nothing consumes)
+with a visible overlap on the far side of it. Reserving the lot dissolves both
+halves at once — there is nothing left for check 12 to check.
+
+### BE3. The lot is measured to the REACHABLE ceiling, not to the catalog's last row
+
+Doc 02's `Foot` column runs to L5/L6 for every archetype. Some of those rungs
+cannot be bought:
+
+- **`water_facility`** is gated by doc 05's `levels_4_5_enabled`, which ships
+  **`false`**. `_water_node_top_level` caps the shell at 3, so its authored 4×4
+  at L5 is ground **no player can ever reach**. Measured to that ceiling its lot
+  is 3×3 — exactly what it already occupies.
+- The other eleven answer their own ladder.
+
+**A lot measured to an unreachable rung is ground taken from the player for a
+purchase that does not exist**, so `archetype_top_level` supplies the ceiling and
+`BuildingCatalog.lot_of` takes it as a parameter. Flip the flag and the lot
+follows on the next boot, with standing plants reported lot-locked (BE5) rather
+than silently short.
+
+### BE4. A water works's lot is doc 05's, per VARIANT — and doc 02's column cannot answer it
+
+`data/buildings.json`'s `water_facility` rows are flagged
+`footprints_are_reference_variant_only` and carry the **pump** ladder. The
+variants a player actually places are not all pumps, and **two of them grow
+inside the shipped ceiling**:
+
+| variant | reachable rungs | footprint | lot |
+|---|---|---|---|
+| `source` (river) | L1–L2 | 2×2 → 2×2 | 2×2 |
+| `treatment` | L1–L2 | 2×2 → **3×3** | **3×3** |
+| `pump` | L1–L3 | 3×3 → 3×3 | 3×3 |
+| `tank` | L1–L3 | 2×2 → **3×3** | **3×3** |
+
+So the growing set this wave moves is **five**, not the four doc 02 shows:
+`store`, `power_facility`, `construction_yard`, water `treatment`, water `tank`.
+The founding city's `WTR-2` is a **tank** — it is the eighth building the
+migration expands, and doc 02's column would have said it does not grow.
+
+### BE5. Legacy cities are migrated, never bulldozed, and the losers are named
+
+`CitySim.migrate_lots(reason)` runs at the end of BOTH load paths (boot, after
+`_boot_water`; restore, in `_restore_finish`) and again after any demolition.
+It walks the roster **in id order** and gives each building the rest of its lot
+**where the ground is genuinely free**. Where it is not, the building keeps
+exactly the tiles it has and is **LOT-LOCKED**:
+
+- nothing is demolished, nothing is moved, no tile is ever taken from a neighbour;
+- `lot_lock(sim_id)` reports `held`, `lot`, the **level that ground still
+  reaches**, and the **blockers** — the sim ids of the neighbours standing on the
+  missing tiles, then `E_ROAD`/`E_WATER`/`E_NOT_DEVELOPED` for the rest;
+- the building panel shows it and the fix router routes it (doc 12 D-128/D-129).
+
+**Id order is the tie-break and it is arbitrary on purpose.** Two legacy stores
+one tile apart cannot both have the contested tile; sorting by id makes the loser
+the same building on every machine and every reload, which is what determinism
+costs here.
+
+**Freeing the ground is the remedy the router names, so it takes effect at the
+demolition** and not at the next reload — `_take_building_off_the_map` calls
+`migrate_lots("demolition")`. A verb whose door is a restart is the shape doc 91
+keeps filing.
+
+### BE6. The census, measured
+
+| city | buildings | growers | **lot-locked after migration** |
+|---|---|---|---|
+| founding (`data/starter_city.json`) | 34 | 8 | **0** |
+| benchmark (`tests/fixtures/bench_city.json`) | 1,500 | 332 | **206** |
+
+The benchmark city's 206 decompose exactly: **202 stores = its 95 L1 + 107 L2
+stores, every single one of them**, plus both power plants and both construction
+yards. `gen_bench_city.py` packs buildings at their current level's footprint, so
+no young grower in it has a spare tile. The founding city, authored with its
+stores two tiles apart, migrates with none.
+
+### BE7. The un-built part of a lot is DRESSED, not left as bare ground
+
+A young store on a 2×2 lot covers one tile with mesh and three with nothing, and
+"nothing" reads as a bug. Doc 11 §2.16 owns the layer that fills it: an
+archetype-appropriate apron — yard, parking, fence, planting — drawn on
+`lot − built` and **receding as the building grows into it**, which is the half
+of this wave the player actually sees. One MultiMesh, one governor knob, and it
+is in doc 11's draw-call census like every other layer.

@@ -197,6 +197,48 @@ func can_place(origin: Vector2i, size: Vector2i) -> bool:
 	return true
 
 
+## **May THIS building hold this whole rectangle?** (doc 09 §2.1a, doc 02 §2.3a,
+## Wave 29.) Exactly [can_place], except that a tile this building already owns
+## is not counted as standing in its own way.
+##
+## The lot rule needs the distinction and `can_place` cannot express it: a legacy
+## store expanding from the 1×1 it was placed on to the 2×2 it reserves is asking
+## about THREE tiles, and `can_place` would refuse on the fourth — the one the
+## store is standing on — because `stamp_building` set `FLAG_OCCUPIED` there
+## itself. Every other rule is the same one `can_place` applies, read from the
+## same bitfield, so a tile this answers `true` for is a tile that answers `true`
+## there once the building is gone.
+func can_expand(building_id: int, origin: Vector2i, size: Vector2i) -> bool:
+	for z in range(origin.y, origin.y + size.y):
+		for x in range(origin.x, origin.x + size.x):
+			if not in_bounds(x, z):
+				return false
+			var i := z * SIZE + x
+			if _building_ids[i] == building_id:
+				continue
+			var f := _flags[i]
+			if (f & FLAG_BUILDABLE) == 0:
+				return false
+			if (f & (FLAG_ROAD | FLAG_WATER | FLAG_BLOCKED | FLAG_OCCUPIED)) != 0:
+				return false
+	return true
+
+
+## Grow an existing building's reservation to `size` (doc 02 §2.3a). Idempotent:
+## re-stamping ground this building already holds changes nothing, which is what
+## lets the lot migration run on every boot and every restore without keeping a
+## "have I done this" flag anywhere.
+func expand_building(building_id: int, origin: Vector2i, size: Vector2i) -> bool:
+	assert(building_id > 0, "building ids start at 1; 0 means empty")
+	if not can_expand(building_id, origin, size):
+		return false
+	for z in range(origin.y, origin.y + size.y):
+		for x in range(origin.x, origin.x + size.x):
+			set_flag(x, z, FLAG_OCCUPIED)
+			_building_ids[_idx(x, z)] = building_id
+	return true
+
+
 func stamp_building(building_id: int, origin: Vector2i, size: Vector2i) -> bool:
 	assert(building_id > 0, "building ids start at 1; 0 means empty")
 	if not can_place(origin, size):

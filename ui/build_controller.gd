@@ -571,14 +571,18 @@ func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 			"required_level": required_level, "city_level": sim.progression.city_level,
 			"archetype": p_archetype,
 		})
-	var foot: Array = stats.get("footprint", [1, 1])
 	state = STATE_PLACING
 	archetype = p_archetype
 	variant = p_variant
 	component_kind = ""
 	component_domain = ""
 	component_level = GRID_CARD_LEVEL
-	size = Vector2i(int(foot[0]), int(foot[1]))
+	# **The ghost shows the LOT** (Wave 29, doc 02 §2.3a, doc 12 D-128). §2.7's own
+	# rule is that a ghost asks the command rather than re-implementing it, and
+	# `cmd_place_building` now reserves `lot_for(archetype)` — so a store's ghost
+	# is 2×2 from the first frame, which is both the ground it will take and the
+	# ground the player is being asked to find.
+	size = sim.lot_for(p_archetype)
 	origin = Vector2i.ZERO
 	has_origin = false
 	_verdict = {}
@@ -652,7 +656,9 @@ func enter_water_component(kind: String, level: int = -1) -> Dictionary:
 	component_kind = kind
 	component_domain = DOMAIN_WATER
 	component_level = wanted
-	size = Vector2i(int(row.get("footprint_w", 1)), int(row.get("footprint_h", 1)))
+	# The LOT, for `enter`'s reason — and doc 05's, per variant: a `treatment`
+	# reserves the 3×3 it reaches at L2, not the 2×2 it opens on.
+	size = sim.water_lot_for(kind)
 	origin = Vector2i.ZERO
 	has_origin = false
 	_verdict = {}

@@ -103,7 +103,9 @@ func test_placed_building_survives_a_slot() -> void:
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var candidate := Vector2i(x, z)
-			if sim.world.grid.can_place(candidate, Vector2i.ONE) \
+			# The store's LOT (doc 02 §2.3a), not one tile: `cmd_place_building`
+			# below reserves 2×2 and would refuse a 1×1 find.
+			if sim.world.grid.can_place(candidate, sim.lot_for("store")) \
 					and sim.grid.would_serve(candidate):
 				origin = candidate
 				break

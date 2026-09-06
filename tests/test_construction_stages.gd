@@ -6,12 +6,16 @@ extends SimTest
 ## finishes. The tracking is DERIVED state: it stays out of the save.
 
 
-static func _serviceable_vacant_tile(sim: CitySim) -> Vector2i:
-	# A buildable, vacant, power-serviceable 1×1 lot inside the core.
+## A serviceable vacant site big enough for `archetype`'s LOT (doc 02 §2.3a).
+## The default is the largest thing this file places, so every call site keeps
+## working; see `test_city_commands.gd` for why a 1×1 search is now wrong.
+static func _serviceable_vacant_tile(sim: CitySim,
+		archetype: String = "store") -> Vector2i:
+	var size := sim.lot_for(archetype)
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var origin := Vector2i(x, z)
-			if sim.world.grid.can_place(origin, Vector2i.ONE) and sim.grid.would_serve(origin):
+			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
 				return origin
 	return Vector2i(-1, -1)
 
