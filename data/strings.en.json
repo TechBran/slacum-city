@@ -509,7 +509,7 @@
 	"ui_goal_l7_power_facility": "Upgrade a power plant",
 	"ui_goal_l7_store": "Upgrade a shop",
 	"ui_goal_l7_substation": "Upgrade a substation",
-	"ui_goal_l7_water_facility": "Upgrade a water works",
+	"ui_goal_l7_water_facility": "Upgrade a water building one level — any pump station, treatment plant, storage tank or water source (the water facility you tap on the map)",
 	"ui_goals_backstop": "Or grow to {target} residents — the level arrives either way.",
 	"ui_goals_chip": "Level and goals",
 	"ui_goals_standing_below": "You are Level {city} — completing these goals reaches Level {level}.",
