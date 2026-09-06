@@ -68,8 +68,10 @@ var _before_snapshot: Dictionary = {}   # captured on pause for the away report
 var android_lifecycle: AndroidLifecycle
 var _autosave_interval_s := 0.0
 var _autosave_timer := 0.0
-var _family_of: Dictionary = {}  # archetype -> mesh-manifest family
-var _height_of: Dictionary = {}  # "archetype:level" -> mesh height_m (lod 0)
+var _family_of: Dictionary = {}  # SHAPE -> mesh-manifest family
+var _height_of: Dictionary = {}  # "shape:level" -> mesh height_m (lod 0)
+## The (archetype, variant) -> shape map, off the same manifest (Wave 31).
+var _shapes: ShapeCatalog = null
 var _tap_origin := Vector2.ZERO
 var _tap_started_ms := 0.0
 var _tap_candidate := false
@@ -395,6 +397,13 @@ func _build_city_view(render_data: Dictionary) -> void:
 			render_model.set_preset(String(preset_arg).trim_prefix("--preset="))
 	var manifest: Dictionary = StarterCityLoader.read_json(
 			"res://game/meshes/generated/manifest.json")
+	# Keyed by the manifest's `archetype`, which is the SHAPE (Wave 31, RR-254):
+	# `water_facility` for the pump reference variant and `water_facility_tank` /
+	# `_treatment` / `_source` for the three doc-05 shells with their own massing.
+	# Both tables are read with `_shape_of()`, never with a bare archetype, so a
+	# tank's service drop lands on the tank's wall and its hoarding takes the
+	# tank's height.
+	_shapes = ShapeCatalog.from_manifest(manifest)
 	for entry in manifest.get("meshes", []):
 		_family_of[String(entry["archetype"])] = String(entry.get("family", "residential"))
 		if int(entry.get("lod", 0)) == 0:
@@ -607,12 +616,21 @@ func _building_view(sim_id: String) -> Dictionary:
 	# own ground. Measured on a fresh L1 store: (340,0,268) vs (344,0,272).
 	var size := sim_host.sim.built_of_building(b)
 	var center := TileGrid.centre_of_footprint(b.origin, size)
+	# **The VARIANT, handed over** (Wave 31, RR-254). Without it the render model
+	# has only `archetype_id`, and doc 02's `water_facility` row is the PUMP: a
+	# tank and a treatment plant were drawn with the pump's 3×3 shell on their own
+	# 2×2 ground, half a tile of building over every edge. `built_tiles` is the
+	# other half — the guard that stops a variant with no mesh of its own (doc 05
+	# defers `booster`) from overhanging at all.
+	var shape := _shape_of(b)
 	return {
 		"id": b.id,
 		"archetype_id": StringName(b.archetype),
+		"variant_id": StringName(b.variant),
 		"level": maxi(b.level, 1),
-		"family": String(_family_of.get(String(b.archetype), "residential")),
+		"family": String(_family_of.get(String(shape), "residential")),
 		"world_pos": center,
+		"built_tiles": size,
 		"block_id": String(record.get("block", "")),
 		"transform": Transform3D(Basis.IDENTITY, center),
 		"occ_b": 1.0,
@@ -622,16 +640,31 @@ func _building_view(sim_id: String) -> Dictionary:
 	}
 
 
+## The gray-box SHAPE one building draws with — its archetype, or the doc-05
+## variant's own where there is one. The one place this file resolves it.
+func _shape_of(b: Building) -> StringName:
+	if _shapes == null:
+		return StringName(b.archetype)
+	return _shapes.shape_of(StringName(b.archetype), StringName(b.variant))
+
+
 ## Fence/crane props for one under-construction building. The crane is sized
 ## to the level being BUILT (pending_level during upgrades), not the current one.
 func _add_construction_site(sim_id: String) -> void:
 	var b: Building = sim_host.sim.buildings.get(sim_id)
 	if b == null or construction_view == null:
 		return
-	var size: Vector2i = sim_host.sim.building_record(sim_id).get("footprint", Vector2i.ONE)
+	# **The BUILT extent, not the reservation** (Wave 31, RR-255) — the fix
+	# `_building_view` took in Wave 29 and this call site did not. `record`'s
+	# `footprint` is the LOT since doc 02 §2.3a, so the hoarding was fenced around
+	# ground the building does not stand on: a 3×3 run of panels around the
+	# founding city's 2×2 tank, one tile of it in the street, with Wave 29's own
+	# lot dressing already drawing a compound fence on that same remainder.
+	# The hoarding fences the BUILDING; §2.16a's apron owns the rest of the lot.
+	var size := sim_host.sim.built_of_building(b)
 	var center := TileGrid.centre_of_footprint(b.origin, size)
 	var target_level := maxi(b.pending_level, maxi(b.level, 1))
-	var height := float(_height_of.get("%s:%d" % [b.archetype, target_level], 10.0))
+	var height := float(_height_of.get("%s:%d" % [_shape_of(b), target_level], 10.0))
 	# doc 11 §2.16: the hoarding's gate takes the frontage the vehicle layer
 	# derives off doc 10's live network, so the gate, the skip standing in it
 	# and the coned-off lane are all on the same face of the lot.
@@ -753,6 +786,16 @@ func _on_sim_batch(batch: Array) -> void:
 				if rid2 >= 0:
 					var out: Dictionary = event.duplicate()
 					out["building"] = rid2
+					# **Where the finished rung STANDS** (Wave 31, RR-255). A
+					# completion can change the built footprint — a store goes
+					# 1×1 → 2×2 at L3, a treatment plant 2×2 → 3×3 at L2 — and a
+					# mesh is centred on the ground it holds, so the centre moves
+					# with it. The model rebucketed the level and kept the old
+					# centre, standing every grown building half a tile off its
+					# own lot for the rest of the game. Only the sim can answer
+					# this, so the sim's answer rides on the event.
+					if StringName(String(event["type"])) == &"building_completed":
+						_note_built_extent(out, rid2)
 					translated.append(out)
 					if StringName(String(event["type"])) == &"building_completed":
 						if construction_view != null:
@@ -795,6 +838,25 @@ func _render_id(sim_id: String) -> int:
 
 func _render_id_from_int(value: Variant) -> int:
 	return int(value) if typeof(value) != TYPE_STRING else _render_id(String(value))
+
+
+## Attach the built extent and the centre it implies to a completion event, so
+## `RenderStateModel._rebucket` can re-centre a building whose footprint just
+## grew (Wave 31, RR-255). A no-op — the two keys are simply absent — when the
+## roster no longer carries the id, and the model then behaves exactly as it did.
+##
+## The scan is deliberate rather than a second id index: a completion is a rare
+## event (doc 02's build times are game-HOURS) and a stale reverse map would be a
+## wrong answer where a scan is only a slow one.
+func _note_built_extent(out: Dictionary, render_id: int) -> void:
+	for sim_id: String in sim_host.sim.buildings:
+		var b: Building = sim_host.sim.buildings[sim_id]
+		if b.id != render_id:
+			continue
+		var size := sim_host.sim.built_of_building(b)
+		out["built_tiles"] = size
+		out["world_pos"] = TileGrid.centre_of_footprint(b.origin, size)
+		return
 
 
 ## Dev arg `--place=<archetype>`: buy one building on the first serviceable

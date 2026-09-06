@@ -51,6 +51,12 @@ ROOF_SIG_ID = {
     "tank_cluster": 0b1100, "antenna_mast": 0b1111,
     "gable_prism": 0b0001, "flat_stair_boxes": 0b0010, "hvac_cluster": 0b0100,
     "setback_tower_mast": 0b1000,
+    # Wave 31 (RR-254): doc 05's other three placeable shells. `tank_cluster`
+    # above is the PUMP reference variant's and stays exactly where it is —
+    # these are the three codes the 4-bit field still had free, all weight 3, so
+    # each is >= 2 bits from every other yard-like signature and the water
+    # family cannot collapse onto one silhouette.
+    "clarifier_basins": 0b1011, "standpipe_tank": 0b1101, "intake_screens": 0b1110,
 }
 ROOF_SIGS = list(ROOF_SIG_ID.keys())
 
@@ -612,6 +618,134 @@ def a_yard(lv, fx, fz):
     return blocks, props
 
 
+# ------------------------------------------------- doc 05's OTHER water shells
+#
+# **Wave 31, RR-254 — the defect this closes.** `water_facility` above is doc 02's
+# `water_facility` column, and doc 02 says out loud that that column is the PUMP
+# REFERENCE VARIANT ONLY (`footprints_are_reference_variant_only`). It is 3x3 flat
+# to L4. Doc 05 §6's other placeable shells are NOT: a `treatment` plant is 2x2 at
+# L1 and a `tank` is 2x2 to L2, and both are built on those footprints by
+# `CitySim.built_of_building`. The renderer, keyed by ARCHETYPE alone, drew all of
+# them with the pump's 3x3 shell centred on a 2x2 patch of ground — half a tile of
+# building over every edge, which on a lot beside a street is a treatment works
+# standing in the road. That is the player's report of 2026-09-06 and it has been
+# true of `WTR-2`, the founding city's own tank, since the city was authored.
+#
+# So each variant gets its own shape on its own ground. `pump` keeps the shape and
+# the id `water_facility` — every one of its committed mesh hashes is unchanged —
+# and these three are new archetype rows carrying `variant_of` / `variant`, which
+# is what the manifest is keyed by and what the render picks with.
+#
+# The footprints are NOT authored here. They are doc 05's `components[variant][L]`
+# `footprint_w`/`footprint_h` columns, mirrored so this generator can keep reading
+# nothing from disk, and `validate()` compares the mirror against the real
+# `data/water.json` — a drifted column fails at authoring time.
+WATER_VARIANT_FOOTPRINTS = {
+    # variant: [[w, h] per level 1..5], from data/water.json `components`.
+    "treatment": [[2, 2], [3, 3], [3, 3], [4, 4], [4, 4]],
+    "tank":      [[2, 2], [2, 2], [3, 3], [3, 3], [4, 4]],
+    # `source`'s shipped subtype is `river` (doc 05 §6: "ships subtype river only;
+    # well stays behind source_well_enabled"), so this is the `source_river` row.
+    "source":    [[2, 2], [2, 2], [3, 3], [3, 3], [4, 4]],
+}
+# `booster` is deliberately absent. Doc 05 §6 defers it — it is not in
+# `data/water.json.placeable`, no verb can build one, and a shape for a shell the
+# game cannot place would be an asset with no subject. It is covered instead by
+# the renderer's footprint fallback (RR-256): a variant with no mesh of its own is
+# drawn with its archetype's mesh SCALED to the built footprint, so it can sit
+# inside its own ground rather than in the road. The day `booster` ships, it gets
+# a row here and the fallback stops being its answer.
+
+
+def a_treatment(lv, fx, fz):
+    """doc 05 §6 `treatment` — rectangular settling basins, a circular clarifier
+    and a small control building inside a fenced compound. 2x2 at L1; it GROWS to
+    3x3 at L2, which is the rung the pump's flat column could never describe."""
+    F = [1, 1, 2, 2, 3][lv - 1]
+    clar = [3.6, 4.2, 4.8, 5.6, 6.4][lv - 1]      # clarifier rim height
+    # The DIGESTER, and it is the signature for a reason doc 11 §2.14 makes
+    # arithmetic rather than aesthetic: LOD1 keeps the flagged signature prop and
+    # drops the level markers, so an archetype whose height comes from its L5
+    # spire collapses at 400 m and §7.1 test 8's "LOD1 keeps >= 75% of the LOD0
+    # height" fails. The pump passes that test on its water tower. A real works
+    # has exactly one tall thing and it is the sludge digester, so this shape's
+    # tall thing is one too.
+    dig = [9.0, 11.5, 16.0, 20.0, 24.0][lv - 1]
+    s = float(fx)
+    blocks = [blk(0.08, 0.08, s * 0.36, s * 0.30, 0, F)]        # control building
+    if lv >= 3:
+        blocks.append(blk(0.18, 0.16, s * 0.24, s * 0.20, F, 1))
+    if lv >= 4:
+        # A SECOND setback from L4. It is the field that carries this shape apart
+        # from the pump's at the top of the ladder: by L4 both wear the same crown
+        # band and the same masts, both stand 3-4 tiles wide, and `setback_count`
+        # is the only two bits left that a plant hall can honestly move.
+        blocks.append(blk(0.28, 0.24, s * 0.16, s * 0.13, F + 1, 1))
+    cw = s * 0.40
+    dw = s * 0.26
+    props = [
+        octp(s - dw - 0.06, 0.06, dw, dw, 0.0, dig,
+             signature=True, lod1=True),                        # sludge digester
+        octp(s - cw - 0.06, s - cw - 0.06, cw, cw, 0.0, clar),  # clarifier
+        fence(0.0, 0.0, s, s, 2.0),
+        box(0.08, s * 0.52, s * 0.38, s * 0.38, 0.0, 1.6),      # settling basin A
+        box(s * 0.16, s * 0.40, s * 0.20, 0.10, 0.0, 2.6),      # sludge gallery
+        canopy(0.0, 0.10, s * 0.14, s * 0.24, 2.8),             # control-room porch
+    ]
+    return blocks, props
+
+
+def a_tank(lv, fx, fz):
+    """doc 05 §6 `tank` — a standing steel tank on its pad, a valve house and a
+    kiosk, fenced. 2x2 to L2 and 3x3 from L3, and the tank is TALL against that
+    ground, which is the whole silhouette: the one water shell a player picks out
+    of a skyline."""
+    F = [1, 1, 2, 2, 3][lv - 1]
+    # The tank is TALL against its ground and that is the read: 14 m over two
+    # tiles is a slenderness the pump's shed ladder never reaches, and it is what
+    # puts this silhouette four bits clear of the fire station's hose tower at L1.
+    tank_h = [14.0, 17.0, 21.0, 30.0, 38.0][lv - 1]
+    s = float(fx)
+    tw = s * 0.52
+    blocks = [blk(0.08, s - 0.08 - s * 0.26, s * 0.34, s * 0.26, 0, F)]  # valve house
+    if lv >= 3:
+        blocks.append(blk(0.16, s - 0.16 - s * 0.18, s * 0.22, s * 0.18, F, 1))
+    props = [
+        octp(s * 0.5 - tw * 0.5, 0.10, tw, tw, 0.0, tank_h,
+             signature=True, lod1=True),                        # the tank
+        pad(s * 0.5 - tw * 0.5 - 0.10, 0.0, tw + 0.20, tw + 0.20),   # its pad
+        fence(0.0, 0.0, s, s, 2.0),
+        box(s * 0.62, s * 0.60, s * 0.26, s * 0.22, 0.0, 2.4),  # chlorination kiosk
+        box(s * 0.50, s * 0.86, 0.28, 0.20, 0.0, 1.8),          # riser manifold
+        canopy(s * 0.58, s * 0.52, s * 0.34, s * 0.10, 2.6),    # kiosk door hood
+    ]
+    return blocks, props
+
+
+def a_source(lv, fx, fz):
+    """doc 05 §6 `source`, subtype `river` — a screen house set back from the
+    bank, a long headwall channel with the intake mouth notched into it, a wet
+    well and the gantry that lifts the screens. The gantry is the signature and
+    it is a MAST, which is what keeps this off the tank's silhouette."""
+    F = [1, 2, 2, 3, 3][lv - 1]
+    # The gantry clears the screen house from L3 on, which is what a real intake
+    # looks like and is also the height separation this shape needs from the pump
+    # it shares a footprint ladder with.
+    gantry = [6.0, 10.5, 16.0, 22.0, 28.0][lv - 1]
+    s = float(fx)
+    blocks = [blk(s * 0.38, 0.10, s * 0.52, s * 0.44, 0, F)]    # screen house
+    if lv >= 3:
+        blocks.append(blk(s * 0.46, 0.18, s * 0.36, s * 0.30, F, 1))
+    props = [
+        mast(s * 0.20, s * 0.30, 0.0, gantry, 0.7, signature=True, lod1=True),
+        fence(0.0, 0.0, s, s, 2.0),
+        box(0.06, 0.06, s * 0.30, s * 0.88, 0.0, 1.2),          # headwall channel
+        notch(0.06, s * 0.94, s * 0.60, 0.10),                  # the intake mouth
+        box(s * 0.40, s * 0.62, s * 0.34, s * 0.28, 0.0, 2.2),  # wet-well cap
+    ]
+    return blocks, props
+
+
 ARCHETYPES = [
     ("house",             "res_house",       "residential", "gable_prism",
      [[1, 1]] * 6, a_house,      [1, 2, 2, 3, 3, 4]),
@@ -639,6 +773,32 @@ ARCHETYPES = [
      [[2, 2], [2, 2], [2, 2], [3, 3], [3, 3]], a_yard, [1, 2, 2, 3, 3]),
 ]
 
+## The VARIANT shapes (Wave 31, RR-254). Same row shape as above minus the
+## footprint column — a variant's footprints are doc 05's, read out of
+## `WATER_VARIANT_FOOTPRINTS` — plus the two keys that make it a variant:
+## `variant_of` (the doc-02 archetype whose catalog row, family and texture pages
+## it wears) and `variant` (doc 05's own name for it, which is what a `Building`
+## carries in `b.variant` and what the render picks with).
+##
+## `water_facility` itself is NOT here. It stays in the roster above as doc 02's
+## reference variant, `pump`, unmoved and byte-identical.
+## Doc 02's `reference_variant` (`data/buildings.json`): the doc-05 variant whose
+## own footprint column IS the archetype's, so the archetype's mesh is that
+## variant's mesh and nothing new has to be generated for it. `pump`, and it is
+## declared rather than assumed so the render resolves `water_facility/pump` to
+## `water_facility` as a MAPPED answer and not as a fallback — the fallback means
+## "this variant has no shape", and the pump emphatically has one.
+REFERENCE_VARIANT = {"water_facility": "pump"}
+
+WATER_VARIANT_ARCHETYPES = [
+    ("water_facility_treatment", "water_facility", "treatment",
+     "civ_waterworks", "civic", "clarifier_basins", a_treatment, [1, 1, 2, 2, 3]),
+    ("water_facility_tank",      "water_facility", "tank",
+     "civ_waterworks", "civic", "standpipe_tank",  a_tank,       [1, 1, 2, 2, 3]),
+    ("water_facility_source",    "water_facility", "source",
+     "civ_waterworks", "civic", "intake_screens",  a_source,     [1, 2, 2, 3, 3]),
+]
+
 
 def build():
     out = []
@@ -651,9 +811,28 @@ def build():
                            "footprint_tiles": [fx, fz],
                            "level_marker": MARKERS[lv - 1],
                            "blocks": blocks, "roof_props": props})
+        row = {"id": aid, "doc11_id": doc11, "family": family,
+               "roof_signature": sig,
+               "footprint_tiles_by_level": foots, "levels": levels}
+        if aid in REFERENCE_VARIANT:
+            row["variant_of"] = aid
+            row["variant"] = REFERENCE_VARIANT[aid]
+        out.append(row)
+    for aid, base, variant, doc11, family, sig, fn, floors in WATER_VARIANT_ARCHETYPES:
+        foots = WATER_VARIANT_FOOTPRINTS[variant]
+        levels = []
+        for lv in range(1, len(foots) + 1):
+            fx, fz = foots[lv - 1]
+            blocks, props = fn(lv, fx, fz)
+            levels.append({"level": lv, "floors": floors[lv - 1],
+                           "footprint_tiles": [fx, fz],
+                           "level_marker": MARKERS[lv - 1],
+                           "blocks": blocks, "roof_props": props})
         out.append({"id": aid, "doc11_id": doc11, "family": family,
+                    "variant_of": base, "variant": variant,
                     "roof_signature": sig,
-                    "footprint_tiles_by_level": foots, "levels": levels})
+                    "footprint_tiles_by_level": [list(f) for f in foots],
+                    "levels": levels})
     return out
 
 
@@ -672,7 +851,12 @@ def build_document():
         # L6 level; NOTHING below L6 moved by a millimetre, so every committed
         # L1-L5 mesh hash is byte-identical across the bump and the manifest only
         # grows.
-        "generator_version": 5,
+        # 6: doc 05's per-VARIANT water shells (Wave 31, RR-254). Three new
+        # archetype rows carrying `variant_of`/`variant`; `water_facility` — doc
+        # 02's `pump` reference variant — did not move by a millimetre, so every
+        # committed mesh hash in the file is unchanged and the manifest only grows
+        # again.
+        "generator_version": 6,
         "_owner": "doc 11 \u00a73.2 (rendering & performance). Generator input for tools/gen_graybox.gd.",
         "_generator": "tools/gen_building_shapes.py",
         "_roster_note": "The shipped roster is data/buildings.json's 12 archetypes (doc 02), not doc 11 \u00a72.14's 15-row placeholder table; doc11_id maps each shipped archetype onto the \u00a72.14 silhouette row it realises. Tri budgets, lod1_volume_keep_frac and the tall-archetype list are read from data/render.json \u00a78 'lod' and are never restated here.",
@@ -785,6 +969,63 @@ def validate(doc, render_path):
             if want and want != levels_of(a):
                 failures.append("%s: shapes author %d levels, data/buildings.json has %d"
                                 % (a, levels_of(a), want))
+    # **The footprint gate** (Wave 31, RR-254/RR-256). A variant shape exists to
+    # be drawn on the ground doc 05 says its component holds, so the mirror above
+    # must BE doc 05's column. This is the authoring-time half; the runtime half
+    # is `tests/test_water_shell_shapes.gd`, which asserts the same equality
+    # against the shipped manifest rather than against this file.
+    water_path = os.path.join(os.path.dirname(render_path), "water.json")
+    if os.path.exists(water_path):
+        water = json.load(open(water_path))
+        cols = water["_component_columns"]
+        comp = water["components"]
+        for variant, mirrored in sorted(WATER_VARIANT_FOOTPRINTS.items()):
+            key = "source_river" if variant == "source" else variant
+            names = cols[key]
+            wi, hi = names.index("footprint_w"), names.index("footprint_h")
+            rows_v = comp[key]
+            if len(rows_v) != len(mirrored):
+                failures.append("water variant %s: %d levels mirrored, doc 05 has %d"
+                                % (variant, len(mirrored), len(rows_v)))
+                continue
+            for lv, row in enumerate(rows_v, start=1):
+                want = [int(row[wi]), int(row[hi])]
+                if want != mirrored[lv - 1]:
+                    failures.append(
+                        "water variant %s L%d: shapes author %dx%d, doc 05 says %dx%d"
+                        % (variant, lv, mirrored[lv - 1][0], mirrored[lv - 1][1],
+                           want[0], want[1]))
+        # Every variant a player can PLACE must have a shape. `booster` is not in
+        # doc 05's `placeable` roster, which is why it has none and why this is a
+        # check against that roster rather than against the component table.
+        reference = REFERENCE_VARIANT.get("water_facility", "")
+        for variant in sorted((water.get("placeable", {}) or {}).keys()):
+            if variant.startswith("_"):
+                continue
+            if variant == reference:
+                continue   # doc 02's reference variant IS `water_facility`
+            if variant not in WATER_VARIANT_FOOTPRINTS:
+                failures.append("doc 05 makes `%s` placeable and it has no shape"
+                                % variant)
+        # RR-8's own claim, checked rather than repeated: doc 02's
+        # `water_facility` footprint column must BE doc 05's reference-variant
+        # column. If it ever stops being, the reference variant's mesh is drawn
+        # on the wrong ground and no per-variant shape would catch it.
+        ref_rows = comp.get(reference, [])
+        ref_names = cols.get(reference, [])
+        if ref_rows and ref_names and os.path.exists(buildings_path):
+            wi, hi = ref_names.index("footprint_w"), ref_names.index("footprint_h")
+            arch_rows = json.load(open(buildings_path))["archetypes"] \
+                .get("water_facility", {}).get("levels", [])
+            for lv, row in enumerate(ref_rows, start=1):
+                if lv > len(arch_rows):
+                    break
+                want = [int(row[wi]), int(row[hi])]
+                got = list(arch_rows[lv - 1].get("footprint", []))
+                if want != got:
+                    failures.append(
+                        "water_facility L%d: doc 02 says %s, doc 05's `%s` column "
+                        "says %s" % (lv, got, reference, want))
     return failures
 
 
@@ -821,9 +1062,12 @@ def main():
     with open(path, "w") as f:
         f.write(text)
     print("gen_building_shapes: wrote %s" % path)
-    print("  %d archetypes, %d rows (six archetypes carry the L6 tower tier); "
-          "every tri budget and silhouette Hamming distance verified"
-          % (len(ARCHETYPES), sum(levels_of(a[0]) for a in ARCHETYPES)))
+    print("  %d archetypes + %d doc-05 water VARIANTS, %d rows (six archetypes "
+          "carry the L6 tower tier); every tri budget, every silhouette Hamming "
+          "distance and every variant footprint against doc 05 verified"
+          % (len(ARCHETYPES), len(WATER_VARIANT_ARCHETYPES),
+             sum(levels_of(a[0]) for a in ARCHETYPES)
+             + sum(len(WATER_VARIANT_FOOTPRINTS[v[2]]) for v in WATER_VARIANT_ARCHETYPES)))
     return 0
 
 

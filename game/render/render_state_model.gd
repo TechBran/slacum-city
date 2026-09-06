@@ -95,8 +95,17 @@ var _recs: Dictionary = {}        # id -> BuildingRec
 var _chunks: Dictionary = {}      # Vector2i -> ChunkRec
 var _blocks: Dictionary = {}      # block_id -> BlockRec
 var _streetlights: Dictionary = {}  # id -> StreetlightRec
-var _archetype_ids: Dictionary = {}  # StringName -> int (bucket key packing)
-var _archetype_order: Array = []
+## SHAPE -> int, for the bucket-key packing. A shape is the archetype for
+## everything doc 02 owns outright and `water_facility_<variant>` for the doc-05
+## shells that have their own massing (Wave 31, RR-254) — see `ShapeCatalog`.
+## Buckets are keyed by shape and not by archetype because the MESH is: a tank
+## and a pump in one chunk at one level are two meshes on two footprints and
+## cannot share a MultiMesh.
+var _shape_ids: Dictionary = {}
+var _shape_order: Array = []
+## The (archetype, variant) → shape map, read from the gray-box manifest. Held
+## rather than asked statically per building so a harness can inject its own.
+var _shapes: ShapeCatalog = null
 var _animating: Array = []        # ids, insertion-ordered
 var _out_events: Array = []
 var _suppress_events: bool = false
@@ -133,10 +142,23 @@ class BuildingRec extends RefCounted:
 	var bucket_key: int = 0
 	var slot: int = -1
 	var archetype: StringName = &""
+	## `Building.variant` — doc 05's own name for a water shell (`pump`, `tank`,
+	## `treatment`, `source`), empty for everything doc 02 owns outright.
+	var variant_id: StringName = &""
+	## The MESH this building draws with: the archetype, or the variant's own
+	## shape where one exists. Buckets are keyed on it (Wave 31, RR-254).
+	var shape: StringName = &""
 	var level: int = 1
 	var family: String = "residential"
 	var world_pos := Vector3.ZERO
 	var transform := Transform3D.IDENTITY
+	## The ground this building actually holds, in tiles — `built_of_building`.
+	## `Vector2i.ZERO` when the view did not say, which means "take the mesh's".
+	var built_tiles := Vector2i.ZERO
+	## What the transform's basis was scaled by to fit the mesh into
+	## `built_tiles`. 1.0 on every building whose mesh is already the right size,
+	## which is every one of them once a variant has its own shape.
+	var footprint_scale := Vector2.ONE
 
 	var occ_b: float = 1.0
 	var powered: bool = true
@@ -189,7 +211,12 @@ class BlockRec extends RefCounted:
 class Bucket extends RefCounted:
 	var key: int = 0
 	var chunk := Vector2i.ZERO
+	## The doc-02 archetype — what the bucket wears (texture pages, family).
 	var archetype: StringName = &""
+	## The SHAPE — what the bucket DRAWS. Equal to `archetype` except on a doc-05
+	## water variant with its own massing. The manifest, the merged atlas and the
+	## far/blob scales are all keyed on this (Wave 31, RR-254).
+	var shape: StringName = &""
 	var level: int = 1
 	var capacity: int = 0
 	var visible_count: int = 0
@@ -395,12 +422,63 @@ func emissive_out(id: int) -> float:
 	return maxf(0.0, rec.emissive_cur * _envelope_mult(rec.block_id))
 
 
+# ------------------------------------------------------------------- shapes
+
+## The (archetype, variant) → shape map this model resolves buildings with.
+## Defaults to the process-wide catalogue over the shipped manifest.
+func shapes() -> ShapeCatalog:
+	if _shapes == null:
+		_shapes = ShapeCatalog.shared()
+	return _shapes
+
+
+## Inject a catalogue — a harness with its own manifest, or a test that wants a
+## variant the shipped meshes do not carry. Buildings already added keep the
+## shape they were resolved with; call before populating.
+func set_shapes(catalog: ShapeCatalog) -> void:
+	_shapes = catalog
+
+
+## **The overhang guard** (Wave 31, RR-256). How far the instance basis must be
+## squeezed on X/Z so the mesh sits INSIDE the ground the sim says this building
+## holds. `Vector2.ONE` — the whole city, today — whenever the mesh's own
+## footprint already fits.
+##
+## It exists for the variant that has no shape of its own yet. `booster` is the
+## live one: doc 05 §6 defers it, so it draws with `water_facility`'s 3×3 pump
+## shell, and on its 1×1 L1 footprint that shell would put **8 m of building over
+## every edge** — four times the defect the player reported. Scaled, it is a
+## squat pump house on one tile: wrong-looking, and standing on its own ground.
+##
+## It only ever SHRINKS. A mesh smaller than the built footprint is a building
+## with room around it, which is what the lot dressing is for (§2.16a) and not a
+## reason to inflate the art. And Y is never touched: the height is the
+## archetype's own and `build_height_m`'s construction clamp is written against
+## it, so scaling it would make a half-built building the wrong fraction.
+func footprint_scale_for(shape: StringName, level: int,
+		built_tiles: Vector2i) -> Vector2:
+	if built_tiles.x <= 0 or built_tiles.y <= 0:
+		return Vector2.ONE
+	var mesh_tiles := shapes().footprint_of(shape, level)
+	if mesh_tiles.x <= 0 or mesh_tiles.y <= 0:
+		return Vector2.ONE
+	return Vector2(
+			minf(1.0, float(built_tiles.x) / float(mesh_tiles.x)),
+			minf(1.0, float(built_tiles.y) / float(mesh_tiles.y)))
+
+
 # -------------------------------------------------------- building lifecycle
 
 ## `view` mirrors doc 11 §5's BuildingView plus the chunk/block the renderer
-## places it in: {id, archetype_id, level, chunk, block_id, world_pos, family,
-## occ_b, powered, has_backup_power, priority_load, damage, condition,
-## construction_stage, overlay_state, transform}.
+## places it in: {id, archetype_id, variant_id, level, chunk, block_id,
+## world_pos, family, occ_b, powered, has_backup_power, priority_load, damage,
+## condition, construction_stage, overlay_state, transform, built_tiles}.
+##
+## `variant_id` and `built_tiles` are Wave 31's (RR-254/RR-256) and both are
+## optional: `variant_id` picks the doc-05 shape and defaults to "this archetype
+## has no variants"; `built_tiles` is `CitySim.built_of_building` and is what the
+## overhang guard divides the mesh footprint into. A producer that supplies
+## neither gets exactly the model it got before this pass.
 func add_building(view: Dictionary) -> BuildingRec:
 	var id := int(view["id"])
 	if _recs.has(id):
@@ -408,12 +486,25 @@ func add_building(view: Dictionary) -> BuildingRec:
 	var rec := BuildingRec.new()
 	rec.id = id
 	rec.archetype = StringName(view.get("archetype_id", &""))
+	rec.variant_id = StringName(view.get("variant_id", &""))
 	rec.level = int(view.get("level", 1))
+	rec.shape = shapes().shape_of(rec.archetype, rec.variant_id)
 	rec.family = String(view.get("family", "residential"))
 	rec.world_pos = view.get("world_pos", Vector3.ZERO)
 	rec.chunk = view.get("chunk", chunk_of(rec.world_pos))
 	rec.block_id = view.get("block_id", rec.chunk)
+	rec.built_tiles = view.get("built_tiles", Vector2i.ZERO)
 	rec.transform = view.get("transform", Transform3D(Basis.IDENTITY, rec.world_pos))
+	rec.footprint_scale = footprint_scale_for(rec.shape, rec.level, rec.built_tiles)
+	if rec.footprint_scale != Vector2.ONE:
+		# LOCAL scale, so the mesh shrinks along its OWN axes: `basis * from_scale`
+		# and not `basis.scaled()`, which scales in the parent frame. Identical on
+		# the identity bases every producer of a BuildingView writes today, and
+		# correct the day one of them writes a yaw.
+		rec.transform = Transform3D(
+				rec.transform.basis * Basis.from_scale(
+						Vector3(rec.footprint_scale.x, 1.0, rec.footprint_scale.y)),
+				rec.transform.origin)
 	rec.occ_b = float(view.get("occ_b", 1.0))
 	rec.powered = bool(view.get("powered", true))
 	rec.has_backup_power = bool(view.get("has_backup_power", false))
@@ -668,16 +759,20 @@ func _block_rec(block_id: Variant, chunk: Vector2i = Vector2i.ZERO) -> BlockRec:
 
 # ------------------------------------------------------- slot allocator §2.2
 
-func _bucket_key(archetype: StringName, level: int) -> int:
-	if not _archetype_ids.has(archetype):
-		_archetype_ids[archetype] = _archetype_order.size()
-		_archetype_order.append(archetype)
-	return (int(_archetype_ids[archetype]) << 3) | (level & 7)
+## Keyed on the SHAPE, not the archetype (Wave 31, RR-254): the bucket owns one
+## MultiMesh over one mesh, so a `tank` and a `pump` at the same level in the
+## same chunk are two buckets. For everything doc 02 owns outright the shape IS
+## the archetype and this key is bit-for-bit the one it always was.
+func _bucket_key(shape: StringName, level: int) -> int:
+	if not _shape_ids.has(shape):
+		_shape_ids[shape] = _shape_order.size()
+		_shape_order.append(shape)
+	return (int(_shape_ids[shape]) << 3) | (level & 7)
 
 
-func bucket(chunk: Vector2i, archetype: StringName, level: int) -> Bucket:
+func bucket(chunk: Vector2i, shape: StringName, level: int) -> Bucket:
 	var c := _chunk_rec(chunk)
-	return c.buckets.get(_bucket_key(archetype, level))
+	return c.buckets.get(_bucket_key(shape, level))
 
 
 func buckets_of(chunk: Vector2i) -> Array:
@@ -690,7 +785,7 @@ func buckets_of(chunk: Vector2i) -> Array:
 
 func _alloc_slot(rec: BuildingRec) -> void:
 	var c := _chunk_rec(rec.chunk)
-	var key := _bucket_key(rec.archetype, rec.level)
+	var key := _bucket_key(rec.shape, rec.level)
 	rec.bucket_key = key
 	var b: Bucket = c.buckets.get(key)
 	if b == null:
@@ -698,6 +793,7 @@ func _alloc_slot(rec: BuildingRec) -> void:
 		b.key = key
 		b.chunk = rec.chunk
 		b.archetype = rec.archetype
+		b.shape = rec.shape
 		b.level = rec.level
 		c.buckets[key] = b
 	if b.visible_count + 1 > b.capacity:
@@ -778,8 +874,8 @@ func _write_slot(b: Bucket, rec: BuildingRec) -> void:
 	b.mirror[base + 15] = custom.a
 
 
-func mirror_custom(chunk: Vector2i, archetype: StringName, level: int, slot: int) -> Color:
-	var b := bucket(chunk, archetype, level)
+func mirror_custom(chunk: Vector2i, shape: StringName, level: int, slot: int) -> Color:
+	var b := bucket(chunk, shape, level)
 	if b == null or slot < 0 or slot >= b.visible_count:
 		return Color(0, 0, 0, 0)
 	var base := slot * INSTANCE_STRIDE
@@ -1400,7 +1496,18 @@ func apply_event(e: Dictionary) -> void:
 			if rec4 != null:
 				var new_level := int(e.get("level", rec4.level))
 				if new_level != rec4.level:
-					_rebucket(rec4, new_level)
+					# **The rung that MOVES the building** (Wave 31, RR-255).
+					# Half of doc 02's roster changes footprint as it climbs — a
+					# store 1×1 → 2×2 at L3, a treatment plant 2×2 → 3×3 at L2 —
+					# and a mesh is centred on the ground it holds, so growing
+					# one puts its centre half a tile further along both axes.
+					# This arm rebucketed the LEVEL and left the transform where
+					# the old rung put it, which stood every grown building 4 m
+					# off its own lot for the rest of the game. The two optional
+					# fields are the shell handing over what only the sim can
+					# answer; without them the arm is exactly what it was.
+					_rebucket(rec4, new_level, e.get("world_pos", null),
+							e.get("built_tiles", Vector2i.ZERO))
 				rec4.stage = 0
 				rec4.damage = float(e.get("damage", rec4.damage))
 				_write_overlay(rec4, OVERLAY_NORMAL)
@@ -1549,9 +1656,33 @@ func _rec_of(id_value: Variant) -> BuildingRec:
 	return _recs.get(int(id_value))
 
 
-func _rebucket(rec: BuildingRec, new_level: int) -> void:
+## Move one building to another level's bucket, and — when the caller can say
+## where the new rung stands — to the centre and the footprint scale that rung
+## needs. `world_pos` null and `built_tiles` zero keep both, which is what every
+## producer that has nothing to say hands over.
+##
+## The chunk is deliberately NOT re-derived: a footprint growing by a tile moves
+## a centre by 4 m and could cross a 128 m chunk line, and a rec whose `chunk`
+## disagrees with the ChunkRec holding it corrupts the slot allocator. The
+## streamer re-homes buildings; this only re-centres one inside its own chunk.
+func _rebucket(rec: BuildingRec, new_level: int, world_pos: Variant = null,
+		built_tiles: Vector2i = Vector2i.ZERO) -> void:
 	_free_slot(rec)
 	rec.level = new_level
+	if built_tiles.x > 0 and built_tiles.y > 0:
+		rec.built_tiles = built_tiles
+	if world_pos != null:
+		rec.world_pos = world_pos
+	rec.footprint_scale = footprint_scale_for(rec.shape, rec.level, rec.built_tiles)
+	# Rebuilt from the identity rather than composed onto the old basis, because
+	# the old basis already carries the OLD rung's footprint scale and there is
+	# nothing else in it: every producer of a BuildingView in this project writes
+	# `Transform3D(Basis.IDENTITY, centre)` — the same fact `_upload_blob` reads
+	# the far and blob transforms under.
+	rec.transform = Transform3D(
+			Basis.from_scale(Vector3(rec.footprint_scale.x, 1.0,
+					rec.footprint_scale.y)),
+			rec.world_pos)
 	_alloc_slot(rec)
 
 

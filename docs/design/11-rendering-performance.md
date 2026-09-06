@@ -3125,6 +3125,100 @@ Level identity = height + a **cumulative** marker: L1 none; L2 +1 rooftop box; L
 
 **Silhouette descriptor** (generated, tested in §7.1), 24 bits: `[height_bucket:4][aspect_bucket:3][roof_sig_id:4][setback_count:2][mast_count:2][prop_count:3][notch_flags:3][windowless:1][footprint_id:2]`. Every pair of archetypes at the same level must differ in ≥ 4 bits; every pair of levels within an archetype in ≥ 2 bits.
 
+### 2.14a VARIANT SHAPES — a mesh belongs to a (archetype, variant), **shipped 2026-09-06**
+
+**The defect this closes, from the player, 2026-09-06:** *"Treatment plants and
+storage tanks — the buildings are built off-centre, and they just fall out onto
+the road. They don't follow their grid pattern; they're just off-centre from
+it."*
+
+§2.14's manifest is keyed `archetype:level:lod` and carries **one**
+`footprint_tiles` per archetype-level. That key is a claim — *nothing else about
+a building changes its mesh* — and for one archetype it was false.
+`data/buildings.json`'s `water_facility` footprint column is doc 02's PUMP
+reference variant and the file says so in a field called
+`footprints_are_reference_variant_only`; doc 05's other placeable shells are
+built on their own columns (`treatment` 2×2 at L1, `tank` 2×2 to L2, river
+`source` 2×2 to L2) and `CitySim.built_of_building` returns exactly those. So
+every one of them was drawn with the pump's 3×3 shell centred on 2×2 of ground —
+**4 m of building over every edge**, which beside a street is a building in the
+road — and a 4×4 `treatment` plant at L4 was drawn with a 3×3 shed, the same
+defect with its sign flipped.
+
+**The render's unit is the SHAPE.** A shape is the archetype for everything doc
+02 owns outright, and `<archetype>_<variant>` for a variant whose footprint
+ladder is not the archetype's. Doc 93 §BI1 is the ruling; this section is the
+pipeline.
+
+| shape | variant | footprints L1..L5 | signature | massing |
+|---|---|---|---|---|
+| `water_facility` | `pump` (doc 02's declared `reference_variant`) | 3×3 3×3 3×3 3×3 4×4 | `tank_cluster` | pump house, water tower, filter beds — **unchanged, every mesh hash byte-identical** |
+| `water_facility_treatment` | `treatment` | 2×2 **3×3** 3×3 4×4 4×4 | `clarifier_basins` | control building, settling basins, a wide clarifier and a tall sludge digester, fenced |
+| `water_facility_tank` | `tank` | 2×2 2×2 **3×3** 3×3 4×4 | `standpipe_tank` | a standing steel tank on its pad, valve house, chlorination kiosk, fenced |
+| `water_facility_source` | `source` (subtype `river`) | 2×2 2×2 3×3 3×3 4×4 | `intake_screens` | screen house set back from the bank, headwall channel with the intake mouth notched into it, wet well, gantry |
+| — | `booster` | 1×1 1×1 1×1 2×2 2×2 | *deferred by doc 05 §6* | none — see **the guard** below |
+
+**Three new roof signatures**, taking the last three free codes in the 4-bit
+field: `clarifier_basins` `0b1011`, `standpipe_tank` `0b1101`, `intake_screens`
+`0b1110`. `tank_cluster` `0b1100` does not move, because it is the pump's and the
+pump did not move. Every pair of the fifteen shapes clears §7.1 test 7 — Hamming
+≥ 4 at equal level, ≥ 2 between levels of one shape — and
+`tools/gen_building_shapes.py` re-checks all of it in plain arithmetic before it
+will write the file.
+
+**Why the treatment plant has a digester, and it is arithmetic.** §2.14's LOD1
+rule keeps the flagged signature prop and drops the level markers, so a shape
+whose height comes from its L5 spire collapses at 400 m and §7.1 test 8's *"LOD1
+keeps ≥ 75% of the LOD0 height"* fails outright. The pump passes that test on its
+water tower. A real works has exactly one tall thing and it is the sludge
+digester, so this shape's tall thing is one too — the test passes on the massing
+rather than on an exemption, and the works reads as a works at every band.
+
+**How it flows.** `tools/gen_building_shapes.py` mirrors doc 05's
+`components[variant][L]` footprint columns and **fails if the mirror has drifted
+from `data/water.json`**; `tools/gen_graybox.gd` copies `variant_of` / `variant`
+onto every manifest row; `game/render/shape_catalog.gd` (`ShapeCatalog`) inverts
+those two fields into the (archetype, variant) → shape map and is the ONLY place
+that map exists. `RenderStateModel` keys its BUCKETS on the shape — a bucket owns
+one MultiMesh over one mesh, so a tank and a pump at one level in one chunk are
+two buckets — and `CityView` keys the manifest lookup, the merged MEDIUM atlas
+(§2.6's level tag would otherwise collide between two meshes at the same level),
+`_far_scale` and `_family_index` on it too. The **texture pages stay the base
+archetype's**: a tank wears the waterworks' utility facade because it is a water
+facility, not a fifteenth archetype with a palette of its own.
+
+**The guard, for the variant that has no shape.** Doc 05 §6 defers `booster`, so
+it draws with `water_facility`'s mesh — 3×3 over its 1×1 L1 footprint, an 8 m
+overhang per edge, twice the reported defect. The rule is therefore not "every
+variant must have a mesh" but **a mesh may never be drawn outside the ground its
+subject holds**: `RenderStateModel.footprint_scale_for` squeezes the instance
+basis on X/Z to `built / mesh`, clamped at 1.0, and the FAR box and the §2.11
+blob decal multiply that instance scale back in so neither is wider than the
+thing it stands for. It only ever SHRINKS — a mesh smaller than its ground is a
+building with room around it, which is what §2.16a exists to dress — and **Y is
+never touched**, because `build_height_m`'s construction clamp is written against
+the archetype's own height.
+
+**What this costs.** Nothing on the benchmark city: its four water shells are all
+`pump`, so every bucket key in it is bit-for-bit what it was and
+`tools/profile_frame.gd` measures **87 / 105 / 188** draw calls and **89,890 /
+114,340 / 248,514** primitives at Z0/Z1/Z2 before and after, identical in every
+cell. On the founding city it is **+1 draw call and +4 primitives at every
+pose** (23/34/72 → 24/35/73), and that is the census answering honestly: `WTR-1`
+is a pump and `WTR-2` a tank, in the same 128 m chunk at the same level, and they
+used to be one bucket drawing one mesh for both. One call against 246 of headroom
+at the Balanced budget, and the alternative is the tank drawn as a pump.
+
+**The gate.**
+`tests/test_water_shell_shapes.gd::test_every_manifest_footprint_is_its_catalogue_footprint`
+asserts every one of the 162 mesh rows' `footprint_tiles` against the footprint
+doc 02 — or doc 05, for a variant — publishes for its (archetype, variant,
+level). A mesh authored on ground its subject does not hold cannot get past that
+line whoever authors it. `tools/probe_water_shell.gd` is the measurement and
+`tools/water_shell_preview.gd` the deck: 20 shots, every variant at every rung,
+from the kerb, with `--legacy` re-drawing the same twenty with the archetype mesh
+so the before and the after differ in one thing.
+
 ### 2.15 Audio — owned by this doc (report G-3), **shipped 2026-08-19**
 
 **Ruled (report G-3).** Spec §39 lists the required sounds and calls out power restoration's audiovisual signature explicitly; no doc owned audio. **This doc owns it**, because it already owns the event hooks and the timing beats the mix must be authored against.
@@ -4229,12 +4323,21 @@ Units: `pos_t`/`size_t` in **tiles** on XZ; block heights in **floors** (× `flo
 ### 3.3 `game/meshes/generated/manifest.json` (generated, never hand-edited)
 
 ```json
-{ "generated_from_hash": "<sha1 of building_shapes.json>", "generator_version": 3,
+{ "generated_from_hash": "<sha1 of building_shapes.json>", "generator_version": 6,
   "meshes": [ { "archetype": "res_highrise", "level": 4, "lod": 0,
+    "variant_of": "", "variant": "",
     "path": "res://game/meshes/generated/res_highrise_L4_lod0.mesh",
     "tris": 288, "height_m": 177.0, "aabb": [16.0, 177.0, 16.0],
     "window_cols": 5, "window_rows": 48, "silhouette_descriptor": "0x4C3A91" } ] }
 ```
+
+`archetype` is the **SHAPE** id (§2.14a), which is the doc-02 archetype for
+everything doc 02 owns outright and `<archetype>_<variant>` for a doc-05 shell
+with its own footprint ladder. `variant_of` names the archetype the shape WEARS —
+its stat row, its family and its texture pages — and `variant` the doc-05
+component it draws. Both are empty on a plain archetype row. `ShapeCatalog`
+inverts them into the (archetype, variant) → shape map the render picks with;
+nothing else in the project may re-derive it.
 
 ### 3.4 Save-file section — `render_prefs`
 
@@ -4407,12 +4510,13 @@ holds the preset switch. The governor deliberately reaches into none of them.
 ### 7.1 Headless — gray-box generator (`tests/test_graybox_gen.gd`)
 
 1. **Determinism:** two generations from identical input yield byte-identical `.mesh` files.
-2. **Coverage:** every archetype produces exactly 5 levels × 2 LODs; manifest entries match files on disk.
+2. **Coverage:** every archetype produces its own ladder × 2 LODs (five rungs, six for doc 02 §2.14's growth stock, five for each §2.14a VARIANT shape); manifest entries match files on disk.
 3. **Height formula:** `manifest.height_m == floors·3.5 + roof_extra_m` for all entries (±0.01).
 4. **Tri budget:** LOD0 ≤ 320 (≤ 420 for the three tall archetypes); LOD1 ≤ 96 **and** ≤ 0.40 × LOD0.
-5. **UV2 rule:** every vertex with `|normal.y| > 0.5` has `UV2 == (-1,-1)`; every vertex with `|normal.y| < 0.2` on a `window:"grid"` block has `UV2 ∈ [0,1]²`; `tech_datacenter` has zero valid-UV2 vertices.
+5. **UV2 rule:** every vertex with `|normal.y| > 0.5` has `UV2 == (-1,-1)`; every vertex with `|normal.y| < 0.2` on a `window:"grid"` block has `UV2 ∈ [0,1]²`; a row the manifest flags `windowless` has zero valid-UV2 vertices. *(Driven by the flag rather than by the archetype's name since Wave 31: the roster grows, and a test that knows the answer by name stops testing the rule the moment it does.)*
 6. **AO bake:** every façade-bearing mesh has ≥1 vertex with `COLOR.r ≤ 0.60` and no vertex with `COLOR.r > 1.0`.
-7. **Silhouette uniqueness:** pairwise descriptor Hamming distance ≥ 4 across archetypes at equal level, ≥ 2 across levels within an archetype. This is the automated form of constitution §11.
+7. **Silhouette uniqueness:** pairwise descriptor Hamming distance ≥ 4 across SHAPES at equal level, ≥ 2 across levels within a shape. This is the automated form of constitution §11. *(Shapes, not archetypes, since §2.14a: a tank and a pump are as different to a player as a tank and a fire station, and the rule that says so is this one.)*
+7b. **A mesh stands on its own ground** (`tests/test_water_shell_shapes.gd`, §2.14a): every manifest row's `footprint_tiles` equals the footprint doc 02 — or doc 05, for a variant shell — publishes for its (archetype, variant, level); every variant doc 05 makes placeable resolves to a shape whose mesh IS its built footprint at every placeable rung; a variant with no shape of its own is scaled into its built footprint and never enlarged; and a completed rung that grows the footprint is re-centred on the ground it now holds.
 
 ### 7.2 Headless — `RenderStateModel` (`tests/test_render_state.gd`)
 

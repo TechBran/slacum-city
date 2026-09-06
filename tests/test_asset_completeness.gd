@@ -34,6 +34,9 @@ extends SimTest
 const MESH_MANIFEST := "res://game/meshes/generated/manifest.json"
 const TEX_MANIFEST := "res://game/textures/generated/manifest.json"
 const CATALOG := "res://data/buildings.json"
+## Doc 05's own component ladders — the footprint columns the water VARIANT
+## shells are generated against (Wave 31, RR-254).
+const WATER_DATA := "res://data/water.json"
 const SHAPES := "res://data/building_shapes.json"
 const RENDER_JSON := "res://data/render.json"
 const VEHICLES := "res://data/vehicles.json"
@@ -155,6 +158,9 @@ func _cells() -> Dictionary:
 
 
 ## Which pages an archetype wears — `CityView._surface_for`, restated.
+## `CityView._surface_for`, restated — and it takes the shape's BASE archetype,
+## which is what the view passes (Wave 31): a doc-05 variant shell wears the
+## waterworks' pages, not a palette of its own.
 func _surface_for(archetype: String, family: String) -> Dictionary:
 	var tex := _tex()
 	var by_arch: Dictionary = tex.get("archetype_surface", {})
@@ -186,8 +192,27 @@ func test_01_every_catalog_cell_has_a_mesh_at_both_lods() -> void:
 						"NO MESH for cell %s — re-run tools/gen_graybox.gd" % key)
 				counted += 1
 	# 12 archetypes: 6 at six rungs + 6 at five = 66 cells, 132 with both LODs.
-	assert_eq(counted, 132, "the building matrix is 132 cells")
-	assert_eq(cells.size(), 132,
+	assert_eq(counted, 132, "the doc-02 building matrix is 132 cells")
+	# **The doc-05 half** (Wave 31, RR-254). `water_facility`'s footprint column
+	# is the PUMP reference variant's and doc 02 says so; `treatment`, `tank` and
+	# `source` are built on doc 05's own columns and each needs a mesh set of its
+	# own, or the renderer draws them with the pump's shell on ground they do not
+	# hold. Five rungs each, both LODs.
+	var water: Dictionary = StarterCityLoader.read_json(WATER_DATA)
+	var variants: Array = ["treatment", "tank", "source"]
+	var variant_cells := 0
+	for variant: String in variants:
+		var key_v := "source_river" if variant == "source" else variant
+		var rungs: Array = (water.get("components", {}) as Dictionary).get(key_v, [])
+		assert_true(rungs.size() > 0, "doc 05 publishes a `%s` ladder" % variant)
+		for level in range(1, rungs.size() + 1):
+			for lod2 in [0, 1]:
+				var key2 := "water_facility_%s:%d:%d" % [variant, level, lod2]
+				assert_true(cells.has(key2),
+						"NO MESH for cell %s — re-run tools/gen_graybox.gd" % key2)
+				variant_cells += 1
+	assert_eq(variant_cells, 30, "doc 05's three variant shells are 30 cells")
+	assert_eq(cells.size(), counted + variant_cells,
 			"the manifest holds exactly the matrix and no orphan rows")
 
 
@@ -250,7 +275,11 @@ func test_04_every_cell_resolves_a_facade_and_a_roof_page_that_loads() -> void:
 	var cells := _cells()
 	for key: String in cells:
 		var e: Dictionary = cells[key]
-		var archetype := String(e["archetype"])
+		# The BASE archetype, which is what `CityView` passes: a variant shell
+		# wears its archetype's pages (Wave 31).
+		var archetype := String(e.get("variant_of", ""))
+		if archetype == "":
+			archetype = String(e["archetype"])
 		var family := String(e.get("family", ""))
 		var surface := _surface_for(archetype, family)
 		assert_false(surface.is_empty(),
@@ -635,8 +664,12 @@ func test_19_the_matrix_census_is_what_doc_91_records() -> void:
 	# type or a page has to come here and move them, which is the point — the
 	# matrix cannot grow silently, and the audit's headline cannot go stale
 	# without a red suite.
-	assert_eq(_cells().size(), 132, "building meshes (12 archetypes x rungs x 2 LODs)")
-	assert_eq(_meshes().size(), 133, "…plus the one shared FAR box")
+	# 162 since Wave 31 (RR-254): 132 doc-02 cells plus doc 05's three variant
+	# shells at five rungs and two LODs. The pump is not among them — it IS
+	# `water_facility`, doc 02's reference variant, and its meshes did not move.
+	assert_eq(_cells().size(), 162,
+			"building meshes (12 archetypes + 3 doc-05 variants) x rungs x 2 LODs")
+	assert_eq(_meshes().size(), 163, "…plus the one shared FAR box")
 	var tex := _tex()
 	assert_eq((tex.get("facades", {}) as Dictionary).size(), 8, "facade pages")
 	assert_eq((tex.get("roofs", {}) as Dictionary).size(), 4, "roof pages")

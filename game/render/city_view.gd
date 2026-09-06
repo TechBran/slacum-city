@@ -124,7 +124,15 @@ var medium_merge_enabled := true
 ## a mid-rise's banding — the renderer side is ready and tested for it.
 var atlas_lod := 0
 
-var _manifest_by_key: Dictionary = {}  # "archetype:level:lod" -> manifest entry
+var _manifest_by_key: Dictionary = {}  # "shape:level:lod" -> manifest entry
+## shape -> the doc-02 archetype it wears (itself, for a plain archetype). The
+## TEXTURE PAGES are the archetype's: a tank is a water facility in utility
+## panelling, not a fifteenth archetype with a palette of its own.
+var _base_archetype: Dictionary = {}
+## The (archetype, variant) -> shape map, over the same manifest. Handed to the
+## model so the view and the model can never disagree about which mesh a
+## building draws with.
+var _shapes: ShapeCatalog = null
 var _bucket_nodes: Dictionary = {}  # bucket key -> MultiMeshInstance3D
 var _shader: Shader
 var _window_colors: Dictionary = {}
@@ -194,20 +202,20 @@ var _far_buffers: Dictionary = {}   # Vector2i chunk -> PackedFloat32Array
 ## "archetype:mask:lod" -> that level set as ONE ArrayMesh. Built once, on
 ## first use, and shared by every chunk holding the same set of levels.
 var _atlas_mesh: Dictionary = {}
-## archetype -> the ShaderMaterial the atlas wears. ONE per archetype for the
+## shape -> the ShaderMaterial the atlas wears. ONE per shape for the
 ## whole city, not one per bucket: the merged mesh bakes the per-level window
 ## grid into UV2 and the per-level height into `level_build_height[]`, so
 ## nothing is left in the uniform set that varies by chunk or by level.
 var _atlas_material: Dictionary = {}
-## archetype -> the atlas's per-level `height_m`, kept for the material and for
+## shape -> the atlas's per-level `height_m`, kept for the material and for
 ## the tests that assert the construction clamp still has the right heights.
 var _atlas_heights: Dictionary = {}
-## Vector2i chunk -> {archetype: MultiMeshInstance3D}.
+## Vector2i chunk -> {shape: MultiMeshInstance3D}.
 var _medium_nodes: Dictionary = {}
 ## Tests only, same reason as `keep_far_buffers`: `MultiMesh.buffer` round-trips
 ## through the (dummy, headless) rendering server and cannot be read back.
 var keep_medium_buffers := false
-var _medium_buffers: Dictionary = {}  # "cx_cy_archetype" -> PackedFloat32Array
+var _medium_buffers: Dictionary = {}  # "cx_cy_shape" -> PackedFloat32Array
 # --- the contact-shadow decal (§2.11's MM_blob) ----------------------------
 ## `data/render.json` → `blob_shadow.enabled_presets`. THIS row is the building
 ## decal's gate and nothing else's: §2.17's street bodies read the same block's
@@ -260,8 +268,16 @@ func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
 	if ResourceLoader.exists("res://game/shaders/building_far.gdshader"):
 		_far_shader = load("res://game/shaders/building_far.gdshader")
 	var manifest: Dictionary = StarterCityLoader.read_json("res://game/meshes/generated/manifest.json")
+	# `entry["archetype"]` is the SHAPE id (Wave 31, RR-254) — the doc-02
+	# archetype for everything doc 02 owns outright, and `water_facility_<variant>`
+	# for a doc-05 shell with its own massing. `variant_of` names the archetype it
+	# WEARS, which is what picks its texture pages.
+	_shapes = ShapeCatalog.from_manifest(manifest)
 	for entry in manifest.get("meshes", []):
 		_manifest_by_key["%s:%d:%d" % [entry["archetype"], int(entry["level"]), int(entry["lod"])]] = entry
+		var base := String(entry.get("variant_of", ""))
+		_base_archetype[String(entry["archetype"])] = \
+				base if base != "" else String(entry["archetype"])
 		if int(entry["lod"]) == 0:
 			var idx := FAMILY_ORDER.find(String(entry.get("family", "residential")))
 			_family_index[String(entry["archetype"])] = float(maxi(idx, 0))
@@ -291,6 +307,10 @@ func setup(p_model: RenderStateModel, render_data: Dictionary) -> void:
 	_far_band = Vector2(float(emissive.get("far_band_lo", 0.30)),
 			float(emissive.get("far_band_hi", 0.78)))
 	_day_gate = float(emissive.get("day_gate", 0.06))
+	if model != null and _shapes != null:
+		# One catalogue, one answer. The model keys its buckets with it and this
+		# view keys its meshes with it, so the two cannot drift.
+		model.set_shapes(_shapes)
 	_construction = render_data.get("construction", {})
 	_read_blob(render_data.get("blob_shadow", {}))
 	_load_textures()
@@ -475,7 +495,7 @@ func _rebuild() -> void:
 		_blob_instance = null
 	_blob_last = PackedFloat32Array()
 	_blob_buffers.clear()
-	# The atlas MESHES and MATERIALS survive: they are keyed by archetype and
+	# The atlas MESHES and MATERIALS survive: they are keyed by shape and
 	# level set, not by chunk, so a rebuilt city reuses every one of them. The
 	# blob mesh and its ONE material survive for the same reason — neither is
 	# keyed by anything a rebuild moves.
@@ -505,13 +525,15 @@ func _node_key(bucket: RenderStateModel.Bucket) -> String:
 func _ensure_bucket_node(bucket: RenderStateModel.Bucket) -> void:
 	if _bucket_nodes.has(_node_key(bucket)):
 		return
+	# Keyed on the SHAPE (Wave 31, RR-254): a `tank` bucket must find the tank's
+	# 2x2 mesh and not the pump reference row's 3x3 shell.
 	var entry: Dictionary = _manifest_by_key.get(
-			"%s:%d:0" % [bucket.archetype, bucket.level], {})
+			"%s:%d:0" % [bucket.shape, bucket.level], {})
 	if entry.is_empty():
-		push_warning("no mesh for %s L%d" % [bucket.archetype, bucket.level])
+		push_warning("no mesh for %s L%d" % [bucket.shape, bucket.level])
 		return
 	var node := MultiMeshInstance3D.new()
-	node.name = "MM_%s_%d_%d_%d" % [bucket.archetype, bucket.level,
+	node.name = "MM_%s_%d_%d_%d" % [bucket.shape, bucket.level,
 			bucket.chunk.x, bucket.chunk.y]
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -538,7 +560,7 @@ func _ensure_bucket_node(bucket: RenderStateModel.Bucket) -> void:
 				material.set_shader_parameter(String(key), Color(String(value)))
 			TYPE_INT, TYPE_FLOAT:
 				material.set_shader_parameter(String(key), float(value))
-	_apply_surface(material, bucket.archetype, family)
+	_apply_surface(material, base_archetype_of(String(bucket.archetype)), family)
 	mm.mesh = mesh
 	node.multimesh = mm
 	node.material_override = material
@@ -618,11 +640,11 @@ func _chunk_aabb(chunk: Vector2i) -> AABB:
 
 ## `mask` bit `level - 1` set for every level this atlas must carry. Cached, so
 ## the meshes are built once per distinct (archetype, level set, lod) in the
-## city. `null` when the archetype has no mesh set at `atlas_lod` at all — then
-## that archetype keeps its per-level buckets and the chunk merges the rest,
+## city. `null` when the shape has no mesh set at `atlas_lod` at all — then
+## that shape keeps its per-level buckets and the chunk merges the rest,
 ## which is still a merge.
-func _atlas_for(archetype: String, mask: int) -> Mesh:
-	var cache_key := "%s:%d:%d" % [archetype, mask, atlas_lod]
+func _atlas_for(shape: String, mask: int) -> Mesh:
+	var cache_key := "%s:%d:%d" % [shape, mask, atlas_lod]
 	if _atlas_mesh.has(cache_key):
 		return _atlas_mesh[cache_key]
 	var verts := PackedVector3Array()
@@ -634,7 +656,7 @@ func _atlas_for(archetype: String, mask: int) -> Mesh:
 	for level in range(1, LEVEL_MAX + 1):
 		if (mask & (1 << (level - 1))) == 0:
 			continue
-		var entry: Dictionary = _manifest_by_key.get("%s:%d:%d" % [archetype, level, atlas_lod], {})
+		var entry: Dictionary = _manifest_by_key.get("%s:%d:%d" % [shape, level, atlas_lod], {})
 		if entry.is_empty():
 			continue
 		var path := String(entry.get("path", ""))
@@ -703,28 +725,28 @@ func _atlas_for(archetype: String, mask: int) -> Mesh:
 ## `level_build_height[]` uniform. Read from the manifest, not from whichever
 ## atlas happened to be built first: the material is shared across every level
 ## mask, so this table must be the whole ladder regardless of mask.
-func atlas_heights(archetype: String) -> PackedFloat32Array:
-	if _atlas_heights.has(archetype):
-		return _atlas_heights[archetype]
+func atlas_heights(shape: String) -> PackedFloat32Array:
+	if _atlas_heights.has(shape):
+		return _atlas_heights[shape]
 	var heights := PackedFloat32Array()
 	heights.resize(LEVEL_MAX + 1)
 	for level in range(1, LEVEL_MAX + 1):
 		# A level this archetype does not author (a level-6 police station) keeps
 		# the placeholder height. Nothing indexes it: no bucket at that level
 		# survives `_fold`, so no instance ever packs it.
-		var entry: Dictionary = _manifest_by_key.get("%s:%d:%d" % [archetype, level, atlas_lod], {})
+		var entry: Dictionary = _manifest_by_key.get("%s:%d:%d" % [shape, level, atlas_lod], {})
 		heights[level] = maxf(float(entry.get("height_m", 10.0)), 0.001)
-	_atlas_heights[archetype] = heights
+	_atlas_heights[shape] = heights
 	return heights
 
 
-func _atlas_material_for(archetype: String) -> ShaderMaterial:
-	var existing: ShaderMaterial = _atlas_material.get(archetype)
+func _atlas_material_for(shape: String) -> ShaderMaterial:
+	var existing: ShaderMaterial = _atlas_material.get(shape)
 	if existing != null:
 		return existing
 	var entry: Dictionary = {}
 	for level in range(1, LEVEL_MAX + 1):
-		entry = _manifest_by_key.get("%s:%d:%d" % [archetype, level, atlas_lod], {})
+		entry = _manifest_by_key.get("%s:%d:%d" % [shape, level, atlas_lod], {})
 		if not entry.is_empty():
 			break
 	var family := String(entry.get("family", "residential"))
@@ -742,7 +764,7 @@ func _atlas_material_for(archetype: String) -> ShaderMaterial:
 	material.set_shader_parameter("near_flicker", 0.0)
 	material.set_shader_parameter("level_atlas", 1.0)
 	material.set_shader_parameter("level_stride", PACK_LEVEL_STRIDE)
-	material.set_shader_parameter("level_build_height", atlas_heights(archetype))
+	material.set_shader_parameter("level_build_height", atlas_heights(shape))
 	# Unused while `level_atlas` is on — the array above replaces it — but set
 	# to a sane value so a mis-wired uniform cannot clamp geometry to zero.
 	material.set_shader_parameter("build_height_m", 10.0)
@@ -753,19 +775,27 @@ func _atlas_material_for(archetype: String) -> ShaderMaterial:
 				material.set_shader_parameter(String(key), Color(String(value)))
 			TYPE_INT, TYPE_FLOAT:
 				material.set_shader_parameter(String(key), float(value))
-	_apply_surface(material, archetype, family)
+	# The pages are the doc-02 ARCHETYPE's, not the shape's (Wave 31): a tank
+	# wears the waterworks' utility facade because it is a water facility.
+	_apply_surface(material, base_archetype_of(shape), family)
 	_paint_material(material, _overlay_paint, OVERLAY_COLOR_UNIFORMS)
-	_atlas_material[archetype] = material
+	_atlas_material[shape] = material
 	return material
 
 
-func _medium_node_for(chunk: Vector2i, archetype: String,
+## The doc-02 archetype a shape wears. Itself, for everything that is its own
+## shape; `water_facility` for the three doc-05 variant shells.
+func base_archetype_of(shape: String) -> String:
+	return String(_base_archetype.get(shape, shape))
+
+
+func _medium_node_for(chunk: Vector2i, shape: String,
 		mask: int) -> MultiMeshInstance3D:
-	var mesh := _atlas_for(archetype, mask)
+	var mesh := _atlas_for(shape, mask)
 	if mesh == null:
 		return null
 	var per_chunk: Dictionary = _medium_nodes.get(chunk, {})
-	var existing: MultiMeshInstance3D = per_chunk.get(archetype)
+	var existing: MultiMeshInstance3D = per_chunk.get(shape)
 	if existing != null:
 		# The chunk's level set moved (a building went up, upgraded or came
 		# down): swap the atlas. Not a per-frame path — the mask is stable for
@@ -774,7 +804,7 @@ func _medium_node_for(chunk: Vector2i, archetype: String,
 			existing.multimesh.mesh = mesh
 		return existing
 	var node := MultiMeshInstance3D.new()
-	node.name = "MM_med_%s_%d_%d" % [archetype, chunk.x, chunk.y]
+	node.name = "MM_med_%s_%d_%d" % [shape, chunk.x, chunk.y]
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_custom_data = true
@@ -782,7 +812,7 @@ func _medium_node_for(chunk: Vector2i, archetype: String,
 	mm.instance_count = 1
 	mm.visible_instance_count = 0
 	node.multimesh = mm
-	node.material_override = _atlas_material_for(archetype)
+	node.material_override = _atlas_material_for(shape)
 	node.custom_aabb = _chunk_aabb(chunk)
 	# §2.5: "only NEAR chunks cast shadows (cast_shadow = OFF on all MEDIUM/FAR
 	# MultiMeshes)". The un-merged path left MEDIUM casting and got away with it
@@ -790,20 +820,24 @@ func _medium_node_for(chunk: Vector2i, archetype: String,
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	node.visible = false
 	add_child(node)
-	per_chunk[archetype] = node
+	per_chunk[shape] = node
 	_medium_nodes[chunk] = per_chunk
 	return node
 
 
-## Fold one chunk's per-level buckets into one MultiMesh per archetype.
-## Returns the set of archetypes that merged, so `_upload_all` knows which
-## per-level bucket nodes to leave dark.
+## Fold one chunk's per-level buckets into one MultiMesh per SHAPE.
+## Returns the set of shapes that merged, so `_upload_all` knows which per-level
+## bucket nodes to leave dark.
 func _upload_medium(chunk: Vector2i) -> Dictionary:
 	var merged: Dictionary = {}
 	var by_archetype: Dictionary = {}
 	var mask_of: Dictionary = {}
 	for bucket: RenderStateModel.Bucket in _sorted_buckets(chunk):
-		var arch := String(bucket.archetype)
+		# By SHAPE, not archetype (Wave 31): the atlas concatenates one shape's
+		# LEVEL meshes and tags each vertex with its level, so two different
+		# meshes at the same level cannot share one — a tank and a pump in one
+		# chunk at L1 would both tag 1 and draw each other.
+		var arch := String(bucket.shape)
 		# Every archetype the chunk mentions is CLAIMED, even one whose buckets
 		# are all empty: claiming it is what keeps its per-level nodes dark. Only
 		# the levels that will actually draw go into the fold list and the mask.
@@ -879,15 +913,15 @@ func _upload_medium(chunk: Vector2i) -> Dictionary:
 	return merged
 
 
-func _medium_key(chunk: Vector2i, archetype: String) -> String:
-	return "%d_%d_%s" % [chunk.x, chunk.y, archetype]
+func _medium_key(chunk: Vector2i, shape: String) -> String:
+	return "%d_%d_%s" % [chunk.x, chunk.y, shape]
 
 
-## The merged instance buffer last written for (chunk, archetype), when
+## The merged instance buffer last written for (chunk, shape), when
 ## `keep_medium_buffers` is on. 16 floats per instance: the bucket mirror
 ## verbatim, except `.b` which carries `packed + 448 · level`.
-func medium_buffer(chunk: Vector2i, archetype: String) -> PackedFloat32Array:
-	return _medium_buffers.get(_medium_key(chunk, archetype), PackedFloat32Array())
+func medium_buffer(chunk: Vector2i, shape: String) -> PackedFloat32Array:
+	return _medium_buffers.get(_medium_key(chunk, shape), PackedFloat32Array())
 
 
 func _hide_medium(chunk: Vector2i) -> void:
@@ -1114,7 +1148,7 @@ func _upload_blob() -> int:
 	for chunk: Vector2i in model._sorted_chunk_coords():
 		for bucket: RenderStateModel.Bucket in _sorted_buckets(chunk):
 			var scale: Vector3 = _far_scale.get(
-					"%s:%d" % [bucket.archetype, bucket.level], Vector3(8.0, 10.0, 8.0))
+					"%s:%d" % [bucket.shape, bucket.level], Vector3(8.0, 10.0, 8.0))
 			var sx := scale.x * _blob_scale
 			var sz := scale.z * _blob_scale
 			var mirror := bucket.mirror
@@ -1122,7 +1156,14 @@ func _upload_blob() -> int:
 				var base := i * INSTANCE_STRIDE
 				if base + INSTANCE_STRIDE > mirror.size():
 					break
-				buffer[out + 0] = sx
+				# Times the INSTANCE's own X/Z basis scale (Wave 31, RR-256).
+				# `_far_scale` is the MESH's footprint; a building whose variant
+				# has no mesh of its own is drawn with its archetype's, squeezed
+				# into the ground it holds, and a decal read off the mesh alone
+				# would be a shadow wider than the thing casting it. 1.0 on every
+				# building whose mesh already fits, so this is an identity on the
+				# whole shipped city.
+				buffer[out + 0] = sx * mirror[base + 0]
 				buffer[out + 3] = mirror[base + 3]
 				buffer[out + 5] = 1.0
 				# The building's own ground plane plus §2.11's 4 cm. Read off the
@@ -1130,7 +1171,7 @@ func _upload_blob() -> int:
 				# its buildings up with it, and a shadow buried in the terrain is
 				# the defect report NIGHT-1 found under the lamp pools.
 				buffer[out + 7] = mirror[base + 7] + _blob_y_m
-				buffer[out + 10] = sz
+				buffer[out + 10] = sz * mirror[base + 10]
 				buffer[out + 11] = mirror[base + 11]
 				out += BLOB_STRIDE
 	if keep_blob_buffers:
@@ -1353,8 +1394,8 @@ func _upload_far(chunk: Vector2i) -> int:
 	var out := 0
 	for bucket: RenderStateModel.Bucket in buckets:
 		var scale: Vector3 = _far_scale.get(
-				"%s:%d" % [bucket.archetype, bucket.level], Vector3(8.0, 10.0, 8.0))
-		var family_index: float = _family_index.get(bucket.archetype, 0.0)
+				"%s:%d" % [bucket.shape, bucket.level], Vector3(8.0, 10.0, 8.0))
+		var family_index: float = _family_index.get(bucket.shape, 0.0)
 		var mirror := bucket.mirror
 		for i in bucket.visible_count:
 			var base := i * INSTANCE_STRIDE
@@ -1362,11 +1403,14 @@ func _upload_far(chunk: Vector2i) -> int:
 				break
 			# Axis-aligned box at the source instance's origin (mirror floats
 			# 3 / 7 / 11 are the transform's translation column).
-			buffer[out + 0] = scale.x
+			# X/Z carry the instance's own footprint scale for the reason the
+			# blob buffer does (RR-256); Y never does, because the height is the
+			# archetype's own and the guard only ever squeezes the plan.
+			buffer[out + 0] = scale.x * mirror[base + 0]
 			buffer[out + 3] = mirror[base + 3]
 			buffer[out + 5] = scale.y
 			buffer[out + 7] = mirror[base + 7]
-			buffer[out + 10] = scale.z
+			buffer[out + 10] = scale.z * mirror[base + 10]
 			buffer[out + 11] = mirror[base + 11]
 			# .r emissive, .g damage, .b packed — copied byte for byte, so the
 			# blackout ramp survives the tier swap.
@@ -1578,7 +1622,7 @@ func _upload_all() -> void:
 				node = _bucket_nodes.get(_node_key(bucket))
 				if node == null:
 					continue
-			var taken: bool = merged.has(String(bucket.archetype))
+			var taken: bool = merged.has(String(bucket.shape))
 			# `visible_count > 0` is the third gate, and it is report 98 RR-83's
 			# corollary: a bucket is allocated when the first building of its
 			# (archetype, level) lands in the chunk and is NOT freed when the

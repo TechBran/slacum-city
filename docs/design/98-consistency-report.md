@@ -11845,3 +11845,180 @@ is a QUERY, its emptiness and its `reachable_level` are computed from the record
 and the catalog before the blocker list is built, and the only sim caller —
 `cmd_upgrade_building`'s ceiling — reads `reachable_level` and never `blockers`.
 The four hashes say the same thing from the other side.
+
+---
+
+## 78. WAVE 31 — the render is keyed by ARCHETYPE, and a water shell is not one (2026-09-06)
+
+*The player, on the device, 2026-09-06:* **"Treatment plants and storage tanks —
+the buildings are built off-centre, and they just fall out onto the road. They
+don't follow their grid pattern; they're just off-centre from it."**
+
+*Render-only lane. `sim/` is untouched and all four `profile_sim --hash-only`
+baselines are byte-identical to the fork. Ids **RR-254..RR-256**, doc 93 §BI,
+doc 91 `A91-D-169`..`A91-D-171`; `tools/check_doc_refs.py` is the gate.*
+
+**The report is exactly right and the cause is one join.** The SIM was never
+wrong: `CitySim.built_of_building` gives a `tank` or a `treatment` shell doc 05's
+own 2×2 at L1, `game/main.gd::_building_view` centres the mesh on that 2×2, and
+the founding city's own `WTR-2` comes out at `(272, 0, 456)` — its 2×2's exact
+centre. What was wrong is that `game/meshes/generated/manifest.json` is keyed
+`archetype:level:lod` and carries **one** `footprint_tiles` per archetype-level,
+and for `water_facility` that row is doc 02's PUMP reference variant. Doc 02 says
+so out loud, in a field called `footprints_are_reference_variant_only`. So a
+2×2 tank was drawn with the pump's **3×3** shell, centred on its own 2×2 of
+ground: 4 m of building over every edge, and on a lot beside a street that is a
+building standing in the road.
+
+Reproduced with `tools/probe_water_shell.gd`, which prints the sim's answer and
+the render's side by side on the same run:
+
+| subject | origin | built | lot | centre | mesh (archetype key) | overhang/edge |
+|---|---|---|---|---|---|---|
+| `WTR-2` (founding city, `tank` L1) | (33, 56) | 2×2 | 3×3 | (272, 0, 456) | 3×3 | **+4.0 m** |
+| placed `treatment` L1 | (42, 33) | 2×2 | 3×3 | (344, 0, 272) | 3×3 | **+4.0 m** |
+| placed `source` L1 (river) | (33, 49) | 2×2 | 2×2 | (272, 0, 400) | 3×3 | **+4.0 m** |
+| placed `pump` L1 | (56, 34) | 3×3 | 3×3 | (460, 0, 284) | 3×3 | 0.0 m |
+| `treatment` L4 (the table, not a placement) | — | 4×4 | 3×3 | — | 3×3 | **−4.0 m** |
+
+The last row is the same defect with its sign flipped and is worth naming: a 4×4
+treatment plant was drawn with a 3×3 shed, so the fault was never "the mesh is
+too big" — it was **the mesh is not this building's**.
+
+**How long.** `WTR-2` is a 2×2 tank under a 3×3 shell in `data/starter_city.json`
+as authored, so this has been true of the founding city since the founding city
+existed, and of every placed plant since `cmd_place_water_component` shipped in
+Wave 5. Nothing caught it because every test that touched the manifest asked
+whether a mesh EXISTS for an (archetype, level) and none asked whether its
+footprint is the one the catalogue publishes for the thing standing there.
+
+### RR-254 — every doc-05 variant gets its own shape, on its own ground
+
+**The fix is a new unit: the SHAPE.** A shape is the archetype for everything doc
+02 owns outright, and `water_facility_treatment` / `_tank` / `_source` for the
+three doc-05 shells whose ladders are not the pump's. `pump` keeps the id
+`water_facility` because it **is** doc 02's reference variant — declared in
+`gen_building_shapes.py`'s `REFERENCE_VARIANT` rather than assumed, so the render
+resolves `water_facility/pump` as a MAPPED answer and not as a fallback.
+
+| variant | doc 05 footprints, L1..L5 | shape | grows at |
+|---|---|---|---|
+| `pump` | 3×3 3×3 3×3 3×3 4×4 | `water_facility` (unchanged) | L5 |
+| `treatment` | 2×2 **3×3** 3×3 4×4 4×4 | `water_facility_treatment` | **L2** |
+| `tank` | 2×2 2×2 **3×3** 3×3 4×4 | `water_facility_tank` | **L3** |
+| `source` (river) | 2×2 2×2 3×3 3×3 4×4 | `water_facility_source` | L3 |
+| `booster` | 1×1 1×1 1×1 2×2 2×2 | *none — see RR-256* | — |
+
+**What each shape is.** `treatment` is settling basins, a wide clarifier and a
+tall sludge digester behind a fenced compound; `tank` is a standing steel tank on
+its pad with a valve house and a kiosk; `source` is a screen house set back from
+the bank with a headwall channel, the intake mouth notched into it and the gantry
+that lifts the screens. Three new roof signatures — `clarifier_basins`,
+`standpipe_tank`, `intake_screens` — take the last three free codes in §2.14's
+4-bit field, and every pair of the fifteen shapes clears §7.1 test 7's Hamming
+≥ 4 at equal level and ≥ 2 between levels of one shape, checked in plain
+arithmetic by `tools/gen_building_shapes.py` before it will write.
+
+**The digester is arithmetic, not decoration.** §2.14's LOD1 rule keeps the
+flagged signature prop and drops the level markers, so a shape whose height comes
+from its L5 spire collapses at 400 m and §7.1 test 8's *"LOD1 keeps ≥ 75% of the
+LOD0 height"* fails. The pump passes that test on its water tower. A works has
+exactly one tall thing and it is the digester, so this shape's tall thing is one
+too — and the test passes on the massing rather than on an exemption.
+
+**The plumbing.** `game/render/shape_catalog.gd` (`ShapeCatalog`) inverts the
+manifest's new `variant_of` / `variant` fields into an (archetype, variant) →
+shape map; `RenderStateModel` keys its BUCKETS on the shape, because a bucket
+owns one MultiMesh over one mesh and a tank and a pump cannot share one;
+`CityView` keys the manifest lookup, the merged MEDIUM atlas, `_far_scale` and
+`_family_index` on it too, while the TEXTURE PAGES stay the base archetype's — a
+tank wears the waterworks' utility facade because it is a water facility.
+`game/main.gd::_building_view` hands the variant over, which it did not before:
+the model could only see `archetype_id`, and doc 02's `water_facility` row is the
+pump.
+
+**Everything else that assumed the pump's 3×3, swept.** The manifest's `height_m`
+table is keyed by shape too, so `_add_construction_site`'s crane and
+`PowerInfraFeed.building_view`'s service drop were both taking the pump's
+roofline for a tank that stands 14 m — a weatherhead 6 m below the wall it is
+supposed to reach. Both now resolve the shape. `WorldLocator` and
+`LotDressingModel` were already on `built_of_building` (Wave 29) and needed
+nothing.
+
+### RR-255 — the hoarding fenced the LOT, and a grown building never moved
+
+**Two readers Wave 29 left behind, found by sweeping every consumer of a
+footprint rather than the one the report named.**
+
+**(a) `_add_construction_site` fenced the reservation.** Wave 29 changed
+`building_record()["footprint"]` from the built extent to the LOT and fixed
+`_building_view`; the hoarding call three lines below it kept reading the record.
+So the founding city's 2×2 tank was fenced with a **3×3** run of panels, one tile
+of it in the street — with §2.16a's own lot dressing already drawing a compound
+fence on that same remainder. The hoarding fences the BUILDING; §2.16a's apron
+owns the rest of the lot.
+
+**(b) A completed rung that grows the footprint never moved.** A mesh is centred
+on the ground it holds, so a store going 1×1 → 2×2 at L3 moves its centre 4 m
+along both axes — and `RenderStateModel`'s `building_completed` arm rebucketed
+the LEVEL and left the transform where the old rung put it. Every grown building
+in the game has been standing half a tile off its own lot from the moment it
+climbed. It is the player's second sentence — *"off-centre from it"* — about a
+set of buildings much larger than the one they reported: `store`,
+`construction_yard`, `power_facility`, `treatment` and `tank`, five of the
+twelve. The completion event now carries `world_pos` and `built_tiles`, both
+optional, so a producer with nothing to say gets the arm it always had.
+
+### RR-256 — until a variant has its own mesh, it may not overhang
+
+`booster` is deferred by doc 05 §6 and has no shape. It must still not stand in
+the road, and the answer is not a mesh — it is a guard.
+`RenderStateModel.footprint_scale_for` divides the built footprint by the mesh's
+own and squeezes the instance basis on X/Z; `_far_scale` and the §2.11 blob decal
+multiply the instance's own basis scale in, so the far box and the contact shadow
+follow. On `booster` L1 that is 1×1 of ground under a 3×3 pump shell — an 8 m
+overhang per edge, twice the reported defect — and the guard makes it a squat
+pump house on one tile instead. **It only ever shrinks**: a mesh smaller than the
+ground is a building with room around it, which is what §2.16a is for. **Y is
+never touched**: the height is the archetype's own and `build_height_m`'s
+construction clamp is written against it.
+
+The guard is the belt. The braces is
+`tests/test_water_shell_shapes.gd::test_every_manifest_footprint_is_its_catalogue_footprint`,
+which asserts every one of the 162 mesh rows' `footprint_tiles` against the
+footprint doc 02 (or doc 05, for a variant) publishes for its (archetype,
+variant, level). A mesh authored on ground its subject does not hold cannot get
+past that line whoever authors it.
+
+### 78.1 The measurements
+
+| measurement | fork (9aecbf9) | this branch |
+|---|---|---|
+| `WTR-2` overhang per edge (`probe_water_shell`) | **+4.0 m** | **0.0 m** |
+| placed `treatment` L1 / `tank` L1 / `source` L1 overhang | **+4.0 m** each | **0.0 m** each |
+| `treatment` L4 overhang (mesh under-sized) | **−4.0 m** | **0.0 m** |
+| `pump`, every rung | 0.0 m | 0.0 m — unchanged |
+| `booster` L1, no shape of its own | +8.0 m (would be) | 0.0 m, by the RR-256 guard |
+| gray-box meshes | 133 (132 + far box) | **163** (162 + far box); every pre-existing `mesh_hash` byte-identical |
+| bench city draw calls, Z0/Z1/Z2 (`profile_frame`) | 87 / 105 / 188 | **87 / 105 / 188 — identical** |
+| bench city primitives, Z0/Z1/Z2 | 89,890 / 114,340 / 248,514 | **identical** |
+| founding city draw calls, Z0/Z1/Z2 | 23 / 34 / 72 | **24 / 35 / 73 (+1)** |
+| founding city primitives, Z0/Z1/Z2 | 18,912 / 21,350 / 26,952 | **18,916 / 21,354 / 26,956 (+4)** |
+| four `profile_sim --hash-only` baselines | fork's values | **byte-identical** |
+
+**The +1 is the census answering, and it is the honest answer.** The bench city's
+four water shells are all `pump`, so every bucket key in it is bit-for-bit what
+it was — measured on an export of the fork, not argued. The founding city holds
+`WTR-1` (a pump) and `WTR-2` (a tank) in the same 128 m chunk at the same level,
+which used to be ONE bucket drawing one mesh for both and is now two, because
+they are two meshes. That is one draw call against 246 of headroom at the
+Balanced budget, and the alternative is the tank drawn as a pump.
+
+### 78.2 The gates, on the tree this wave ships
+
+| gate | command | result |
+|---|---|---|
+| screen deck | `godot --headless tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0, clean** |
+| doc ids | `python3 tools/check_doc_refs.py` | *all resolving; no id assigned twice* |
+| shape invariants | `python3 tools/gen_building_shapes.py --check` | every tri budget, every silhouette Hamming distance and every variant footprint against doc 05 pass, file in sync |
+| the picture | `tools/water_shell_preview.gd --out=… [--legacy]` | **20 shots per deck**, every variant at every rung, from the kerb — `tools/device_results/water_shells/` and `…_legacy/` |

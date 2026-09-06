@@ -111,11 +111,24 @@ func test_01b_idempotent_when_up_to_date() -> void:
 func test_02_coverage() -> void:
 	var shapes := _shapes()
 	var archetypes: Array = shapes["archetypes"]
-	assert_eq(archetypes.size(), 12, "the 12 shipped archetypes (doc 02 roster)")
+	# Doc 02's twelve, plus the doc-05 water VARIANT shapes (Wave 31, RR-254).
+	# A variant row is not an archetype — it carries `variant_of`, it has no row
+	# in `data/buildings.json`, and its ladder is doc 05's — so it is counted and
+	# checked separately below.
+	var base: Array = []
+	var variants: Array = []
+	for a_v0 in archetypes:
+		if String((a_v0 as Dictionary).get("variant_of", "")) == String((a_v0 as Dictionary)["id"]) \
+				or String((a_v0 as Dictionary).get("variant_of", "")) == "":
+			base.append(a_v0)
+		else:
+			variants.append(a_v0)
+	assert_eq(base.size(), 12, "the 12 shipped archetypes (doc 02 roster)")
+	assert_eq(variants.size(), 3, "and doc 05's three other placeable shells")
 
 	var buildings := GEN.load_json("res://data/buildings.json")
 	var roster: Dictionary = buildings.get("archetypes", {})
-	for a_v in archetypes:
+	for a_v in base:
 		var a: Dictionary = a_v
 		assert_true(roster.has(String(a["id"])), "%s exists in data/buildings.json" % a["id"])
 		# The shapes file and the stat table must agree on how tall this
@@ -126,7 +139,14 @@ func test_02_coverage() -> void:
 		assert_eq((a["levels"] as Array).size(), want,
 				"%s: shapes and data/buildings.json agree on the ladder height" % a["id"])
 		assert_true(want == 5 or want == 6, "%s ladder is 5 or 6 rungs" % a["id"])
-	assert_eq(roster.size(), archetypes.size(), "every shipped archetype has a shape")
+	assert_eq(roster.size(), base.size(), "every shipped archetype has a shape")
+	for v_v in variants:
+		var v: Dictionary = v_v
+		assert_true(roster.has(String(v.get("variant_of", ""))),
+				"%s hangs off a real doc-02 archetype" % v["id"])
+		assert_ne(String(v.get("variant", "")), "", "%s names its variant" % v["id"])
+		assert_eq((v["levels"] as Array).size(), 5,
+				"%s carries doc 05's five rungs" % v["id"])
 
 	var seen: Dictionary = {}
 	var far_seen := false
@@ -154,8 +174,9 @@ func test_02_coverage() -> void:
 						"%s L%d lod%d in the manifest" % [a2["id"], lv, lod])
 		assert_false(seen.has("%s_%d_0" % [a2["id"], top + 1]),
 				"%s has no mesh above its own top rung" % a2["id"])
-	assert_eq(rows, 66, "66 authored rows (six archetypes carry an L6)")
-	assert_eq(_entries().size(), rows * 2 + 1, "66 x 2 + the shared FAR box")
+	assert_eq(rows, 81,
+			"66 doc-02 rows (six archetypes carry an L6) + 15 doc-05 variant rows")
+	assert_eq(_entries().size(), rows * 2 + 1, "81 x 2 + the shared FAR box")
 
 
 # ---------------------------------------------------------- 3 — height formula
@@ -254,12 +275,15 @@ func test_05_uv2_window_grid_rule() -> void:
 				assert_true(w.x >= 0.0 and w.x <= 1.0 and w.y >= 0.0 and w.y <= 1.0,
 						"%s: facade UV2 inside [0,1]^2" % e["path"])
 				valid += 1
-		if String(e["archetype"]) == "data_center":
-			assert_eq(valid, 0, "tech_datacenter is windowless: zero valid-UV2 vertices")
+		# Driven by the manifest's OWN `windowless` flag rather than by a
+		# hard-coded archetype name (Wave 31): the roster grows, and a test that
+		# knows the answer by name stops testing the rule the moment it does.
+		if bool(e.get("windowless", false)):
+			assert_eq(valid, 0, "%s is windowless: zero valid-UV2 vertices" % e["archetype"])
 		elif String(e["archetype"]) != "far_unit_box":
 			assert_true(valid > 0, "%s has a window grid" % e["path"])
 			windowed += 1
-	assert_true(windowed >= 100, "every non-datacenter mesh carries a window grid")
+	assert_true(windowed >= 100, "every windowed mesh carries a window grid")
 
 
 func test_05c_roof_props_and_gables_carry_the_roof_surface_sentinel() -> void:
@@ -325,7 +349,7 @@ func test_05d_the_house_gable_wears_the_roof_page() -> void:
 func test_05b_window_grid_metadata() -> void:
 	for e_v in _entries():
 		var e: Dictionary = e_v
-		if String(e["archetype"]) == "data_center" or String(e["archetype"]) == "far_unit_box":
+		if bool(e.get("windowless", false)) or String(e["archetype"]) == "far_unit_box":
 			assert_eq(int(e["window_cols"]), 0, "%s is windowless" % e["archetype"])
 			assert_true(bool(e["windowless"]), "windowless flag set")
 			continue
@@ -413,11 +437,14 @@ func test_07b_roof_signature_is_constant_across_levels() -> void:
 					"%s keeps one roof signature at every level" % arch)
 		else:
 			sig[arch] = String(e["roof_signature"])
-	assert_eq(sig.size(), 12, "12 archetype signatures")
+	# 12 doc-02 archetypes + doc 05's three variant shells (Wave 31, RR-254).
+	assert_eq(sig.size(), 15, "15 shape signatures")
 	var distinct: Dictionary = {}
 	for arch in sig:
 		distinct[sig[arch]] = true
-	assert_eq(distinct.size(), 12, "every archetype has its own roof signature")
+	assert_eq(distinct.size(), 15,
+			"every shape has its own roof signature — a tank does not wear the "
+			+ "pump's tank_cluster")
 
 
 # ------------------------------------------------------- LOD1 derivation rules
