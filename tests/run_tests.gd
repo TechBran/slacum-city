@@ -34,6 +34,11 @@ extends SceneTree
 
 const TESTS_DIR := "res://tests"
 
+## A file quiet enough to be noise. One second: the suite has ~90 files and a
+## ninety-row table of near-zeroes is a table nobody reads.
+const WALL_FILE_FLOOR_USEC := 1_000_000
+const WALL_TOP_METHODS := 12
+
 
 func _initialize() -> void:
 	var isolation := UserDirIsolation.new().begin()
@@ -73,6 +78,15 @@ func _initialize() -> void:
 	var total_asserts := 0
 	var all_failures: Array[String] = []
 	var all_silent: Array[String] = []
+	# **The wall clock, per file and per method** (Wave 30, doc 92 §71, RR-246).
+	# Wave 26 put a 4,096-preview site scan inside the scripted agent's `act()`
+	# and this suite went from ~15 minutes to ~65 with nothing in the log to say
+	# so — four waves of runs, every one of them slower than the last, and the
+	# only number any of them printed was `tests:`. Two `Time.get_ticks_usec()`
+	# reads per method are what it costs to make the next one a number instead of
+	# a memory. See `_print_wall_clock` for what is printed and why not all of it.
+	var file_usec: Dictionary = {}     # file -> int
+	var method_usec: Array[Dictionary] = []
 
 	for file in test_files:
 		var script: GDScript = load(TESTS_DIR + "/" + file)
@@ -93,6 +107,7 @@ func _initialize() -> void:
 			method_names = method_names.filter(func(m: String) -> bool: return m.contains(method_filter))
 		for method_name in method_names:
 			total_tests += 1
+			var t0 := Time.get_ticks_usec()
 			suite.begin_test("%s::%s" % [file, method_name])
 			suite.call(method_name)
 			# The close is what turns "aborted on a runtime error" from an
@@ -100,9 +115,14 @@ func _initialize() -> void:
 			# method above died mid-way, which it does: a GDScript runtime error
 			# unwinds `method_name` and nothing else.
 			suite.end_test()
+			var usec := Time.get_ticks_usec() - t0
+			file_usec[file] = int(file_usec.get(file, 0)) + usec
+			method_usec.append({"name": "%s::%s" % [file, method_name], "usec": usec})
 		total_asserts += suite.assert_count()
 		all_failures.append_array(suite.failures())
 		all_silent.append_array(suite.silent())
+
+	_print_wall_clock(file_usec, method_usec)
 
 	print("")
 	print("========================================")
@@ -130,3 +150,47 @@ func _initialize() -> void:
 				+ "passed, so the suite refuses to call this green.")
 	isolation.end()
 	quit(0 if ok else 1)
+
+
+## **The wall clock, printed where the next regression will be read.**
+##
+## Two tables and a deliberate cut-off. Every file that spent at least
+## [WALL_FILE_FLOOR_USEC] gets a row, because a file under a second cannot hide a
+## regression worth chasing. The slowest [WALL_TOP_METHODS] individual methods
+## follow, because a file total says WHICH file and a method name says WHERE —
+## Wave 26's regression was one method in one file and both halves are needed to
+## find the next one in a single reading.
+##
+## `tools/profile_gates.gd` is the instrument for the deeper look (every method
+## of one file, and the per-agent-verb table underneath); this is the trip-wire
+## that says whether to reach for it.
+static func _print_wall_clock(file_usec: Dictionary, method_usec: Array[Dictionary]) -> void:
+	var files: Array[Dictionary] = []
+	var total := 0
+	for name: Variant in file_usec:
+		total += int(file_usec[name])
+		if int(file_usec[name]) >= WALL_FILE_FLOOR_USEC:
+			files.append({"name": String(name), "usec": int(file_usec[name])})
+	files.sort_custom(_by_usec_then_name)
+	var methods: Array[Dictionary] = method_usec.duplicate()
+	methods.sort_custom(_by_usec_then_name)
+
+	print("")
+	print("---------------- wall clock (%.1f s in test methods) ----------------"
+			% (total / 1e6))
+	for row: Dictionary in files:
+		print("  %8.1f s  %5.1f%%  %s" % [int(row["usec"]) / 1e6,
+				100.0 * float(row["usec"]) / maxf(float(total), 1.0), row["name"]])
+	print("  slowest %d method(s):" % mini(WALL_TOP_METHODS, methods.size()))
+	for i in mini(WALL_TOP_METHODS, methods.size()):
+		var row: Dictionary = methods[i]
+		print("  %8.1f s  %5.1f%%  %s" % [int(row["usec"]) / 1e6,
+				100.0 * float(row["usec"]) / maxf(float(total), 1.0), row["name"]])
+
+
+## Slowest first, name as the tie-break, so two runs of the same tree print the
+## same order.
+static func _by_usec_then_name(a: Dictionary, b: Dictionary) -> bool:
+	if int(a["usec"]) != int(b["usec"]):
+		return int(a["usec"]) > int(b["usec"])
+	return String(a["name"]) < String(b["name"])

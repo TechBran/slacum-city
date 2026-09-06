@@ -765,3 +765,146 @@ func test_blocked_upgrade_names_the_component_that_bound_and_its_kind() -> void:
 			("a founding city with every transformer at doc 04's 50 kW rung has at "
 					+ "least one archetype whose next rung the gate refuses "
 					+ "(%d rows, %d of them for power)") % [rows.size(), power_rows])
+
+
+# =========================================== Wave 30 — the site-search memo
+
+## **The memo answers what the sweep answers, and forgets when the map moves**
+## (doc 92 §71, report 98 RR-245).
+##
+## `Api.grid_shortfall_tile` was the single most expensive verb in the suite —
+## 207.6 s of self time over 7,333 calls, `tools/profile_gates.gd --verbs` at the
+## fork — and Wave 30 put a one-generation memo in front of it. A memo in a
+## determinism-critical harness has exactly two ways to be wrong, and both are
+## asserted here: it can answer something the sweep would not, and it can keep
+## answering after the map has changed under it.
+##
+## `_grid_shortfall_tile_scan` is the sweep with the memo taken off — the
+## pre-Wave-30 code, verbatim — so the oracle shares no cache with the thing
+## under test.
+func test_the_grid_shortfall_memo_answers_what_the_sweep_answers() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	var lead: int = Playtest.Balanced.GRID_LEAD_TILES
+	var first: Vector2i = api.grid_shortfall_tile(lead)
+	assert_eq(first, api._grid_shortfall_tile_scan(lead),
+			"the first (uncached) answer is the sweep's own")
+	# Asked twice on an unmoved map: same answer, and the second came from the memo.
+	assert_eq(api.grid_shortfall_tile(lead), first,
+			"asked twice on an unmoved map, the memo repeats the sweep's answer")
+	# A different `lead` is a different question and must not read the first's
+	# entry — the memo is keyed on the argument as well as on the map.
+	assert_eq(api.grid_shortfall_tile(lead + 3),
+			api._grid_shortfall_tile_scan(lead + 3),
+			"a different lead gets its own answer, not the neighbouring key's")
+
+
+## The other half: a map that MOVES must drop the generation. A transformer
+## placed on the dark tile the search just named changes `would_serve` for its
+## whole patch, which is the exact input the remembered answer was computed from.
+func test_the_site_search_memo_is_dropped_when_the_map_moves() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var api := Playtest.Api.new(sim)
+	var lead: int = Playtest.Balanced.GRID_LEAD_TILES
+	var before: Vector2i = api.grid_shortfall_tile(lead)
+	assert_true(before.x >= 0,
+			"the founding city has a block short of its grid lead (%s)" % str(before))
+	var signature_before := api._map_signature()
+	assert_true(bool(sim.cmd_place_grid_component("transformer", before, 1)["ok"]),
+			"a transformer lands on the tile the shortfall search named")
+	assert_ne(api._map_signature(), signature_before,
+			"…and the map signature moved with it, which is what invalidates")
+	assert_eq(api.grid_shortfall_tile(lead), api._grid_shortfall_tile_scan(lead),
+			"so the next ask re-runs the sweep rather than repeating a stale tile")
+
+
+## `TileGrid.flags_hash` is the term of the signature that covers every
+## placement rule, so it has to move when the tile layer does — a digest that
+## did not would be a memo that never forgets.
+func test_the_flag_plane_digest_moves_when_a_building_is_stamped() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var before := sim.world.grid.flags_hash()
+	assert_eq(before, sim.world.grid.flags_hash(),
+			"the digest is stable while the plane is")
+	var site: Vector2i = Playtest.SiteSearch.serviceable_site(sim, "house")
+	assert_true(site.x >= 0, "the founding core has a serviceable house site")
+	assert_true(bool(sim.cmd_place_building("house", site)["ok"]), "a house lands")
+	assert_ne(sim.world.grid.flags_hash(), before,
+			"stamping a footprint moves the digest the memo keys on")
+
+
+## **A water refusal money could lift is never remembered** (doc 92 §71).
+##
+## The memo's soundness argument has one hole in it by construction: `E_FUNDS`
+## and doc 03 §2.10's `E_AUSTERITY` clear without the map moving, so a sweep
+## refused for those must not be filed. `Api._money_only` is the guard, and this
+## drives it on the shapes the command actually returns rather than trusting the
+## reading of it.
+func test_a_water_refusal_that_only_money_blocked_is_not_remembered() -> void:
+	assert_true(Playtest.Api._money_only(
+			CommandQueue.fail(&"E_FUNDS", {"blockers": [&"E_FUNDS"]})),
+			"a lone E_FUNDS is money-only")
+	assert_true(Playtest.Api._money_only(
+			CommandQueue.fail(&"E_AUSTERITY", {"blockers": [&"E_AUSTERITY"]})),
+			"so is doc 03 §2.10's austerity refusal")
+	assert_false(Playtest.Api._money_only(
+			CommandQueue.fail(&"E_NO_MAIN", {"blockers": [&"E_NO_MAIN", &"E_FUNDS"]})),
+			"a refusal that ALSO has a map reason is not money-only")
+	assert_false(Playtest.Api._money_only(
+			CommandQueue.fail(&"E_UNSERVED", {"blockers": [&"E_UNSERVED"]})),
+			"and a pure map refusal is not money-only")
+	assert_false(Playtest.Api._money_only(CommandQueue.ok({})),
+			"a quote that passed is not a refusal at all")
+
+
+## **The cheap necessary conditions do not move the site the sweep chooses**
+## (doc 92 §71, RR-244). `place_water_component` now skips the priced preview for
+## an origin `nearest_main_tile` or `would_serve` has already ruled out; this is
+## the assertion that those two are genuinely NECESSARY — an origin the command
+## accepts passes both — so skipping them can only remove refusals.
+func test_the_water_sweeps_cheap_filters_are_necessary_conditions() -> void:
+	var sim := CitySim.boot_from_files(1337)
+	var radius := int(sim.water.data.placement_value("main_tap_radius_tiles", 8))
+	var no_main := 0
+	var unserved := 0
+	for kind: String in ["pump", "treatment", "tank", "source"]:
+		var size: Vector2i = sim.water_lot_for(kind)
+		for z in TileGrid.SIZE:
+			for x in TileGrid.SIZE:
+				var origin := Vector2i(x, z)
+				if not sim.world.grid.can_place(origin, size):
+					continue
+				var mainless := sim.water.nearest_main_tile(origin, radius).is_empty()
+				var dark := not sim.grid.would_serve(origin)
+				if not mainless and not dark:
+					continue
+				# The sweep skips exactly these. The claim the skip rests on is
+				# that the command was going to refuse them anyway — asserted
+				# against the command itself, on every origin the filters drop.
+				var quote: Dictionary = sim.cmd_place_water_component(kind, origin, 1, true)
+				assert_false(bool(quote["ok"]),
+						("%s at %s: the sweep would skip this origin (%s%s) but the "
+								+ "command ACCEPTS it, so the filter is not a "
+								+ "necessary condition and the skip loses a site")
+								% [kind, str(origin), "no main in tap radius" if mainless else "",
+								" and unserved" if (mainless and dark) else ("unserved" if dark else "")])
+				if mainless:
+					no_main += 1
+				if dark:
+					unserved += 1
+	assert_true(unserved > 0,
+			"the founding city offers unserved origins for the filter to drop (%d)"
+					% unserved)
+	# **And the other filter never fires here, which is a fact and not a gap.**
+	# Doc 09 §2.9.5's founding city sets `FLAG_BUILDABLE` on the developed core
+	# only, and doc 05's mains run through all of it, so every placeable origin on
+	# the whole 112×112 plane is inside `main_tap_radius_tiles`. The `E_NO_MAIN`
+	# arm of the skip is therefore exercised by the 45-game-day arcs rather than
+	# here — where it takes the priced previews of a `curriculum` run from 784,224
+	# to 101,852 with the run's `state_hash` unchanged (doc 92 §71). Asserting the
+	# zero keeps that reasoning honest: the day a founding city gains buildable
+	# ground away from a main, this line fails and the arm gets a local case.
+	assert_eq(no_main, 0,
+			("every placeable origin on the founding plane is within tap radius, "
+					+ "so this city cannot exercise the E_NO_MAIN skip (%d found)")
+					% no_main)

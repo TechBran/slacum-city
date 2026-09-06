@@ -79,6 +79,16 @@ func _one(strategy: String, seed_value: int, days: int, everything: bool) -> voi
 	# search spent, the READY blocks it walked, how often the cap stopped it, and
 	# the ring radius the transformer search reached. Written by
 	# `Api.place_water_component` and `Api.note_no_relief_spot`.
+	#
+	# **Two columns more, Wave 30 (doc 92 §71, RR-244/245).** `previews` counts
+	# candidate origins the sweep REACHED, which is the number `WATER_SITE_PREVIEWS`
+	# caps and the one this line has always printed; it stopped being the number
+	# the wall clock is proportional to when the sweep learned to skip the priced
+	# preview for an origin `nearest_main_tile` or `would_serve` had already
+	# ruled out. `priced` is that number — the preview commands actually issued —
+	# and `memo` counts the refusals answered from the remembered sweep without
+	# walking the map at all. A reader chasing a slow run wants all three: reach,
+	# price, and how often the price was avoided.
 	var site_cost := {}
 	print("  %-6s %-16s %-14s %-22s %s" % ["hour", "verb", "verdict", "subject", "cost"])
 	for raw: Variant in (doc["actions"] as Array):
@@ -96,9 +106,11 @@ func _one(strategy: String, seed_value: int, days: int, everything: bool) -> voi
 			var key := "%s/%s" % [verb, reason]
 			refusals[key] = int(refusals.get(key, 0)) + 1
 			if reason == "E_NO_SITE" and entry.has("previews"):
-				var site_row: Dictionary = site_cost.get(verb, {"refusals": 0, "previews": 0, "blocks": 0, "capped": 0, "radius": 0})
+				var site_row: Dictionary = site_cost.get(verb, {"refusals": 0, "previews": 0, "priced": 0, "memo": 0, "blocks": 0, "capped": 0, "radius": 0})
 				site_row["refusals"] = int(site_row["refusals"]) + 1
 				site_row["previews"] = int(site_row["previews"]) + int(entry.get("previews", 0))
+				site_row["priced"] = int(site_row["priced"]) + int(entry.get("priced", 0))
+				site_row["memo"] = int(site_row["memo"]) + (1 if bool(entry.get("memo", false)) else 0)
 				site_row["blocks"] = maxi(int(site_row["blocks"]), int(entry.get("blocks", 0)))
 				site_row["capped"] = int(site_row["capped"]) + (1 if bool(entry.get("capped", false)) else 0)
 				site_row["radius"] = maxi(int(site_row["radius"]), int(entry.get("radius", 0)))
@@ -117,8 +129,9 @@ func _one(strategy: String, seed_value: int, days: int, everything: bool) -> voi
 	print("  --- refused ---")
 	for verb in site_cost:
 		var c: Dictionary = site_cost[verb]
-		print("    %s/E_NO_SITE: %d refusals cost %d previews over %d READY blocks; capped %d; ring radius %d" % [
-				String(verb), int(c["refusals"]), int(c["previews"]), int(c["blocks"]), int(c["capped"]), int(c["radius"])])
+		print("    %s/E_NO_SITE: %d refusals reached %d origins and priced %d of them over %d READY blocks; %d answered from the memo; capped %d; ring radius %d" % [
+				String(verb), int(c["refusals"]), int(c["previews"]), int(c["priced"]),
+				int(c["blocks"]), int(c["memo"]), int(c["capped"]), int(c["radius"])])
 	var keys: Array = refusals.keys()
 	keys.sort()
 	for key: Variant in keys:

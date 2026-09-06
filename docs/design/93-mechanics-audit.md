@@ -7557,3 +7557,113 @@ archetype-appropriate apron — yard, parking, fence, planting — drawn on
 `lot − built` and **receding as the building grows into it**, which is the half
 of this wave the player actually sees. One MultiMesh, one governor knob, and it
 is in doc 11's draw-call census like every other layer.
+
+
+## BF. Wave-30 rulings — a suite that says how long it took, and a search that is allowed to remember (2026-09-06)
+
+**The complaint.** `tests/test_balance_gates.gd` took **26 minutes** and the full
+suite **60–65**, against ~15 minutes for the whole suite before Wave 26. Four
+waves of runs got slower, one wave at a time, and not one of them printed a
+number that would have said so. The lane's brief named a suspect —
+`WATER_SITE_PREVIEWS` 96 → 4,096 — and the first job was to find out whether the
+suspect was the culprit. It was **a third of it**.
+
+### BF1. A measuring instrument owes a wall clock, and this project had none for the half that got slow
+
+`tools/profile_sim.gd` profiles the SIM: it boots a city, advances it, and charges
+each tick phase for its microseconds. `tests/test_balance_gates.gd` spends most of
+its wall clock in a scripted agent's `act()` — the gap BETWEEN two ticks — which
+the sim profiler charges to nobody. So the project's one performance instrument
+was structurally blind to the only place this regression could live, and the
+regression lived there for four waves.
+
+**RULING.** The suite prints its own wall clock, per file and per method, on every
+run (`tests/run_tests.gd`, `tools/run_one_test.gd`), and `tools/profile_gates.gd`
+is the instrument for the deeper look: every method of one file, and underneath it
+a per-agent-verb table with SELF time, inclusive time and a call count. A
+regression that would have been a memory is now a number in the log.
+
+**And the number it found was not the suspect.** At the fork, the three most
+expensive agent verbs in the whole file are `Api.grid_shortfall_tile` at **207.6 s**
+over 7,333 calls, `Api.place_water_component` at **184.2 s** over 631, and
+`Api.relief_spot` at **55.2 s** over 3,685 — 447 s of the 492 s the instrumented
+verbs account for. Doc 92 §71 has the table.
+
+### BF2. A site search may skip the priced preview for a candidate a cheap NECESSARY condition has already ruled out
+
+`Api.place_water_component` previews rather than reasons, and doc 92 §67.4 is right
+that it must: a water component needs a main inside `main_tap_radius_tiles` and
+that is doc 05's rule to answer, not a heuristic's. But the sweep was paying the
+FULL preview — 238 µs, most of it `PowerGrid.can_serve_tile` over
+`peak_component_loads()` — for every candidate origin, including the ones the
+command was certainly going to refuse.
+
+**RULING.** A sweep may ask a cheap condition first **when the condition is one
+the command itself refuses on, asked through the command's own door**. Two
+qualify: `WaterSystem.nearest_main_tile` (`E_NO_MAIN`, 16 µs) and
+`PowerGrid.would_serve` (`E_UNSERVED`, 66 µs). This is not a second copy of the
+rule — it is the same call the command makes, made earlier. The first accepted
+origin cannot move, because an origin that fails a necessary condition is an
+origin the preview refuses.
+
+**The line this ruling does NOT cross**: a condition the harness *computes* rather
+than *asks* is a second, wrong copy of the rule, and is forbidden here as it has
+always been. `_touches_water`, the city-level gate and the funds test stay inside
+the command.
+
+### BF3. A search may remember its own answer, and the memo's key must name every input except money
+
+**RULING.** A site search whose answer is a pure function of the map may be
+memoised on a signature of that map: the READY block set, `TileGrid.flags_hash()`
+(the whole flag plane, so `can_place` and doc 05 §2.1's river adjacency are both
+covered), the live water edges, every live transformer's tile and level, and the
+city level. One generation at a time — a signature that disagrees drops the whole
+table — so a stale answer is not expressible.
+
+**Money is left out of the key on purpose, and that is the whole of the
+soundness argument.** `E_FUNDS` and doc 03 §2.10's `E_AUSTERITY` are the two
+blockers that clear without the map moving; a key carrying the balance would
+differ every game-hour and memoise nothing. So the one search that previews a
+price handles them the other way round: a sweep whose every refusal was
+money-shaped is **not remembered at all** (`Api._money_only`). No other memoised
+search here quotes a price.
+
+**And a memo in a determinism-critical harness owes an oracle.** The sweep is split
+out unmemoised (`_grid_shortfall_tile_scan`) and
+`tests/test_playtest_harness.gd` asserts three things against it: the memo answers
+what the sweep answers, a map that moves drops the generation, and the flag digest
+moves when a footprint is stamped. The same shape doc 04 §167's warm-transformer
+memo was landed with.
+
+### BF4. A field that stops meaning what its name says gets a sibling that does, in the same commit as the change
+
+`previews` on the `E_NO_SITE` log row counts *candidate origins the sweep reached*
+— which is what `WATER_SITE_PREVIEWS` caps and what
+`tools/measure_utility_plan.gd` has printed since Wave 26. After BF2 it is no
+longer the number of preview COMMANDS, which is the number the wall clock is
+proportional to.
+
+**RULING.** The field keeps its meaning and its cap (so no bound moves and no
+published number is re-based), and the row gains `priced` — the previews actually
+issued — and `memo`, set on a refusal answered from the remembered sweep.
+`tools/measure_utility_plan.gd` prints all three on the same line in the same
+commit, because a field whose reader arrives in a later wave is the A91-D-19 shape
+and this project has been sent back for it twice.
+
+### BF5. What this lane did NOT do, and why the number says so rather than a judgement
+
+The measurement is the ruling here. Instrumented agent verbs are **491.8 s of the
+file's 1,564.9 s (31.3 %)**; the other 1,073 s is `advance_coarse_hours` — the sim,
+driven for 690 preset-days by gate 29, 200 by gate 30, 60 by gate 33 and 3,240
+game-hours by gate 21. **A perfect harness lands this file at ~18 minutes**, so the
+brief's 10-minute target is not reachable from `tests/` and `tools/` and no amount
+of harness work makes it so.
+
+**RULING.** Two follow-ups are named with their numbers rather than attempted here
+(doc 91 A91-D-160, A91-D-161): `PowerGrid.would_serve` is O(all components) per
+tile and is the shared root under `grid_shortfall_tile`, `candidate_site`,
+`unserved_tiles` and this wave's own water filter; and the gate horizons
+themselves — 690 preset-days for one insolvency reading — are a doc 92 question
+about what a gate needs, not a performance one. Neither is hash-neutral
+tests-and-tools work, and a lane whose brief says hash-neutral does not take a
+memo into the hottest correctness predicate in the project on its last hour.
