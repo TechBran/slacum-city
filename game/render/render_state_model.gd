@@ -447,8 +447,8 @@ func set_shapes(catalog: ShapeCatalog) -> void:
 ## It exists for the variant that has no shape of its own yet. `booster` is the
 ## live one: doc 05 §6 defers it, so it draws with `water_facility`'s 3×3 pump
 ## shell, and on its 1×1 L1 footprint that shell would put **8 m of building over
-## every edge** — four times the defect the player reported. Scaled, it is a
-## squat pump house on one tile: wrong-looking, and standing on its own ground.
+## every edge** — twice the defect the player reported. Scaled, it is a squat
+## pump house on one tile: wrong-looking, and standing on its own ground.
 ##
 ## It only ever SHRINKS. A mesh smaller than the built footprint is a building
 ## with room around it, which is what the lot dressing is for (§2.16a) and not a

@@ -134,6 +134,41 @@ func test_every_manifest_footprint_is_its_catalogue_footprint() -> void:
 	assert_true(checked >= 160, "every mesh row was checked, not a handful (%d)" % checked)
 
 
+## **And the mesh SITS INSIDE it.** "The footprint field says 2×2" and "no
+## triangle of this mesh is further than 8 m from its centre" are different
+## claims, and only the second one is what the player sees. Asserted on the
+## ArrayMesh's own AABB, over every row — a prop authored past the property line
+## would be a building in the road with a correct manifest.
+func test_every_mesh_sits_inside_its_own_footprint() -> void:
+	var checked := 0
+	for entry_v in _manifest().get("meshes", []) as Array:
+		var entry: Dictionary = entry_v
+		if String(entry.get("archetype", "")) == FAR_MESH:
+			continue
+		var foot: Array = entry.get("footprint_tiles", [1, 1])
+		var half_x := float(foot[0]) * TILE_M * 0.5
+		var half_z := float(foot[1]) * TILE_M * 0.5
+		var mesh: ArrayMesh = load(String(entry["path"]))
+		assert_true(mesh != null, "%s loads" % entry["path"])
+		if mesh == null:
+			continue
+		var box := mesh.get_aabb()
+		var name := "%s L%d lod%d" % [entry["archetype"], int(entry["level"]),
+				int(entry["lod"])]
+		# 1 mm of slack for the float round-trip through the .res, and not a
+		# millimetre more: the defect this guards is measured in METRES.
+		assert_true(box.position.x >= -half_x - 0.001,
+				"%s: %.3f m past its own -X edge" % [name, -half_x - box.position.x])
+		assert_true(box.position.z >= -half_z - 0.001,
+				"%s: %.3f m past its own -Z edge" % [name, -half_z - box.position.z])
+		assert_true(box.end.x <= half_x + 0.001,
+				"%s: %.3f m past its own +X edge" % [name, box.end.x - half_x])
+		assert_true(box.end.z <= half_z + 0.001,
+				"%s: %.3f m past its own +Z edge" % [name, box.end.z - half_z])
+		checked += 1
+	assert_true(checked >= 160, "every mesh row was measured (%d)" % checked)
+
+
 ## doc 02's `water_facility` column IS doc 05's reference-variant column (RR-8),
 ## which is the only reason `pump` needs no mesh of its own. Checked rather than
 ## repeated: if the two ever disagree, the pump is on the wrong ground too and no

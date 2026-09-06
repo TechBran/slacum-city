@@ -199,7 +199,7 @@ var far_relief_override: float = -1.0
 var keep_far_buffers := false
 var _far_buffers: Dictionary = {}   # Vector2i chunk -> PackedFloat32Array
 # --- MEDIUM tier, merged (§2.5 / §2.6 bucket merge, doc 91 D-14) -----------
-## "archetype:mask:lod" -> that level set as ONE ArrayMesh. Built once, on
+## "shape:mask:lod" -> that level set as ONE ArrayMesh. Built once, on
 ## first use, and shared by every chunk holding the same set of levels.
 var _atlas_mesh: Dictionary = {}
 ## shape -> the ShaderMaterial the atlas wears. ONE per shape for the
@@ -560,6 +560,9 @@ func _ensure_bucket_node(bucket: RenderStateModel.Bucket) -> void:
 				material.set_shader_parameter(String(key), Color(String(value)))
 			TYPE_INT, TYPE_FLOAT:
 				material.set_shader_parameter(String(key), float(value))
+	# `bucket.archetype` is already the doc-02 archetype and `bucket.shape` the
+	# mesh; the pages are the archetype's (Wave 31). Routed through
+	# `base_archetype_of` anyway so this and the merged path spell it once.
 	_apply_surface(material, base_archetype_of(String(bucket.archetype)), family)
 	mm.mesh = mesh
 	node.multimesh = mm
@@ -639,7 +642,7 @@ func _chunk_aabb(chunk: Vector2i) -> AABB:
 # is §2.5's own rule and is what MEDIUM was always supposed to look like.
 
 ## `mask` bit `level - 1` set for every level this atlas must carry. Cached, so
-## the meshes are built once per distinct (archetype, level set, lod) in the
+## the meshes are built once per distinct (SHAPE, level set, lod) in the
 ## city. `null` when the shape has no mesh set at `atlas_lod` at all — then
 ## that shape keeps its per-level buckets and the chunk merges the rest,
 ## which is still a merge.

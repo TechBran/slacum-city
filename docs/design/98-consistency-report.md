@@ -12018,6 +12018,7 @@ Balanced budget, and the alternative is the tank drawn as a pump.
 
 | gate | command | result |
 |---|---|---|
+| full suite | `nohup setsid tools/run_suite.sh` | **162 files, 2,998 tests, 633,357 asserts, failed 0, silent 0** — +1 file and +10 tests (`tests/test_water_shell_shapes.gd`); most of the assert growth is `test_graybox_gen` and `test_asset_completeness` sweeping 163 meshes where they swept 133 |
 | screen deck | `godot --headless tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0, clean** |
 | doc ids | `python3 tools/check_doc_refs.py` | *all resolving; no id assigned twice* |
 | shape invariants | `python3 tools/gen_building_shapes.py --check` | every tri budget, every silhouette Hamming distance and every variant footprint against doc 05 pass, file in sync |
