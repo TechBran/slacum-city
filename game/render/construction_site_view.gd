@@ -203,8 +203,11 @@ func setup(render_data: Dictionary = {}) -> void:
 		_animate(site)
 
 
-## One site's props. `world_pos` is the lot CENTRE at ground level,
-## `footprint_tiles` the lot size in 8 m tiles, `height_m` the finished
+## One site's props. `world_pos` is the centre of the ground the building STANDS
+## on and `footprint_tiles` is that same BUILT extent in 8 m tiles — not the lot
+## (Wave 31, RR-255): a hoarding around the reservation fences ground the
+## building is not on, and doc 11 §2.16a's apron already dresses that remainder.
+## `height_m` is the finished
 ## building's height — at or above `crane_min_height_m` the site gets a tower
 ## crane, below it a ring of scaffolding poles.
 ## `gate_side` (0 = -Z, 1 = +X, 2 = +Z, 3 = -X) is the lot face that fronts the

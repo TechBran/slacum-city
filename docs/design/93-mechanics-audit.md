@@ -7956,3 +7956,118 @@ actually serves**, which is a doc 05 §2.5 re-derivation with every `feed_capaci
 figure in doc 92 hanging off it — a lane of its own, with the MVP ladder question
 §BD6 deferred. Doc 91 **A91-D-168**, ranked first among this lane's open
 questions.
+---
+
+## BI. Wave-31 rulings — the render draws SHAPES, and an archetype is not always one (2026-09-06)
+
+*The player, on the device, 2026-09-06:* **"Treatment plants and storage tanks —
+the buildings are built off-centre, and they just fall out onto the road. They
+don't follow their grid pattern; they're just off-centre from it."**
+
+Doc 93 §BE gave the project two extents — the LOT a building reserves and the
+BUILT footprint it stands on — and routed every SIM reader to the right one. This
+wave is the same question one layer out: **which MESH is the right one**, and the
+answer was never per-variant at all.
+
+### BI1. The ruling: the render's unit is the SHAPE, not the archetype
+
+A building has an archetype (doc 02), it may have a variant (doc 05), and it
+draws with a **shape**. The three are not the same thing and the manifest can
+only be keyed on one of them.
+
+| | what it is | who owns it | who reads it |
+|---|---|---|---|
+| **ARCHETYPE** | `Building.archetype` — the doc-02 stat row, the family, the texture pages | doc 02 §2.1 | the catalog, the economy, the texture manifest's `archetype_surface` |
+| **VARIANT** | `Building.variant` — doc 05's own component, with its own footprint ladder | doc 05 §6 / §8 | `built_of_building`, `water_lot_for`, the placement verb |
+| **SHAPE** | the gray-box mesh SET a building draws with | doc 11 §2.14 | the manifest key, the render bucket, the merged atlas, `_far_scale`, the blob decal, the hoarding height, the service-drop height |
+
+**The shape is the archetype for everything doc 02 owns outright, and it is
+`<archetype>_<variant>` for a variant whose footprint ladder is not the
+archetype's.** `water_facility` stays the shape of `pump`, because doc 02's
+`water_facility` footprint column IS doc 05's `pump` column — declared, not
+assumed: `data/buildings.json` names `reference_variant: "pump"` and
+`tools/gen_building_shapes.py` mirrors it in `REFERENCE_VARIANT`, so
+`ShapeCatalog.shape_of("water_facility", "pump")` is a mapped answer.
+
+**Nothing may re-derive a shape by hand.** `game/render/shape_catalog.gd` reads
+the manifest's `variant_of` / `variant` fields and is the only place the map
+exists; `RenderStateModel` holds one and `CityView` pushes its own in at setup so
+the model and the view cannot disagree about which mesh a building draws with.
+
+### BI2. What was actually there, which is the §BE2 shape one layer out
+
+`game/meshes/generated/manifest.json` carries one `footprint_tiles` per
+`archetype:level:lod`. For `water_facility` that is 3×3 to L4, and doc 02 flags
+the column `footprints_are_reference_variant_only` — the flag is honest and it is
+not machine-checkable, which is exactly what A91-D-156 said about it in Wave 29.
+So the renderer drew:
+
+* a 2×2 `tank` with a 3×3 shell — **+4.0 m of building over every edge**;
+* a 2×2 `treatment` plant with the same — the same +4.0 m;
+* a 2×2 river `source` with the same, on shoreline it does not hold;
+* a **4×4** `treatment` plant at L4 with a 3×3 shed — the defect with its sign
+  flipped, and the proof that "too big" was never the fault.
+
+The founding city's own `WTR-2` has been a 2×2 tank under a 3×3 shell since the
+city was authored. **Nothing caught it** because every test that touched the
+manifest asked whether a mesh exists for an (archetype, level), and none asked
+whether its footprint is the one the catalogue publishes for the thing standing
+there. That question is now
+`tests/test_water_shell_shapes.gd::test_every_manifest_footprint_is_its_catalogue_footprint`,
+over all 162 rows.
+
+### BI3. A variant with no shape is SCALED, never left to overhang
+
+Doc 05 §6 defers `booster`, so it has no shape and draws with `water_facility`'s.
+On its 1×1 L1 footprint that shell would overhang by 8 m per edge — twice the
+reported defect. The rule is therefore not "every variant must have a mesh"
+(which a deferred variant cannot satisfy) but **a mesh may never be drawn outside
+the ground its subject holds**: `RenderStateModel.footprint_scale_for` squeezes
+the instance basis on X/Z to `built / mesh`, clamped at 1.0.
+
+Three things about that clamp are rulings and not implementation:
+
+1. **It only shrinks.** A mesh smaller than the ground is a building with room
+   around it, which doc 11 §2.16a's lot dressing exists to fill. Inflating art to
+   fill a lot would be a second lie in place of the first.
+2. **Y is never scaled.** The height is the archetype's own and
+   `build_height_m`'s construction clamp is written against it, so scaling it
+   would make a half-built building the wrong fraction of itself.
+3. **Every consumer of the mesh footprint multiplies the instance scale back
+   in** — the FAR box (`_far_scale`) and the §2.11 blob decal — or a squeezed
+   building would cast a shadow wider than itself and pop at the LOD boundary.
+
+### BI4. A completed rung that grows the footprint MOVES
+
+A mesh is centred on the ground it holds (§BE1), so a footprint that grows moves
+a centre: 4 m along both axes for every one-tile step. Five of doc 02's twelve
+archetypes grow — `store` at L3, `construction_yard` at L4, `power_facility` at
+L4 — and doc 05's `treatment` at L2 and `tank` at L3.
+`RenderStateModel.apply_events`' `building_completed` arm rebucketed the LEVEL
+and left the transform alone, so every grown building in the game stood half a
+tile off its own lot from the moment it climbed.
+
+**The ruling: the completion EVENT carries the geometry, and the model does not
+compute it.** `world_pos` and `built_tiles` ride on the translated event because
+only the sim can answer them — the render model knows nothing of doc 02's
+footprint ladder and must not learn it. Both are optional and a producer that
+omits them gets the arm it always had, which is what keeps every fixture and
+harness in the project working unchanged.
+
+**The chunk is deliberately not re-derived.** A 4 m move can cross a 128 m chunk
+line, and a rec whose `chunk` disagrees with the `ChunkRec` holding it corrupts
+the slot allocator. Re-homing buildings is the streamer's job; this only
+re-centres one inside its own chunk.
+
+### BI5. The hoarding fences the BUILDING; the apron owns the rest of the lot
+
+Wave 29 changed `building_record()["footprint"]` from the built extent to the
+LOT. `_building_view` was moved to `built_of_building` in the same pass and
+`_add_construction_site`, three lines below it, was not — so a 2×2 tank was
+fenced with a 3×3 run of hoarding panels, one tile of it in the street, while
+§2.16a's lot dressing drew a compound fence on that same remainder.
+
+**Two layers may not both own the same ground.** The hoarding is the BUILT
+extent — it fences the thing being built. §2.16a's apron is `held − built` — it
+dresses the ground the building has reserved and not yet used. Between them they
+cover the lot exactly once.

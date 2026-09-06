@@ -85,7 +85,16 @@ static func building_view(sim: CitySim, sim_id: String,
 	if b.state == &"under_construction":
 		height = CONSTRUCTION_SERVICE_HEIGHT_M
 	elif height_of.is_valid():
-		height = float(height_of.call(b.archetype, maxi(b.level, 1)))
+		# **The SHAPE's height, not the archetype's** (Wave 31, RR-254). The
+		# callback is the gray-box manifest's `height_m` table and the manifest is
+		# keyed by shape, so asking it for `water_facility` handed back the PUMP's
+		# roofline for every doc-05 shell: a tank stands 14 m and its pump-shaped
+		# answer was 8, which is a service drop landing 6 m below the wall it is
+		# supposed to reach. `ShapeCatalog` is the only thing that knows the
+		# difference and the feed asks it rather than making the callers change.
+		height = float(height_of.call(
+				ShapeCatalog.shared().shape_of(b.archetype, b.variant),
+				maxi(b.level, 1)))
 	return {
 		"world_pos": center,
 		"footprint_m": Vector2(size.x * tile_m, size.y * tile_m),

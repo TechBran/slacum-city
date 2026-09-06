@@ -930,12 +930,19 @@ func _building_view(sim_id: String) -> Dictionary:
 	var size := _sim.built_of_building(b)
 	var centre := Vector3(b.origin.x * 8.0 + size.x * 4.0, 0.0,
 			b.origin.y * 8.0 + size.y * 4.0)
+	# Wave 31 (RR-254/RR-256): the doc-05 variant picks the SHAPE, and the built
+	# extent is the guard that keeps a mesh inside its own ground. The draw-call
+	# census below is measured over the buckets that split, so it has to be here.
+	var shape := ShapeCatalog.shared().shape_of(
+			StringName(b.archetype), StringName(b.variant))
 	return {
 		"id": b.id,
 		"archetype_id": StringName(b.archetype),
+		"variant_id": StringName(b.variant),
 		"level": maxi(b.level, 1),
-		"family": String(_family_of.get(String(b.archetype), "residential")),
+		"family": String(_family_of.get(String(shape), "residential")),
 		"world_pos": centre,
+		"built_tiles": size,
 		"block_id": String(record.get("block", "")),
 		"transform": Transform3D(Basis.IDENTITY, centre),
 		"occ_b": 1.0,

@@ -303,6 +303,13 @@ static func build_level_mesh(shapes: Dictionary, arch: Dictionary, level: Dictio
 		"doc11_id": String(arch.get("doc11_id", "")),
 		"family": String(arch.get("family", "")),
 		"roof_signature": String(arch.get("roof_signature", "")),
+		# Wave 31 (RR-254). `archetype` above is the SHAPE id and is what the
+		# render keys its buckets, atlases and far scales on; these two say which
+		# doc-02 archetype + doc-05 variant the shape BELONGS to, which is what
+		# `ShapeCatalog` inverts to pick a mesh for a building. A row with no
+		# `variant` is a plain doc-02 archetype and is its own shape.
+		"variant_of": String(arch.get("variant_of", "")),
+		"variant": String(arch.get("variant", "")),
 		"level": int(level["level"]),
 		"lod": lod,
 		"tris": mb.tri_count(),
