@@ -11824,3 +11824,24 @@ sixteen identical pictures of a house.
 | lot-dressing preview shots per deck | 16 (3 of the 5 growers) | **21 (all five)** |
 | founding city census (`measure_lots`) | 34 buildings, 8 growers, 0 locked, 109 reserved / 77 built | **identical** |
 | four `profile_sim --hash-only` baselines | fork's values | **identical** |
+
+### 74b.2 The gates, on the tree this fix pass ships
+
+Taken on the frozen tree, after the last code change.
+
+| gate | command | result |
+|---|---|---|
+| full suite | `nohup setsid tools/run_suite.sh` | **161 files, 2,988 tests, 604,399 asserts, failed 0, silent 0** (+7 tests: the four door states, the fold, and one apiece for the two footprint readers) |
+| screen deck | `godot --headless tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0, 99 of 99 states clean**, with the new `below_the_fold` rule armed on both lot screens |
+| the fold rule bites | the same command with `Checklist` added to `MUST_BE_ON_SCREEN` | `below_the_fold  Checklist  rect [P: (116, 564), S: (276, 441)] outside viewport [P: (0, 0), S: (412, 915)]`, **exit 1** |
+| doc ids | `python3 tools/check_doc_refs.py` | *6,722 references, all resolving; no id assigned twice* |
+| determinism, founding city | `tools/profile_sim.gd -- --hash-only` | `9004573df161a57e…` / `d5c6678de64cb5de…` — **byte-identical to the fork** |
+| determinism, benchmark city | `… --hash-only --city=res://tests/fixtures/bench_city.json` | `ebb5f4762e4f2412…` / `307a6a27ad6f1801…` — **byte-identical to the fork** |
+| the 45-day arc | `tools/measure_curriculum.gd -- --days=45` | L1 **14/13/17**, L2 **46/43/50**, L4 **98/96/100**, L7 **275/—/292**, `road_tiles_built` 4/4/4, `tax_changes` 1/1/1 — **every cell as §74's own run** |
+
+**The arc was re-run because `sim/` moved** — `_lot_blockers` gained its
+buildable-and-empty arm. It could not have moved the arc and did not: `lot_lock`
+is a QUERY, its emptiness and its `reachable_level` are computed from the record
+and the catalog before the blocker list is built, and the only sim caller —
+`cmd_upgrade_building`'s ceiling — reads `reachable_level` and never `blockers`.
+The four hashes say the same thing from the other side.
