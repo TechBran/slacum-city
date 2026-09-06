@@ -4,12 +4,18 @@ extends SimTest
 ## with the starter city's own "grid stops the skyline" case.
 
 
-static func _serviceable_vacant_tile(sim: CitySim) -> Vector2i:
-	# A buildable, vacant, power-serviceable 1×1 lot inside the core.
+## A buildable, vacant, power-serviceable site inside the core, big enough for
+## `archetype`'s LOT (doc 02 §2.3a, Wave 29). It used to look for a 1×1 hole and
+## hand it to `cmd_place_building("store", …)`, which now reserves 2×2 — so the
+## helper found sites the command refused, and the failure read as a placement
+## bug rather than as two functions disagreeing about how big a store is.
+static func _serviceable_vacant_tile(sim: CitySim,
+		archetype: String = "store") -> Vector2i:
+	var size := sim.lot_for(archetype)
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var origin := Vector2i(x, z)
-			if sim.world.grid.can_place(origin, Vector2i.ONE) and sim.grid.would_serve(origin):
+			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
 				return origin
 	return Vector2i(-1, -1)
 

@@ -571,14 +571,18 @@ func enter(p_archetype: String, p_variant: String = "") -> Dictionary:
 			"required_level": required_level, "city_level": sim.progression.city_level,
 			"archetype": p_archetype,
 		})
-	var foot: Array = stats.get("footprint", [1, 1])
 	state = STATE_PLACING
 	archetype = p_archetype
 	variant = p_variant
 	component_kind = ""
 	component_domain = ""
 	component_level = GRID_CARD_LEVEL
-	size = Vector2i(int(foot[0]), int(foot[1]))
+	# **The ghost shows the LOT** (Wave 29, doc 02 §2.3a, doc 12 D-128). §2.7's own
+	# rule is that a ghost asks the command rather than re-implementing it, and
+	# `cmd_place_building` now reserves `lot_for(archetype)` — so a store's ghost
+	# is 2×2 from the first frame, which is both the ground it will take and the
+	# ground the player is being asked to find.
+	size = sim.lot_for(p_archetype)
 	origin = Vector2i.ZERO
 	has_origin = false
 	_verdict = {}
@@ -652,7 +656,9 @@ func enter_water_component(kind: String, level: int = -1) -> Dictionary:
 	component_kind = kind
 	component_domain = DOMAIN_WATER
 	component_level = wanted
-	size = Vector2i(int(row.get("footprint_w", 1)), int(row.get("footprint_h", 1)))
+	# The LOT, for `enter`'s reason — and doc 05's, per variant: a `treatment`
+	# reserves the 3×3 it reaches at L2, not the 2×2 it opens on.
+	size = sim.water_lot_for(kind)
 	origin = Vector2i.ZERO
 	has_origin = false
 	_verdict = {}
@@ -1684,8 +1690,11 @@ func building_view(sim_id: String) -> Dictionary:
 		"condition": b.condition,
 		"condition_text": RequirementFormatter.percent(b.condition),
 		"origin": b.origin,
-		"footprint": Vector2i(int((b.stats.get("footprint", [1, 1]) as Array)[0]),
-				int((b.stats.get("footprint", [1, 1]) as Array)[1])),
+		# The BUILT extent — what the mesh covers at this level (doc 02 §2.3).
+		"footprint": sim.built_of_building(b),
+		# The LOT it reserved for life (doc 02 §2.3a) lives on `lot_block` below,
+		# where the panel's LOT row reads it — one key per reader, not two.
+		"lot_block": _lot_block(sim_id, b),
 		"vitals": [
 			_vital("occupants", "ui_building_vital_occupants",
 					_occupants_text(sim_id, b)),
@@ -2091,6 +2100,160 @@ func _occupants_text(sim_id: String, b: Building) -> String:
 ## closed. The L4 curriculum teaches "stations and coverage" against a surface
 ## that could not turn green.
 ##
+## **The LOT row** (doc 12 §2.9a / D-128, doc 02 §2.3a, Wave 29). Three states,
+## and the third is the only one with a button:
+##
+##   * the archetype does not grow — `available: false`, no row is drawn. A house
+##     is 1×1 at every rung and a row saying so is noise.
+##   * it grows and it HOLDS its lot — the row says how much ground is reserved
+##     and what is standing on it, so a player looking at a one-tile store on a
+##     2×2 pad can see the pad is not a mistake.
+##   * it is LOT-LOCKED — it was standing when the rule arrived and the tiles it
+##     needed were already taken. The row says the level it can still reach and
+##     names what is on the missing ground.
+##
+## **The locked state is four states, and only one of them has a button** (Wave
+## 29 fix). The ground grows all at once or not at all, so a door is drawn only
+## where pressing it actually frees the lot:
+##
+##   * a BUILDING is the only thing on the missing ground, and a verb takes it —
+##     the row quotes that verb (`cmd_demolish_building` for anything standing,
+##     `cmd_salvage_building` for a ruin) and routes `FIX_BUILDING` at it,
+##     because *"what freeing it pays"* is the half of the sentence that makes it
+##     actionable;
+##   * a building is the only blocker but NO verb takes it — it is on fire — the
+##     row says so and draws nothing to press;
+##   * a building AND ground the player cannot clear (road, water, undeveloped,
+##     an occupied tile) — clearing the building would move nothing, so the row
+##     says that instead of offering it;
+##   * ground only — the original `ui_building_lot_locked_ground`.
+##
+## Never a fifth state where a lot-locked building is silently short: the whole
+## reason this block exists is that a reservation the player cannot see is a
+## reservation they will read as a bug.
+func _lot_block(sim_id: String, b: Building) -> Dictionary:
+	var lot := sim.lot_of_building(b)
+	var built := sim.built_of_building(b)
+	var first := sim.built_for(String(b.archetype), 1)
+	if b.archetype == StringName(CitySim.WATER_SHELL_ARCHETYPE):
+		first = sim.water.data.footprint_of(b.variant, 1,
+				String(sim.water.data.placeable_rules(String(b.variant)).get("subtype", "")))
+	if lot == first:
+		# Not a grower: nothing about this building's ground ever changes.
+		return {"available": false, "locked": false, "lot": lot, "built": built}
+	var lock := sim.lot_lock(sim_id)
+	var out := {
+		"available": true,
+		"locked": not lock.is_empty(),
+		"lot": lot,
+		"built": built,
+		"lot_text": "%d×%d" % [lot.x, lot.y],
+		"built_text": "%d×%d" % [built.x, built.y],
+		# The verb that would free this ground, for a reader that wants to know
+		# WHICH one was quoted: `"demolish"`, `"salvage"`, or empty where no verb
+		# is offered. Always present on a drawn row, so no consumer has to guess
+		# whether the key exists.
+		"free_verb": "",
+		"fix_target": {"kind": RequirementFormatter.FIX_NONE, "id": "", "params": {}},
+	}
+	if lock.is_empty():
+		out["text_key"] = "ui_building_lot_reserved"
+		out["params"] = {"lot": out["lot_text"], "built": out["built_text"]}
+		return out
+	var held: Vector2i = lock["held"]
+	out["held"] = held
+	out["held_text"] = "%d×%d" % [held.x, held.y]
+	out["reachable_level"] = int(lock["reachable_level"])
+	out["top_level"] = int(lock["top_level"])
+	out["blockers"] = (lock["blockers"] as Array).duplicate()
+	# The FIRST blocker that is a BUILDING is the one the player can act on; a
+	# road or an undeveloped block is a fact about the map, not a door. The
+	# blocker list is already in a deterministic order, so this picks the same
+	# neighbour on every machine.
+	var neighbour := ""
+	var neighbours: Array = []
+	var ground: Array = []
+	for entry in (lock["blockers"] as Array):
+		if sim.buildings.has(String(entry)):
+			neighbours.append(String(entry))
+		else:
+			ground.append(String(entry))
+	if not neighbours.is_empty():
+		neighbour = String(neighbours[0])
+	var params := {"held": out["held_text"], "lot": out["lot_text"],
+			"level": int(lock["reachable_level"]), "top": int(lock["top_level"])}
+	if neighbour == "":
+		out["text_key"] = "ui_building_lot_locked_ground"
+		out["params"] = params
+		return out
+	params["neighbour"] = neighbour
+	var other: Building = sim.buildings[neighbour]
+	out["blocked_by"] = neighbour
+	# **WHICH VERB CLEARS IT IS THE NEIGHBOUR'S OWN STATE'S BUSINESS** (Wave 29
+	# fix, doc 93 §BE5a, report 98 §74b RR-240). The first cut quoted `cmd_demolish_building`
+	# unconditionally and never read the quote's `ok`, and the city that found it
+	# was the player's own: 77 of `tests/fixtures/player_save_0903`'s 89
+	# buildings are `destroyed`, so all seven lot-locked stores whose blocker is
+	# a building named a RUIN. Demolition refuses a ruin (`E_STATE` — that is
+	# `cmd_salvage_building`'s job, doc 02 §2.12), so the row read "clearing it
+	# refunds $0" and armed a button behind a verb that answers no. Salvage
+	# succeeds on every one of them and pays $390 — $27,000 for the destroyed
+	# data centre. A wrong number in front of a verb that refuses is the defect
+	# this project is named after, one screen further in.
+	#
+	# So: the ruin's verb for a ruin, the demolition for anything standing, and
+	# the QUOTE's own `ok` decides whether there is a door at all. `on_fire` is
+	# the one state neither verb takes — the row says so and draws no button
+	# rather than inventing a third verb.
+	#
+	# **And a door only exists where the door OPENS something.** The ground grows
+	# all at once or not at all — `migrate_lots` asks `TileGrid.can_expand` for
+	# the WHOLE lot rectangle, which refuses if a single tile of it is taken — so
+	# clearing one of two blockers moves nothing. Measured on the player's save:
+	# every one of those seven stores is blocked by a ruin AND by the kerb
+	# (`blockers = [E_ROAD, P-047]`), and salvaging the ruin leaves the shop at
+	# 1×1 of its 2×2 with its `reachable_level` still 2. So a lot with ground the
+	# player cannot clear says exactly that and draws no button: the row that
+	# offers a remedy which cannot work is the same defect as the row that offers
+	# a verb which refuses.
+	# …and TWO buildings on the missing lot is the same partial case as ground:
+	# clearing one of them moves nothing, so no door (the merge verifier found
+	# 14 of the bench city's 206 locked lots arming one — the loop used to keep
+	# the first building and drop the rest).
+	if not ground.is_empty() or neighbours.size() > 1:
+		out["text_key"] = "ui_building_lot_locked_partial"
+		out["params"] = params
+		return out
+	var salvaging := other.state == &"destroyed"
+	var quote := sim.cmd_salvage_building(neighbour, true) if salvaging \
+			else sim.cmd_demolish_building(neighbour, true)
+	var payload: Dictionary = quote.get("payload", {})
+	if not bool(quote.get("ok", false)):
+		# No verb clears it in this state. The lowercase state text is
+		# deliberate: it lands mid-sentence ("…while it is on fire"), and the
+		# table's own entry is capitalised for a badge.
+		params["state"] = _t("ui_building_state_%s" % String(other.state), {},
+				String(other.state).replace("_", " ")).to_lower()
+		out["text_key"] = "ui_building_lot_locked_stuck"
+		out["params"] = params
+		return out
+	# `cmd_salvage_building` pays `value` and `cmd_demolish_building` pays
+	# `refund`; both are "what freeing this ground puts in the treasury", which
+	# is the half of the sentence that makes the row actionable.
+	var pays := int(payload.get("value", 0)) if salvaging \
+			else int(payload.get("refund", 0))
+	out["free_verb"] = "salvage" if salvaging else "demolish"
+	out["free_refund"] = pays
+	out["free_refund_text"] = HudModel.money(pays)
+	params["refund"] = out["free_refund_text"]
+	out["text_key"] = "ui_building_lot_locked_salvage" if salvaging \
+			else "ui_building_lot_locked"
+	out["params"] = params
+	out["fix_target"] = {"kind": RequirementFormatter.FIX_BUILDING, "id": neighbour,
+			"params": {"sim_id": neighbour}}
+	return out
+
+
 ## Each tile is banded the way its own doc bands it, and `—` survives in exactly
 ## one place per slot: the honest one. No station in range at all reads OFFLINE
 ## with the scalar beside it; a lot no pressure zone reaches reads OFFLINE with

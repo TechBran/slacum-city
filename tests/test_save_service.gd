@@ -103,7 +103,9 @@ func test_placed_building_survives_a_slot() -> void:
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var candidate := Vector2i(x, z)
-			if sim.world.grid.can_place(candidate, Vector2i.ONE) \
+			# The store's LOT (doc 02 §2.3a), not one tile: `cmd_place_building`
+			# below reserves 2×2 and would refuse a 1×1 find.
+			if sim.world.grid.can_place(candidate, sim.lot_for("store")) \
 					and sim.grid.would_serve(candidate):
 				origin = candidate
 				break
@@ -451,7 +453,23 @@ func test_latest_slot_and_load_latest_resume_the_newest_save() -> void:
 	var throwaway := CitySim.boot_from_files(1)
 	assert_eq(service.load_latest(throwaway), -1, "nothing to resume is not an error")
 	var sim := CitySim.boot_from_files(777)
-	sim.cmd_place_building("house", Vector2i(35, 33))
+	# **A tile the founding city actually leaves free** (Wave 29, doc 02 §2.3a).
+	# This was the hard-coded `(35, 33)`, which is core-local `(3, 1)` — inside
+	# the 3×3 LOT `YARD-1` reserves from `(1, 1)` now that a building takes the
+	# ground its final form needs. The placement simply failed and the city stayed
+	# at 34 buildings, so the assertion below was measuring the founding roster
+	# rather than a saved house.
+	var spot := Vector2i(-1, -1)
+	for z in range(32, 80):
+		for x in range(32, 80):
+			if sim.world.grid.can_place(Vector2i(x, z), sim.lot_for("house")) \
+					and sim.grid.would_serve(Vector2i(x, z)):
+				spot = Vector2i(x, z)
+				break
+		if spot.x >= 0:
+			break
+	assert_true(bool(sim.cmd_place_building("house", spot)["ok"]),
+			"the house this test is about is actually placed")
 	sim.advance_hours(2.0)
 	service.save_slot(sim, 3)                       # older manual save
 	sim.advance_hours(1.0)

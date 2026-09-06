@@ -3329,6 +3329,162 @@ per frame (`_trip_window` called `leg_gm` called `has_route`), which at
 Arrays. Both are the same floats in the same order; §2.13's table has the
 measurement.
 
+### 2.16a LOT DRESSING — the ground a building has reserved but not yet built on, **shipped 2026-09-06**
+
+Doc 02 §2.3a made a building reserve the footprint of its **final form** at
+placement, on the player's own instruction. A young store therefore stands on one
+tile of a 2×2 lot, a new construction yard on four of nine, and a new power plant
+on nine of sixteen. **That remainder is the half of the rule the player actually
+sees, and bare ground there does not read as room to grow — it reads as a tile
+somebody forgot to build on.**
+
+This layer fills it with an apron and takes the apron away again as the building
+grows into its ground. `game/render/lot_dressing_model.gd` decides what an apron
+looks like; `lot_dressing_view.gd` uploads it; `data/render.json.lot_dressing`
+holds every number.
+
+**Three site kinds, by what the archetype actually is.**
+
+| archetype | site | what is on it |
+|---|---|---|
+| `store` | asphalt **forecourt** | painted parking bays on a fixed pitch, a bollard on the outer corner |
+| `construction_yard` | gravel **yard** | stockpiles at hashed offsets, hashed yaw and hashed scale |
+| `power_facility`, the doc-05 water shells | fenced gravel **compound** | fence posts along the **outer boundary of the reservation** |
+
+The forecourt's bays are laid on a fixed pitch so two adjacent dressed tiles read
+as one car park; the yard's stockpiles are hashed because a materials yard is the
+one site that should *not* look laid out; and the compound's fence follows the
+lot's perimeter rather than each tile's own edges — the first cut did the latter
+and read as **a row of separate pens** instead of one enclosed yard.
+
+**It recedes for free.** The apron is drawn on `held − built` and on nothing
+else, so raising the level is the whole animation: a store's three pads are gone
+the moment it reaches L3, and a building at the top of its ladder contributes
+**zero** instances. Measured on the founding city through
+`tools/lot_dressing_preview.gd`:
+
+Every row starts from the founding city's whole apron set — **32 pads, 124
+props**, its eight growers together — and shows what walking that ONE subject up
+its ladder removes. **One archetype per run**, which is the half the first
+write-up left off its command line: `--archetypes=<one>` re-boots the city, so
+each row is measured against the same 32/124 base. The default invocation walks
+every grower in one city and therefore reports the numbers CUMULATIVELY (store
+32→29, then yard 29→24, then plant 24→17) — the same deltas, a different column.
+
+| subject | grows at | pads | props | command |
+|---|---|---|---|---|
+| `store` (`STR-001`) | L3 | 32 → **29** | 124 → 113 | `--archetypes=store` |
+| `construction_yard` (`YARD-1`) | L4 | 32 → **27** | 124 → 109 | `--archetypes=construction_yard` |
+| `power_facility` (`PLANT-1`) | L4 | 32 → **25** | 124 → 94 | `--archetypes=power_facility` |
+| `tank` (`WTR-2`) | L3 | 32 → **27** | 124 → 100 | `--archetypes=water_facility:tank` |
+| `treatment` (placed) | L2 | 37 → **32** | 148 → 124 | `--archetypes=water_facility:treatment` |
+
+The pad deltas are **3, 5, 7, 5 and 5** — exactly each grower's own remainder
+(2×2 − 1×1, 3×3 − 2×2, 4×4 − 3×3, 3×3 − 2×2 twice), which is the arithmetic proof
+that the layer draws the reservation and nothing else.
+
+**The last two rows are the Wave 29 fix pass's** (report 98 §74b RR-243). The
+growing set is five, not three: doc 02's `water_facility` column is the PUMP
+reference row and doc 05's own table grows `treatment` and `tank` (A91-D-156).
+The founding city ships no `treatment` shell — doc 09 §2.9.6 puts that node
+inside `WTR-1`, whose shell variant is `pump` — so the harness places one through
+the real `cmd_place_water_component` and builds it out through the real
+construction queue, which is why its base is 37/148 rather than 32/124: the new
+shell brings its own 5-tile apron with it. `tools/device_results/lot_dressing/`
+and `…_close/` hold **21 shots each**, every rung of all five.
+
+**It also dresses only ground the building HOLDS, never the lot it wants.** A
+lot-locked building (doc 02 §2.3a) holds less than its lot, and dressing the lot
+would paint an apron over the neighbour that is boxing it in.
+
+#### The budget — 2 draw calls, city-wide
+
+`LotPads` is one flat quad per un-built tile; `LotProps` is one **unit box** per
+stripe, bollard, stockpile and fence post, scaled per instance, so one mesh
+serves all four kinds. Both are single MultiMeshes, **flat rather than
+per-chunk** — the call §2.5 makes for the road surface and for the same
+arithmetic: aprons appear wherever a growing building stands, which on the
+benchmark city is 332 buildings spread across every chunk, so per-chunk buckets
+would be **98 calls against 71 of headroom**.
+
+**Shadows OFF on both buffers.** A 0.16 m painted stripe and a 0.14 m fence post
+cast nothing a player can resolve at any of §2.5's three poses, and a pad lying
+flat on the ground has no shadow to cast. §2.5's "only NEAR chunks cast" rule is
+about per-chunk BUILDING buckets and does not reach here, so this is a decision
+rather than an inheritance — and it keeps the whole layer out of the pass §2.5
+calls the biggest single saving in the design.
+
+§2.13's census gains exactly **two** opaque calls, and **zero** on a city with
+nothing mid-growth.
+
+#### The governor rung — `lot_prop_ratio`
+
+A fifth rung joins §2.13's ladder, **after `street_lights` and before
+`preset_drop`**: `{"id": "lot_prop_ratio", "mult": 0.50, "floor": 0.0}`. It is a
+RATIO knob like `particle_ratio` — its ceiling is 1.0 by definition, not a
+per-tier column — because an apron has the same authored density on every device
+and what changes under pressure is how much of it is drawn.
+
+**It thins what STANDS on an apron and never the apron itself**, which is
+`PowerInfraView`'s reasoning (fixed pads, thinned plume) applied to ground: the
+pads are the layer's whole reason to exist, and a thermally throttled phone still
+has to be able to tell reserved ground from unbuilt ground. At the `0.0` floor
+the props are gone and every pad is still there.
+
+Its position on the ladder is deliberate: **no device's existing ladder position
+moves**, because the four rungs that shipped before it are all spent first, and
+dropping apron props is strictly gentler than latching the whole preset down a
+tier.
+
+#### Two things this layer had to be told
+
+**It draws at GRADE, not at the block's elevation.** Doc 09 §2.2 gives each block
+an integer elevation and `TileGrid.elev_m`'s own docstring says *"elevation is a
+per-block integer the render layer applies"*. **The RENDER layer does not**:
+`grep -rn 'elev_m(' game/ ui/` finds no consumer at all, and every building, road
+and prop in the project is drawn at `y = 0`. **The SIM does** — doc 05's pressure
+model reads it on every tile of every zone (`sim/water/water_topology.gd:407`,
+wired by `water_boot.gd:21`), so elevation is live arithmetic and `elev_m()` is
+not a dead accessor; A91-D-155 carries the correction and the reproduction. The
+first cut of this layer honoured the elevation and its aprons floated 12 m above
+the two raised blocks' own buildings — which showed up in the preview as no apron
+at all. One row in `rows_from_sim` is where a future elevation pass arrives, and
+what arrives there is the render half only.
+
+**The per-instance colour needs a channel to land in, and that channel is
+LINEAR.** Two separate faults, both of which the first cut shipped:
+
+* `MultiMesh.set_instance_color` reaches `StandardMaterial3D` through the `COLOR`
+  varying, but Godot's `BoxMesh` and `PlaneMesh` ship **no `ARRAY_COLOR`** — so
+  there was nothing for the instance colour to multiply into and the entire apron
+  drew in flat cream. `LotDressingView._vertex_coloured` takes a stock
+  primitive's arrays, adds a white COLOR channel and returns an `ArrayMesh`,
+  which is what every other MultiMesh layer here gets free from its own builder.
+* A vertex COLOR reaches the shader as a **linear** value, so an authored sRGB
+  hex written straight into it renders about two stops light (A91-D-36, RR-95).
+  Both uploads call `srgb_to_linear()`.
+
+**The second one is worth recording as a process fact.** Before it was found, the
+layer compensated by authoring `pad_color` roughly half its true value and
+justifying it in a comment as *"picked against the rendered frame, not against
+the swatch"* — a plausible-sounding rule that was really a bug wearing an art
+direction's clothes, and one that would have broken the moment anyone fixed the
+real thing. `tests/test_render_polish.gd::
+test_every_procedural_mesh_decodes_its_authored_vertex_colour` is a source-level
+census — *any* file in `game/render` that writes `Mesh.ARRAY_COLOR` must call
+`srgb_to_linear` — and it caught this file on the wave's own full-suite run. The
+shipped swatches are now honest sRGB.
+
+#### Determinism
+
+Nothing here is persisted, nothing draws from an RNG stream — named or
+otherwise — and the sim cannot see the layer. Every position, angle and shade is
+an integer mix of `(sim_id, tile)`, so the same lot dresses identically on every
+device, on every reload and at every frame rate, and `state_hash()` cannot move
+because of anything in this file. `tests/test_lot_dressing.gd` asserts it by
+building the whole layer off a live city and comparing the city's hash either
+side.
+
 ### 2.17 STREET LIFE — the crook, the dog, the goat and the glint, **shipped 2026-08-21**
 
 **The defect this closes, in the player's own words.** *"There's not a lot of downtime of absolutely nothing to do… these things just pop up periodically, so a user scrubbing around their town can actually see them and give them money for things."* Until this pass, a city with nothing on fire and nothing under construction had **nothing happening on its streets that the player could act on**. §2.12's traffic moves and §2.16's plant works, but neither of them is *addressed to the player*: a car cannot be tapped, and a lorry that arrives is a thing that happens whether anyone is watching or not. The sim's opportunity system (`sim/street/opportunity_system.gd`) supplies the events; this section is the half that makes them **findable while scrubbing, and irresistible once found.**

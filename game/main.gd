@@ -48,6 +48,11 @@ var vehicle_view: VehicleView
 ## doc 11 §2.10b's distribution layer: transformer pads, service drops and the
 ## distress plume. Reads the grid on its own schedule, writes nothing back.
 var power_infra: PowerInfraView
+## doc 11 §2.16a (Wave 29): the un-built part of a lot, dressed. Two draw calls city-wide.
+var lot_dressing: LotDressingView
+## Placement, a completed job and a demolition are the three moments a lot's
+## built extent can change (see `_on_sim_batch`). Never per frame.
+var _lots_dirty := false
 ## doc 12 §2.5 mode 5. Congestion is per road EDGE, so it is the one overlay
 ## that cannot ride the packed per-building state and gets its own MultiMesh.
 var road_overlay: RoadOverlayView
@@ -510,6 +515,13 @@ func _build_city_view(render_data: Dictionary) -> void:
 	power_infra.setup(render_data, func(archetype: StringName, level: int) -> float:
 			return float(_height_of.get("%s:%d" % [archetype, level], 10.0)))
 	power_infra.set_road_probe(PowerInfraFeed.road_probe(sim_host.sim.world))
+	# doc 11 §2.16a (Wave 29): the lot dressing — forecourts, aprons, fences on
+	# the ground a young building has not filled yet.
+	lot_dressing = LotDressingView.new()
+	lot_dressing.name = "LotDressing"
+	add_child(lot_dressing)
+	lot_dressing.setup(LotDressingModel.new(), render_data)
+	lot_dressing.apply_rows(LotDressingModel.rows_from_sim(sim_host.sim))
 	for id in sim_host.sim.buildings.keys():
 		if (sim_host.sim.buildings[id] as Building).state == &"under_construction":
 			_add_construction_site(String(id))
@@ -590,7 +602,10 @@ func _building_view(sim_id: String) -> Dictionary:
 	# `[]` form was an index error on any id the renderer knew and the roster did
 	# not; PA-76: one footprint→centre formula, not the fourth copy of it.
 	var record: Dictionary = sim_host.sim.building_record(sim_id)
-	var size: Vector2i = record.get("footprint", Vector2i.ONE)
+	# The BUILT extent, not the reservation (Wave 29, doc 02 §2.3a): the record's
+	# footprint is the LOT now, and a mesh centred on it sits half a tile off its
+	# own ground. Measured on a fresh L1 store: (340,0,268) vs (344,0,272).
+	var size := sim_host.sim.built_of_building(b)
 	var center := TileGrid.centre_of_footprint(b.origin, size)
 	return {
 		"id": b.id,
@@ -682,11 +697,13 @@ func _on_sim_batch(batch: Array) -> void:
 			&"BlockDarkChanged", &"StreetlightsChanged":
 				translated.append(event)
 			&"building_placed_sim":
+				_lots_dirty = true   # Wave 29: the lot dressing re-reads the city
 				var view := _building_view(String(event.get("sim_id", "")))
 				if not view.is_empty():
 					translated.append({"type": &"building_placed", "view": view})
 					_add_construction_site(String(event.get("sim_id", "")))
 			&"water_component_placed":
+				_lots_dirty = true   # Wave 29: the lot dressing re-reads the city
 				# The pump/tank/treatment SHELL is a real doc-02 building
 				# (`cmd_place_water_component` step 1), but it announces itself
 				# on doc 05's own event — without this arm it never reached the
@@ -720,6 +737,7 @@ func _on_sim_batch(batch: Array) -> void:
 					translated.append({"type": &"BuildingPowerChanged",
 							"building": rid, "state": event.get("state", &"LIT")})
 			&"building_removed":
+				_lots_dirty = true   # Wave 29: the lot dressing re-reads the city
 				# The payload's `building` is already the render id; without this
 				# the mesh survives its own demolition.
 				translated.append(event)
@@ -730,6 +748,7 @@ func _on_sim_batch(batch: Array) -> void:
 					construction_plant.remove_site(gone)
 			&"building_damaged", &"building_destroyed", &"building_completed", \
 					&"building_repaired":
+				_lots_dirty = true   # Wave 29: the lot dressing re-reads the city
 				var rid2 := _render_id_from_int(event.get("building", -1))
 				if rid2 >= 0:
 					var out: Dictionary = event.duplicate()
@@ -746,6 +765,12 @@ func _on_sim_batch(batch: Array) -> void:
 				pass
 	if not translated.is_empty():
 		render_model.apply_events(translated)
+	# Wave 29: a lot's built extent changes on placement, completion and removal
+	# (the arms above set the flag); the dressing re-reads the city then, never
+	# per frame.
+	if lot_dressing != null and _lots_dirty:
+		lot_dressing.apply_rows(LotDressingModel.rows_from_sim(sim_host.sim))
+		_lots_dirty = false
 
 
 ## A player verb that COMPLETES work (doc 03 §2.13(f)'s rush) emits its events
@@ -803,8 +828,10 @@ func _place_demo(archetype: String) -> void:
 					return
 		print("[place-demo] no plumbable vacant lot found")
 		return
-	var foot: Array = sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-	var size := Vector2i(int(foot[0]), int(foot[1]))
+	# The LOT the command reserves, not the first day's footprint (Wave 29,
+	# RR-239/RR-243): at the L1 size this hands `cmd_place_building` a site it
+	# refuses.
+	var size := sim.lot_for(archetype)
 	for z in range(32, 80):
 		for x in range(32, 80):
 			var origin := Vector2i(x, z)
@@ -2689,6 +2716,8 @@ func _process(delta: float) -> void:
 				power_infra.apply_governor(knobs)   # `particle_ratio` only
 			if land_works != null:
 				land_works.apply_governor(knobs)   # Wave 27: crew count first, machines last
+			if lot_dressing != null:
+				lot_dressing.apply_governor(knobs)   # Wave 29: `lot_prop_ratio` only
 			_apply_frame_cap(perf_governor.target_fps())          # doc 13 §2.8 / RR-126
 			if String(knobs["preset"]) != render_model.preset:   # a latched drop
 				render_model.set_preset(String(knobs["preset"]))

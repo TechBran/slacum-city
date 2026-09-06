@@ -117,6 +117,44 @@ func test_the_view_jumps_to_the_finished_height_on_completion() -> void:
 	assert_almost_eq(after, 40.0, 0.001, "and the drop moves to the eave")
 
 
+## **The weatherhead lands on the WALL, not on the property line** (Wave 29 fix,
+## doc 02 §2.3a). A grower's `record["footprint"]` is its LOT since the lot rule,
+## and this feed read it raw: a level-1 store reported world_pos (344, 0, 272)
+## and 16×16 m for a mesh that is 8 m wide centred on (340, 0, 268), so
+## `PowerInfraModel.service_point` clamped the drop to the lot boundary and
+## pushed it out from THERE — a wire ending 4 m clear of the shop, in mid-air
+## over its own empty forecourt. The numbers below are that measurement.
+func test_a_young_growers_service_drop_lands_on_its_wall_not_its_lot_line() -> void:
+	var sim := _sim()
+	var origin := Vector2i(42, 33)
+	var placed := sim.cmd_place_building("store", origin)
+	assert_true(bool(placed["ok"]), "the founding city has room for a store at (42, 33)")
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	var b: Building = sim.buildings[sim_id]
+	assert_eq(sim.built_of_building(b), Vector2i(1, 1), "a new store covers one tile…")
+	assert_eq(sim.lot_of_building(b), Vector2i(2, 2), "…and holds four")
+
+	var view := PowerInfraFeed.building_view(sim, sim_id)
+	assert_eq(view["world_pos"], Vector3(340.0, 0.0, 268.0),
+			"the BUILT centre — 42 * 8 + 4, 33 * 8 + 4")
+	assert_almost_eq((view["footprint_m"] as Vector2).x, 8.0, 0.001, "8 m of shop")
+	assert_almost_eq((view["footprint_m"] as Vector2).y, 8.0, 0.001)
+	# The reservation, for contrast: this is the answer the raw record gives, and
+	# it is half a tile off in both axes.
+	assert_eq(TileGrid.centre_of_footprint(origin, sim.lot_of_building(b)),
+			Vector3(344.0, 0.0, 272.0), "the LOT centre, which is NOT where the mesh is")
+
+	# …and the drop that lands on it. Approaching from the east, the east wall is
+	# at x = 344 (tile 42's far edge) and the lot line is a whole tile further out
+	# at x = 352.
+	var model := PowerInfraModel.new()
+	var head := model.service_point(view, Vector3(400.0, 0.0, 268.0))
+	assert_almost_eq(head.x, 344.0 + model.service_clearance_m, 0.001,
+			"the weatherhead stands off the WALL by the authored clearance")
+	assert_true(head.x < 352.0,
+			"and never out on the lot line, which is where the record's footprint put it")
+
+
 func test_no_height_lookup_falls_back_rather_than_guessing() -> void:
 	var sim := _sim()
 	var view := PowerInfraFeed.building_view(sim, "APT-001")

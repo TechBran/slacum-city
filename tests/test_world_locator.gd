@@ -52,6 +52,36 @@ func test_a_one_by_one_building_lands_on_its_tile_centre() -> void:
 	assert_almost_eq((at as Vector3).z, 33.0 * 8.0 + 4.0, 0.001)
 
 
+## **A grower is located by what is BUILT, not by the ground it holds** (Wave 29
+## fix, doc 02 §2.3a). `record["footprint"]` became the LOT when the lot rule
+## landed, and this locator read it raw: a level-1 store at (42, 33) resolved to
+## its lot centre (344, 0, 272) while the one tile of shop stands at
+## (340, 0, 268). Half a tile in both axes is exactly enough to put the building
+## off-centre in every `Fix this →` focus and every alert this locator aims —
+## the defect PA-38 filed for the origin tile, one rule later.
+func test_a_young_grower_is_located_by_what_is_built_not_by_its_lot() -> void:
+	var sim := _sim()
+	var origin := Vector2i(42, 33)
+	var placed := sim.cmd_place_building("store", origin)
+	assert_true(bool(placed["ok"]), "the founding city has room for a store at (42, 33)")
+	var sim_id := String((placed["payload"] as Dictionary)["sim_id"])
+	var at: Variant = WorldLocator.locate(sim, WorldLocator.KIND_BUILDING, sim_id)
+	assert_true(at is Vector3)
+	assert_almost_eq((at as Vector3).x, 340.0, 0.001, "42 * 8 + 1 * 8 / 2")
+	assert_almost_eq((at as Vector3).z, 268.0, 0.001, "33 * 8 + 1 * 8 / 2")
+	assert_ne((at as Vector3).x, 344.0,
+			"not the LOT centre, which is what the raw record answers")
+	# And it follows the mesh as the mesh grows: at L3 the store covers its whole
+	# 2×2 and the two answers finally agree.
+	var b: Building = sim.buildings[sim_id]
+	b.level = 3
+	b.state = &"active"
+	assert_eq(sim.built_of_building(b), Vector2i(2, 2), "doc 02: 2×2 at L3")
+	var grown: Variant = WorldLocator.locate(sim, WorldLocator.KIND_BUILDING, sim_id)
+	assert_almost_eq((grown as Vector3).x, 344.0, 0.001, "now the lot IS the mesh")
+	assert_almost_eq((grown as Vector3).z, 272.0, 0.001)
+
+
 func test_a_building_resolves_from_its_INTEGER_render_id() -> void:
 	# `AlertsModel` publishes the integer grid id on some rows; the shell's own
 	# `_alert_world_pos` handled both forms with a linear scan and the fix router

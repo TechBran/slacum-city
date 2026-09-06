@@ -263,7 +263,12 @@ func _sim_id_of(render_id: int) -> String:
 func _building_view(sim_id: String) -> Dictionary:
 	var b: Building = _sim.buildings[sim_id]
 	var record: Dictionary = _sim.building_record(sim_id)  # PA-100
-	var size: Vector2i = record["footprint"]
+	# **The BUILT extent, not the record's reservation** (Wave 29, doc 02 §2.3a).
+	# `record["footprint"]` is now the LOT — the ground held for the final form —
+	# so centring the MESH on it would slide a young store half a tile off the
+	# tile it is standing on. The lot is what the ground layer dresses; the mesh
+	# belongs on what is built.
+	var size := _sim.built_of_building(b)
 	var centre := Vector3(b.origin.x * TILE_M + size.x * TILE_M * 0.5, 0.0,
 			b.origin.y * TILE_M + size.y * TILE_M * 0.5)
 	return {

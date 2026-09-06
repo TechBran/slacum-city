@@ -301,6 +301,14 @@ func boot(seed_value: int, time_data: Dictionary, starter_data: Dictionary,
 	_boot_buildings()
 	_boot_power()
 	_boot_water()
+	# LOTS AFTER WATER (Wave 29, doc 02 §2.3a). The authored cities stamp their
+	# buildings from their own `size` column — the old rule's first-day footprint —
+	# so the founding city arrives here with its stores holding one tile each.
+	# This is the earliest point it can run: `lot_of_building` routes a water shell
+	# to doc 05's per-variant ladder, and `water.data` does not exist until
+	# `_boot_water` has returned. It reads no RNG and emits on a bus nothing has
+	# subscribed to yet at boot, so the reorder costs no stream and no event.
+	migrate_lots("boot")
 	_boot_districts()
 	# ROADS BEFORE INCIDENTS (Wave 8). Doc 06 §2.10 makes doc 10 authoritative
 	# for every dispatch ETA, so `_boot_incidents` has to be able to hand the
@@ -1435,7 +1443,39 @@ static func encode_captured(raw_body: Dictionary) -> Dictionary:
 ## would have produced — with more money in it, which is the feature.
 ## `state_hash()` moves for every city, played or founding, because the treasury
 ## block has one more key; that is the honest record of a shape that grew.
-const SAVE_SECTION_VERSION := 11
+## **v12 — 2026-09-06, the LOT epoch (Wave 29, doc 02 §2.3a, doc 93 §BE).**
+##
+## A RULES rung, like v2 and v4, and it takes the identity migrator for exactly
+## their reason: the city body's SHAPE is byte-for-byte what v11 wrote. Not one
+## key is added, removed or renamed. `placed_records[*].footprint` still means
+## what it has always meant — **the extent the grid reserves for this building**,
+## which is precisely the number `_restore_records` hands `stamp_building`.
+##
+## What moved is the rule under which that body is advanced. A building now
+## reserves the footprint of its FINAL form rather than its first day's, so a v11
+## body restored under this binary lands on a **materially different grid**: the
+## player's stores hold four tiles where they held one, and a placement that
+## would have succeeded on the tile beside one now correctly answers
+## `E_FOOTPRINT`. Doc 08 §2.8's own test for whether a rung is owed — *"does an
+## old body still mean what it meant?"* — answers **no**, and that is the whole
+## argument for the rung.
+##
+## **Nothing new is persisted, and that is deliberate.** The reservation is
+## DERIVED — from the archetype, its level and the ground around it — and is
+## rebuilt at load exactly as the rest of `TileGrid` is. `migrate_lots` is what
+## rebuilds it, on both load paths; a persisted `lot` key beside it would be a
+## second record of one fact, which is the scattering C-17 exists to stop. The
+## same goes for LOT-LOCKED: it is a function of the whole restored city, so it is
+## recomputed rather than stored, and it therefore cannot go stale against the
+## grid it describes.
+##
+## **It does NOT move `state_hash()` on either authored city**, which is worth
+## recording because it is surprising. The four `profile_sim --hash-only` digests
+## are byte-identical to the fork on both the founding and the benchmark city:
+## `placed_records` carries PLAYER buildings only (`P-` prefixed) and neither
+## authored city has one, so the ground this rule changes never reaches the body
+## that is hashed. A city with a player-placed grower does move, and honestly.
+const SAVE_SECTION_VERSION := 12
 
 
 func save_section_version() -> int:
@@ -1466,6 +1506,7 @@ func migrate_save_section(body: Dictionary, from_version: int) -> Dictionary:
 			# in their branches; the merge ordered them by landing: v10 is the yard,
 			# v11 is the ledger.)
 			10: body = _v10_to_v11(body, from_version)
+			11: body = _v11_to_v12(body)
 		version += 1
 	return body
 
@@ -1669,6 +1710,30 @@ static func _v10_to_v11(body: Dictionary, from_version: int) -> Dictionary:
 	body["treasury"] = block
 	return body
 
+
+## v11 → v12: **the identity function, and that is the whole migration** — v2's
+## and v4's shape, for v2's and v4's reason (see `SAVE_SECTION_VERSION`).
+##
+## The rung records a RULES change: a building now reserves the footprint of its
+## final form. There is no field to add and no default to invent, because the one
+## key this rule touches — `placed_records[*].footprint` — already means "the
+## extent the grid reserves", and a v11 body's value is the honest record of what
+## the v11 binary reserved. Widening it is not this function's job and could not
+## be done here anyway: whether a store may have the other three tiles depends on
+## the neighbours, the roads and the block state, none of which exist yet when a
+## migrator runs and all of which a migrator is forbidden to read from `data/`.
+##
+## `migrate_lots` does it instead, at the end of the restore, when the whole city
+## is standing — and it does it for a v12 body too, because a lot-locked building
+## whose blocker was demolished in a later session must be offered its ground
+## again. That is why this rung can be the identity function and still be honest:
+## the work is real, it simply happens where the answer is knowable.
+##
+## Written out as a named step rather than an empty `while` body because the
+## ladder is a record — the next reader needs to see that v11 was considered and
+## deliberately left alone, not that a rung was skipped.
+static func _v11_to_v12(body: Dictionary) -> Dictionary:
+	return body
 
 
 ## One float, canonicalized. Integral values become ints (exactly representable
@@ -2184,6 +2249,18 @@ func _restore_incidents(body: Dictionary) -> void:
 
 
 func _restore_finish(body: Dictionary) -> void:
+	# **The lot migration, on the restore path** (doc 02 §2.3a, doc 08 §2.8 rung
+	# 12). Here and not in the `records` step because `migrate_lots` reads each
+	# `Building`'s own level and variant, and the roster is not rebuilt until the
+	# `roster` step that follows `records`. Running it a second time on a city the
+	# boot already migrated is free — [TileGrid.expand_building] is idempotent, and
+	# a building already holding its lot is skipped before the grid is touched.
+	#
+	# It matters that this runs at all: `placed_records` replays a v11 body's
+	# player buildings at the footprint the OLD rule reserved for them, so a store
+	# the player founded last week arrives holding one tile, and this is the line
+	# that offers it the other three.
+	migrate_lots("restore")
 	weather.deserialize(body.get("weather", {}))
 	director.deserialize(body.get("director", {}))
 	_restore_difficulty(body)
@@ -2791,6 +2868,312 @@ func _population_inputs() -> Array:
 	return out
 
 
+# ------------------------------------------------- doc 02 §2.3a: the LOT rule
+#
+# **A building reserves its FINAL form's ground the day it is founded** (Wave 29,
+# doc 02 §2.3a, doc 93 §BE, RR-236). The player's words: *"the allowance for the
+# block that it takes up should be the size of the FINAL form of that building …
+# that way the buildings look like they belong when they get older."*
+#
+# What was there before is worth stating exactly, because it was worse than a
+# missing feature. Doc 02 §2.11's check 12 authors an `E_FOOTPRINT` on the
+# UPGRADE — *"if footprint(L+1) > footprint(L), the added tiles are owned,
+# developed, empty, and not road"* — and doc 02 §1324 names a
+# `test_footprint_growth_gate` for it. **Neither existed.** `grep -n E_FOOTPRINT`
+# finds it in `cmd_place_building` and in the road and water doors, never in
+# `cmd_upgrade_building`; `grep -rn test_footprint_growth_gate tests/` finds
+# nothing. So the store grew its mesh to 2×2, `on_construction_completed` never
+# re-stamped the grid, and the three tiles under the new mesh stayed placeable —
+# this project's signature defect (A91-D-19: authored behaviour nothing
+# consumes), with a visible overlap on the far side of it.
+#
+# Reserving the lot at placement dissolves both halves at once. The grid holds
+# the maximum from day one, so an upgrade can never fail to fit and never needs
+# to re-stamp, and no second building can be founded under a mesh that is coming.
+
+## The tallest rung `archetype` can actually reach **in this city's data** — the
+## ceiling its lot is measured to.
+##
+## Eleven archetypes answer their own ladder. `water_facility` does not: doc 05
+## ships `levels_4_5_enabled` **false**, so `cmd_upgrade_water_component` refuses
+## every rung above 3 and `_water_node_top_level` caps there too. Its authored
+## 4×4 at L5 is therefore ground no player in the shipped build can ever buy, and
+## a lot measured to the catalog's top would take a third more ground per plant
+## for a rung that does not exist. Measured to this ceiling its lot is 3×3 —
+## exactly what it already occupies — so **`water_facility` does not grow**, and
+## the growing set this wave actually moves is three: `store`, `power_facility`,
+## `construction_yard`. Flip the flag and the lot follows on the next boot, with
+## the standing plants reported lot-locked rather than silently short.
+func archetype_top_level(archetype: String) -> int:
+	var top := catalog.max_level_of(archetype)
+	if archetype == WATER_SHELL_ARCHETYPE:
+		top = mini(top, water_ladder_ceiling())
+	return top
+
+
+## **Doc 05's `levels_4_5_enabled` gate, in ONE place.** Three functions need it —
+## [archetype_top_level], [water_variant_top_level] and [_water_node_top_level] —
+## and before this it was written out three times. A flag with three spellings is
+## a flag that gets flipped in two of them (C-17's scattering); this is the
+## reader, and `data/water.json` is still the store.
+func water_ladder_ceiling() -> int:
+	return 5 if water.data.flag("levels_4_5_enabled") else 3
+
+
+## The ground `archetype` reserves for life (doc 02 §2.3a). Every placement, every
+## ghost, every migration and every scripted agent's site search asks THIS, so
+## there is one lot rule in the project and not five spellings of it.
+func lot_for(archetype: String) -> Vector2i:
+	return catalog.lot_of(archetype, archetype_top_level(archetype))
+
+
+## The BUILT extent — what the mesh covers at this level (doc 02 §2.3). Read by
+## the render layer and by the lot dressing, which draws the difference between
+## this and [lot_for].
+func built_for(archetype: String, level: int) -> Vector2i:
+	return catalog.footprint_of(archetype, maxi(level, 1))
+
+
+## **A water works's lot is doc 05's, per VARIANT — and doc 02's column cannot
+## answer it** (Wave 29, RR-237). `data/buildings.json`'s `water_facility` rows
+## are flagged `footprints_are_reference_variant_only` and carry the **pump**
+## ladder, which is 3×3 flat to L3; the variants a player can actually place are
+## not all pumps, and two of them GROW inside the shipped ceiling:
+##
+##   source (river)  L1..L2  2×2 → 2×2   flat
+##   treatment       L1..L2  2×2 → 3×3   **grows at L2**
+##   pump            L1..L3  3×3 → 3×3   flat
+##   tank            L1..L3  2×2 → 3×3   **grows at L3**
+##
+## Asking `lot_for("water_facility")` for a treatment plant would reserve the
+## pump's 3×3 — right by luck — and for a `source` it would reserve 3×3 where
+## doc 05 asks for 2×2, taking five tiles of shoreline the component never uses.
+## So the water door asks this, and [lot_of_building] routes shells here.
+func water_variant_top_level(variant: String) -> int:
+	var rules := water.data.placeable_rules(variant)
+	var top := 0
+	for entry in (rules.get("placeable_levels", []) as Array):
+		top = maxi(top, int(entry))
+	if top <= 0:
+		top = 1
+	return mini(top, water_ladder_ceiling())
+
+
+## The ground one doc-05 component reserves for life — the componentwise max of
+## its own footprint column up to [water_variant_top_level].
+##
+## `subtype` defaults to the one doc 05's own `placeable` roster names for this
+## variant (`source` → `river`), so no caller has to carry it and none can pass
+## the wrong one: an empty subtype would send `source` to the wrong component row.
+func water_lot_for(variant: String, subtype: String = "") -> Vector2i:
+	var wanted := subtype
+	if wanted == "":
+		wanted = String(water.data.placeable_rules(variant).get("subtype", ""))
+	var lot := Vector2i.ONE
+	for level in range(1, water_variant_top_level(variant) + 1):
+		var foot := water.data.footprint_of(StringName(variant), level, wanted)
+		lot = Vector2i(maxi(lot.x, foot.x), maxi(lot.y, foot.y))
+	return lot
+
+
+## The lot for a STANDING building, whichever document owns its ladder. The one
+## call the migration, the panel and the fix router make, so a water shell is
+## never measured against doc 02's pump column by accident.
+func lot_of_building(b: Building) -> Vector2i:
+	if b == null:
+		return Vector2i.ONE
+	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
+		var variant := String(b.variant)
+		var rules := water.data.placeable_rules(variant)
+		if rules.is_empty():
+			return lot_for(String(b.archetype))
+		return water_lot_for(variant, String(rules.get("subtype", "")))
+	return lot_for(String(b.archetype))
+
+
+## The BUILT extent for a STANDING building — doc 05's column for a water shell,
+## doc 02's for everything else.
+func built_of_building(b: Building) -> Vector2i:
+	if b == null:
+		return Vector2i.ONE
+	var level := maxi(b.level, 1)
+	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
+		var variant := String(b.variant)
+		var rules := water.data.placeable_rules(variant)
+		if not rules.is_empty():
+			return water.data.footprint_of(StringName(variant), level,
+					String(rules.get("subtype", "")))
+	return built_for(String(b.archetype), level)
+
+
+## Is this building boxed in — holding less ground than its lot, because the
+## tiles it needed were already taken when the rule arrived (doc 93 §BE-3)?
+## Answers `{}` for a building that holds its whole lot.
+##
+## A lot-locked building is never moved and never bulldozes anything: it keeps
+## the ground it has, it is told which level that ground still lets it reach, and
+## the fix router names the neighbour standing on the rest.
+func lot_lock(sim_id: String) -> Dictionary:
+	var b: Building = buildings.get(sim_id)
+	var record: Dictionary = _building_records.get(sim_id, {})
+	if b == null or record.is_empty():
+		return {}
+	var held: Vector2i = record.get("footprint", Vector2i.ONE)
+	var lot := lot_of_building(b)
+	if held.x >= lot.x and held.y >= lot.y:
+		return {}
+	var top := archetype_top_level(String(b.archetype))
+	var reachable := catalog.level_fitting(String(b.archetype), held, top)
+	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
+		reachable = _water_level_fitting(String(b.variant), held)
+		top = water_variant_top_level(String(b.variant))
+	return {
+		"sim_id": sim_id,
+		"archetype": String(b.archetype),
+		"variant": String(b.variant),
+		"held": held,
+		"lot": lot,
+		"reachable_level": reachable,
+		"top_level": top,
+		"blockers": _lot_blockers(sim_id, b.origin, held, lot),
+	}
+
+
+## [BuildingCatalog.level_fitting]'s doc-05 twin: the tallest rung of THIS
+## variant whose own footprint fits in the ground the shell actually holds.
+func _water_level_fitting(variant: String, held: Vector2i) -> int:
+	var rules := water.data.placeable_rules(variant)
+	var subtype := String(rules.get("subtype", ""))
+	var best := 0
+	for level in range(1, water_variant_top_level(variant) + 1):
+		var foot := water.data.footprint_of(StringName(variant), level, subtype)
+		if foot.x <= held.x and foot.y <= held.y:
+			best = level
+	return best
+
+
+## Who is standing on the part of the lot this building does not hold — the
+## honest remedy, in the order the fix router wants it: the sim ids of the
+## neighbours on the missing tiles, then the non-building reasons (road, water,
+## unowned ground) as reason codes. Never more than one entry per neighbour.
+func _lot_blockers(sim_id: String, origin: Vector2i, held: Vector2i,
+		lot: Vector2i) -> Array:
+	var out: Array = []
+	var seen := {}
+	var grid_by_id := {}
+	for other_id in _sorted(_building_records):
+		grid_by_id[int((_building_records[other_id] as Dictionary).get("grid_id", 0))] = other_id
+	for dz in range(lot.y):
+		for dx in range(lot.x):
+			if dx < held.x and dz < held.y:
+				continue
+			var x := origin.x + dx
+			var z := origin.y + dz
+			if not TileGrid.in_bounds(x, z):
+				_note_lot_blocker(out, seen, &"E_OUT_OF_BOUNDS")
+				continue
+			var occupant := world.grid.building_at(x, z)
+			if occupant > 0 and grid_by_id.has(occupant):
+				var other := String(grid_by_id[occupant])
+				if other != sim_id:
+					_note_lot_blocker(out, seen, StringName(other))
+				continue
+			# **Free ground is not a blocker** (Wave 29 fix). The first cut had
+			# no arm for "buildable and empty", so every free tile of a lot fell
+			# through to `E_NOT_DEVELOPED` and the list said the map was in the
+			# way when nothing was. `TileGrid.can_expand`'s own predicate, spelled
+			# once here so the two answers cannot disagree: this is precisely the
+			# tile it would accept.
+			var flags := world.grid.flags_at(x, z)
+			if (flags & TileGrid.FLAG_BUILDABLE) != 0 and (flags & (TileGrid.FLAG_ROAD
+					| TileGrid.FLAG_WATER | TileGrid.FLAG_BLOCKED
+					| TileGrid.FLAG_OCCUPIED)) == 0:
+				continue
+			if world.grid.has_flag(x, z, TileGrid.FLAG_ROAD):
+				_note_lot_blocker(out, seen, &"E_ROAD")
+			elif world.grid.has_flag(x, z, TileGrid.FLAG_WATER):
+				_note_lot_blocker(out, seen, &"E_WATER")
+			elif world.grid.has_flag(x, z, TileGrid.FLAG_OCCUPIED):
+				_note_lot_blocker(out, seen, &"E_OCCUPIED")
+			else:
+				_note_lot_blocker(out, seen, &"E_NOT_DEVELOPED")
+	return out
+
+
+func _note_lot_blocker(out: Array, seen: Dictionary, what: StringName) -> void:
+	if seen.has(what):
+		return
+	seen[what] = true
+	out.append(what)
+
+
+## Every lot-locked building in the city, in id order — the census the migration
+## publishes and `tools/measure_lots.gd` prints.
+func lot_locked_ids() -> Array:
+	var out: Array = []
+	for sim_id in _sorted(_building_records):
+		if not lot_lock(String(sim_id)).is_empty():
+			out.append(String(sim_id))
+	return out
+
+
+## **The migration, and it never moves or bulldozes anything** (doc 08 §2.8 rung
+## 12, doc 93 §BE-3, RR-238).
+##
+## Every city that exists today — the founding city, the benchmark city, the
+## player's own `tests/fixtures/player_save_0903` — was laid out under the old
+## rule, where a building reserved its first day's footprint and its neighbours
+## were packed against it. This walks the standing roster in id order and gives
+## each building the rest of its lot **where the ground is genuinely free**.
+## Where it is not, the building keeps exactly the tiles it has and is reported
+## LOT-LOCKED: `lot_lock()` then tells the panel which level that ground still
+## reaches and which neighbour is standing on the rest. Nothing is demolished,
+## nothing is moved, and no tile is ever taken from another building.
+##
+## **Id order is the tie-break, and it is arbitrary on purpose.** Two legacy
+## stores one tile apart cannot both have the contested tile; somebody has to
+## lose it. Sorting by id makes the loser the same building on every machine and
+## every reload — which is what determinism costs here — rather than the one that
+## happened to hash first.
+##
+## Idempotent (see [TileGrid.expand_building]), so it is safe on both load paths
+## and safe to run again after a demolition frees ground. Returns the census.
+func migrate_lots(reason: String = "load") -> Dictionary:
+	var expanded: Array = []
+	var locked: Array = []
+	for sim_id in _sorted(_building_records):
+		var b: Building = buildings.get(sim_id)
+		if b == null:
+			continue
+		var record: Dictionary = _building_records[sim_id]
+		var held: Vector2i = record.get("footprint", Vector2i.ONE)
+		var lot := lot_of_building(b)
+		if held.x >= lot.x and held.y >= lot.y:
+			continue
+		var grid_id := int(record.get("grid_id", 0))
+		if grid_id > 0 and world.grid.expand_building(grid_id, b.origin, lot):
+			record["footprint"] = lot
+			expanded.append(String(sim_id))
+		else:
+			locked.append(String(sim_id))
+	# **There is no `lots_migrated` event, and its absence is the ruling.**
+	#
+	# The first cut of this function emitted one, with a comment naming three
+	# consumers. None of them was real: the building panel reads [lot_lock] live
+	# because a lock can change under it (a demolition frees ground), and
+	# `tools/measure_lots.gd` reads [lot_locked_ids] because a census is a
+	# question you ask, not a thing you have to have been listening for.
+	# `tests/test_event_matrix.gd` caught it — *"every event sim/ emits is
+	# consumed or carries a written classification"* — which is the A91-D-19
+	# shape this whole wave is named after, committed by the wave itself.
+	#
+	# So the census is RETURNED and not announced. If a later wave wants to tell
+	# a returning player that three of their buildings are boxed in, that is a
+	# doc 12 notification with a row in `data/notifications.json`, and it should
+	# be built when there is a screen to put it on.
+	return {"reason": reason, "expanded": expanded, "locked": locked}
+
+
 # ------------------------------------------------------- player commands
 
 ## Place a new building (doc 02 §2.12 place path). Charges doc 03's cost,
@@ -2841,8 +3224,10 @@ func cmd_place_building(archetype: String, origin: Vector2i, variant: String = "
 				"required_level": required_level, "city_level": progression.city_level,
 				"archetype": archetype})
 	var stats: Dictionary = catalog.stats(archetype, 1)
-	var foot: Array = stats.get("footprint", [1, 1])
-	var size := Vector2i(int(foot[0]), int(foot[1]))
+	# **The LOT, not the level-1 footprint** (doc 02 §2.3a, RR-236). This used to
+	# read `stats.footprint` — the ground the building covers on its first day —
+	# and every tile its final form needed was left for somebody else to build on.
+	var size := lot_for(archetype)
 	if not world.grid.can_place(origin, size):
 		return CommandQueue.fail(&"E_FOOTPRINT")
 	var serve := serving_headroom_for_new(archetype, origin)
@@ -2918,6 +3303,23 @@ func cmd_upgrade_building(sim_id: String, preview: bool = false) -> Dictionary:
 	# enlarge that treats and pumps exactly what it did before.
 	if b.archetype == StringName(WATER_SHELL_ARCHETYPE):
 		top_level = mini(top_level, water_shell_top_level(sim_id))
+	# **A LOT-LOCKED building may not climb past the ground it actually holds**
+	# (Wave 29, doc 02 §2.3a, doc 93 §BE5). This is the half that makes the whole
+	# rule sound, and leaving it out would have re-opened the very overlap the
+	# wave exists to close: a legacy store boxed in at 1×1 has no `E_FOOTPRINT`
+	# on the upgrade path — there is none, and this wave did not add one — so it
+	# would have climbed to L3, grown a 2×2 mesh over a neighbour's tile, and put
+	# back A91-D-154 for exactly the buildings the migration could not help.
+	#
+	# It is also what makes `lot_lock`'s `reachable_level` a FACT rather than a
+	# label. The panel says *"it can only reach level 2 of 6"*; without this the
+	# panel would have been the only thing that believed it, which is the shape
+	# this project keeps filing. `E_MAX_LEVEL` is the honest code: for this
+	# building, on this ground, level 2 IS the top of the ladder — and the LOT row
+	# beside it is what explains why and hands over the neighbour.
+	var lock := lot_lock(sim_id)
+	if not lock.is_empty():
+		top_level = mini(top_level, int(lock["reachable_level"]))
 	if b.level >= top_level:
 		blockers.append(&"E_MAX_LEVEL")
 	if b.condition < b.min_condition_to_upgrade():
@@ -4574,7 +4976,10 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	var shell_stats: Dictionary = catalog.stats(WATER_SHELL_ARCHETYPE, level)
 	if progression.city_level < int(shell_stats.get("min_city_level", 0)):
 		blockers.append(&"E_CITY_LEVEL")
-	var size := water.data.footprint_of(variant, level, subtype)
+	# **The LOT, not this level's footprint** (doc 02 §2.3a, RR-237). Doc 05's
+	# `treatment` goes 2×2 → 3×3 at L2 and `tank` 2×2 → 3×3 at L3, so a plant sited
+	# on exactly its L1 tiles could never buy the rung the player was being sold.
+	var size := water_lot_for(String(variant), subtype)
 	if not world.grid.can_place(tile, size):
 		blockers.append(&"E_FOOTPRINT")
 	if bool(rules.get("requires_water_adjacent", false)) and not _touches_water(tile, size):
@@ -5508,9 +5913,11 @@ func _take_building_off_the_map(sim_id: String, b: Building, type: String,
 		record: Dictionary, level: int) -> void:
 	var footprint: Vector2i = record.get("footprint", Vector2i.ONE)
 	if not record.has("footprint"):
-		var stats_row: Dictionary = catalog.stats(type, maxi(level, 1))
-		var foot: Array = stats_row.get("footprint", [1, 1])
-		footprint = Vector2i(int(foot[0]), int(foot[1]))
+		# The LOT, not this level's footprint (Wave 29). `remove_building` only
+		# clears tiles whose occupant id matches, so over-asking frees exactly the
+		# ground this building held and never a neighbour's; under-asking would
+		# strand reserved tiles as permanently unbuildable.
+		footprint = lot_of_building(b)
 	world.grid.remove_building(b.id, b.origin, footprint)
 	grid.detach_building(sim_id)
 	water.detach_building(sim_id)
@@ -5547,6 +5954,13 @@ func _take_building_off_the_map(sim_id: String, b: Building, type: String,
 	# Aggregates must not lag a removal by an hour: the district rollup is the
 	# only place population/jobs live, so refresh it now.
 	_rollup_district_population()
+	# **Freeing ground is the remedy the fix router names, so it has to take
+	# effect here** (Wave 29, doc 93 §BE-4). A lot-locked store's panel says "boxed
+	# in by HSE-014"; when the player acts on that sentence, the store must get its
+	# lot at that moment and not at the next reload — a verb whose door is a
+	# restart is the shape doc 91 keeps filing. Idempotent and O(lot-locked), and
+	# it runs only where a demolition or a salvage actually released tiles.
+	migrate_lots("demolition")
 
 
 ## The §2.10 refund table, read off a live job exactly as `ConstructionQueue`
@@ -7784,7 +8198,7 @@ func _water_node_top_level(node: WaterNode) -> int:
 		top = maxi(top, int(entry))
 	if top <= 0:
 		top = node.level
-	return mini(top, 5 if water.data.flag("levels_4_5_enabled") else 3)
+	return mini(top, water_ladder_ceiling())
 
 
 ## The tallest rung a `water_facility` shell may reach: the SMALLEST of its

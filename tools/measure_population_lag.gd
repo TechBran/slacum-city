@@ -58,6 +58,9 @@ extends SceneTree
 ## It is a MEASURING instrument (constitution §3): it boots the real `CitySim`,
 ## owns no balance constant, and is never imported by `sim/`.
 
+## RR-239's one site search, shared (Wave 29 fix).
+const SiteSearch := preload("res://tools/site_search.gd")
+
 ## `data/time.json.clock.real_seconds_per_game_minute` at 1× speed. Restated
 ## here as a PRESENTATION factor only — this tool prices no rule, and the file
 ## stays the authority (asserted in `_check_real_seconds`).
@@ -336,13 +339,9 @@ func _report(label: String, minute: int) -> void:
 
 
 ## The same scan `tests/test_city_commands.gd` uses: a buildable, vacant,
-## power-serviceable lot of this archetype's footprint inside the core.
+## power-serviceable site inside the core, sized to the LOT the command reserves
+## (Wave 29 fix, RR-239). At the level-1 footprint this handed
+## `cmd_place_building` a site it refuses, and the latency this instrument
+## publishes would have silently become the latency of a refusal.
 static func _serviceable_lot(sim: CitySim, archetype: String) -> Vector2i:
-	var foot: Array = sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-	var size := Vector2i(int(foot[0]), int(foot[1]))
-	for z in range(32, 80):
-		for x in range(32, 80):
-			var origin := Vector2i(x, z)
-			if sim.world.grid.can_place(origin, size) and sim.grid.would_serve(origin):
-				return origin
-	return Vector2i(-1, -1)
+	return SiteSearch.serviceable_site(sim, archetype)

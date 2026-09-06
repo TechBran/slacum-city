@@ -35,6 +35,11 @@ extends Node
 ## `tests/test_ui_audit.gd` runs the frame-free half of the same checks inside the
 ## suite; this is the pixel-accurate pass, and the one that can take a picture.
 
+## RR-239's one site search, shared (Wave 29 fix). Four instruments and one test
+## each sized their own scan to the level-1 footprint and then asked a command
+## that reserves the LOT.
+const SiteSearch := preload("res://tools/site_search.gd")
+
 const SHOT_AT_S := 0.6
 const DEFAULT_SIZE := Vector2i(880, 400)
 
@@ -51,6 +56,14 @@ const SCREENS: Array[String] = [
 	"placement_unowned",
 	"path_aiming", "path_ok", "path_blocked", "path_refund", "path_feeder",
 	"building", "building_blocked", "building_repairable", "building_water",
+	# Wave 29 (doc 12 §2.9a / D-128, D-129): the LOT row, in both of the states
+	# that draw it. `building_lot` is a store holding the 2×2 it reserved on the
+	# day it was founded — the row that stops three empty tiles beside a young
+	# shop reading as a bug. `building_lot_locked` is the one with a door: a
+	# store that was already standing when the rule arrived, boxed in by a
+	# neighbour, told the level its ground still reaches and handed the
+	# neighbour's name and what clearing it refunds.
+	"building_lot", "building_lot_locked",
 	# Wave 24 (doc 12 D-100): the panel of a house the player tapped SECONDS
 	# ago. Its occupants vital reads `0 of 4` while the shell is going up, which
 	# is the state the whole of report 98 §67 is about — nobody has moved in
@@ -880,6 +893,30 @@ func _apply(screen: String) -> void:
 				var b: Building = _sim.buildings[_first_building()]
 				b.condition = 0.35
 				_building_panel.show_building(_first_building())
+		"building_lot":
+			# Doc 12 §2.9a's first state. `STR-001` is a founding store: 1×1
+			# built, and the migration gave it the whole 2×2 it reserves, so the
+			# row is a STATEMENT with no button. Nothing is staged — this is the
+			# founding city as it boots.
+			if _building_panel != null:
+				_building_panel.show_building("STR-001")
+		"building_lot_locked":
+			# …and the state with a door. The founding city has NO lot-locked
+			# building (doc 93 §BE6 — it was authored with its stores two tiles
+			# apart), so one is staged: a house on the tile `STR-005`'s lot wants,
+			# and the store handed back the single tile the old rule gave it. That
+			# is exactly the shape 202 of the benchmark city's stores are in after
+			# migration, and it is staged rather than found because a preview must
+			# photograph the state, not wait for a city that happens to have one.
+			if _building_panel != null:
+				var boxed: Building = _sim.buildings["STR-005"]
+				var record: Dictionary = _sim.building_record("STR-005")
+				var lot: Vector2i = record.get("footprint", Vector2i.ONE)
+				_sim.world.grid.remove_building(boxed.id, boxed.origin, lot)
+				_sim.world.grid.stamp_building(boxed.id, boxed.origin, Vector2i.ONE)
+				record["footprint"] = Vector2i.ONE
+				_sim.cmd_place_building("house", boxed.origin + Vector2i(1, 0))
+				_building_panel.show_building("STR-005")
 		"building_repairable":
 			# §2.9 item 6's actions row with everything live: a repair to buy, a
 			# shed tier to pick, and a demolition to hold for.
@@ -1703,18 +1740,14 @@ func _first_building() -> String:
 	return str(keys[0]) if not keys.is_empty() else ""
 
 
-## A buildable, vacant, power-serviceable lot of this archetype's footprint
-## inside the core — the same scan `tests/test_city_commands.gd` uses, so the
-## preview places where a player could.
+## A buildable, vacant, power-serviceable site for this archetype inside the
+## core — the same scan `tests/test_city_commands.gd` uses, so the preview places
+## where a player could. Sized to the LOT the command reserves (Wave 29 fix,
+## RR-239): at the level-1 footprint this found sites `cmd_place_building`
+## refuses, and a preview state that cannot place is a preview state that
+## photographs the wrong screen.
 func _serviceable_lot(archetype: String) -> Vector2i:
-	var foot: Array = _sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-	var size := Vector2i(int(foot[0]), int(foot[1]))
-	for z in range(32, 80):
-		for x in range(32, 80):
-			var origin := Vector2i(x, z)
-			if _sim.world.grid.can_place(origin, size) and _sim.grid.would_serve(origin):
-				return origin
-	return Vector2i(-1, -1)
+	return SiteSearch.serviceable_site(_sim, archetype)
 
 
 ## Burn TWO buildings down through doc 02 §2.12's own transitions and answer the
@@ -1817,6 +1850,48 @@ func _report(screen: String) -> void:
 	_findings += findings.size()
 	print(UIAudit.format(findings, "── %s @ %s" % [screen,
 			str(get_window().size if get_window() != null else DEFAULT_SIZE)]))
+	_fold_report(screen)
+
+
+## **The one check `UIAudit` deliberately cannot make** (Wave 29 fix).
+##
+## `UIAudit`'s `offscreen` finding exempts anything inside a `ScrollContainer`,
+## and rightly: content in a scroller is MEANT to run past the viewport, and
+## flagging all of it would bury every real finding. But that exemption is
+## exactly what let the LOT row ship at y = 943 in a 915-tall viewport and still
+## be called clean — the sweep photographed a screen whose only door was 270 px
+## below the fold and reported nothing.
+##
+## So a screen may nominate controls that must be ON the first screenful even
+## though they live in a scroller. This is a deliberately tiny list: the general
+## rule stays "scrolling is fine", and a row is added only where a state exists
+## precisely to put a specific control in front of the player. Findings count
+## into `_findings`, so `--audit --strict` exits non-zero on a regression.
+const MUST_BE_ON_SCREEN := {
+	"building_lot": ["LotSection", "LotSection/LotTitle", "LotSection/LotBody"],
+	"building_lot_locked": ["LotSection", "LotSection/LotTitle",
+			"LotSection/LotBody", "LotSection/LotFix"],
+}
+
+
+func _fold_report(screen: String) -> void:
+	var wanted: Array = MUST_BE_ON_SCREEN.get(screen, [])
+	if wanted.is_empty() or _building_panel == null:
+		return
+	var viewport := get_viewport().get_visible_rect()
+	for suffix: String in wanted:
+		var control := _building_panel.get_node_or_null(
+				"%s/%s" % [_building_panel.body_path(), suffix]) as Control
+		if control == null or not control.is_visible_in_tree():
+			print("  below_the_fold  %-40s NOT DRAWN on %s" % [suffix, screen])
+			_findings += 1
+			continue
+		var rect := control.get_global_rect()
+		if viewport.encloses(rect):
+			continue
+		_findings += 1
+		print("  below_the_fold  %-40s rect %s outside viewport %s"
+				% [suffix, str(rect), str(viewport)])
 
 
 ## `--rects=`: what a named part of the tree actually measured. A finding names

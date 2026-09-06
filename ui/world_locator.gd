@@ -182,8 +182,15 @@ static func locate_block(sim: CitySim, block_id: String) -> Variant:
 
 
 ## A building, by SIM id (`"B-014"`) or by the integer grid id the render layer
-## carries. The centre of its FOOTPRINT — a 4×4 civic building answered at its
+## carries. The centre of what is BUILT — a 4×4 civic building answered at its
 ## origin tile is sixteen metres off its own lot.
+##
+## **Built, not the record's reservation** (Wave 29 fix, doc 02 §2.3a). Since the
+## lot rule, `record["footprint"]` is the ground a building HOLDS for its final
+## form, and the camera is being aimed at the thing the player can see. On a
+## fresh level-1 store the two answers are (344, 0, 272) and (340, 0, 268) —
+## half a tile in both axes, which is exactly enough to put the building off the
+## centre of every `Fix this →` focus and every alert this locator aims.
 static func locate_building(sim: CitySim, sim_id: String) -> Variant:
 	if sim_id == "":
 		return null
@@ -197,8 +204,7 @@ static func locate_building(sim: CitySim, sim_id: String) -> Variant:
 				if candidate.id == wanted:
 					return locate_building(sim, key)
 		return null
-	var size: Vector2i = sim.building_record(sim_id).get("footprint", Vector2i.ONE)
-	return TileGrid.centre_of_footprint(b.origin, size)
+	return TileGrid.centre_of_footprint(b.origin, sim.built_of_building(b))
 
 
 ## A `PowerGrid` component — a transformer, a feeder node, the substation. **This

@@ -415,6 +415,100 @@ camera move is the whole useful answer, and D-71 already ruled it so.
 
 Side panel 300 dp (bottom sheet 200 dp on COMPACT), top to bottom: **(1) Header** name, archetype icon, `L1 L2 ▮L3▮ L4 L5` level pips, condition ring. **(2) Vitals** 2×3 grid — `Occupants 340`, `Jobs 0`, `Tax +$1,240/d`, `Power 210 kW`, `Water 6.2 m³/h`, `Condition 87%`. **(3) Risk** `Fire risk ▮▮▮▯▯ Elevated` (🔥), `Crime risk ▮▮▯▯▯ Moderate` (🛡) — icon + bar + word, never colour alone. **(4) Service coverage** four 40 dp tiles (Power/Water/Police/Fire) with the §2.5 state glyph + ring colour and a one-line reason on tap (`Fed by Substation A · feeder 78 % loaded`). **(5) Upgrade block** `Upgrade to Level 4` · cost · time · the **requirement checklist** (each line `✓`/`✗` + the §2.7 formatter string); `UPGRADE` is disabled while any `✗` remains and its subtitle names the first blocker. **(6) Actions** `Repair` (condition < 90 %), `Priority` (shed tier, doc 04), `Demolish` (hold-to-confirm 800 ms, `DangerButton`).
 
+### 2.9a The LOT row (S5 item 7), **shipped 2026-09-06**
+
+Doc 02 §2.3a made a building reserve the footprint of its final form at
+placement. A player looking at a one-tile store standing on a 2×2 pad needs to be
+told that the pad is the point; a player whose store can never reach L3 because a
+neighbour is on its ground needs to be told *that*, and given the door.
+
+**Six states, and only ONE of them has a button** (the count is the Wave 29 fix
+pass's; the first cut shipped three and two of them could lie).
+
+| state | what the row says | door |
+|---|---|---|
+| the archetype never grows | **nothing — the row is not drawn** | — |
+| it grows and HOLDS its lot | `Lot` · *"2×2 reserved, 1×1 built. The rest of the lot is this building's room to grow."* | none |
+| LOT-LOCKED, a standing building is the ONLY thing on the missing ground | *"…HSE-014 stands on the rest — clearing it refunds $300."* | `Fix this →` → `FIX_BUILDING` at the neighbour |
+| LOT-LOCKED, a RUIN is the only thing on it | *"…P-047 is rubble on the rest — salvaging it pays $390."* | `Fix this →` → `FIX_BUILDING` at the neighbour |
+| LOT-LOCKED, the neighbour is ON FIRE | *"…P-047 stands on the rest and nothing can clear it while it is on fire."* | **none** |
+| LOT-LOCKED, a neighbour AND ground no verb clears | *"…P-047 holds part of the missing ground and road or ground the city cannot clear holds the rest, so clearing P-047 alone would not free the lot."* | **none** |
+| LOT-LOCKED, ground only | *"…The missing ground is road or undeveloped land."* | **none** |
+
+Nine of the twelve archetypes never grow, so the row is invisible on nineteen of
+the founding city's thirty-four buildings. That is D-116's rule applied again: a
+row that always says the same thing is clutter, and Wave 25 was spent taking
+clutter *off* this panel.
+
+**Two rules decide the door, and both were learned the expensive way.**
+
+*The verb is the neighbour's own state's business.* The first cut quoted
+`cmd_demolish_building(neighbour, true)` unconditionally and never read the
+quote's `ok`. On the player's own save — `tests/fixtures/player_save_0903`, where
+**77 of 89 buildings are `destroyed`** — every lot-locked building with a named
+neighbour named a RUIN, so the row read *"clearing it refunds $0"* and armed a
+button behind a verb that answers `E_STATE`. Doc 02 §2.12 is explicit that a ruin
+is `cmd_salvage_building`'s, and salvage takes every one of them: **$390** a
+store, **$27,000** the destroyed data centre. So the row asks the verb the state
+answers, and the QUOTE's `ok` decides whether a door is drawn at all — which is
+what gives `on_fire`, the one state neither verb takes, an honest sentence
+instead of a `$0`.
+
+*A door is only a door if pressing it frees the ground.* A lot grows **all at
+once or not at all**: `migrate_lots` asks `TileGrid.can_expand` for the whole lot
+rectangle and it refuses if a single tile of it is taken. So clearing one of two
+blockers moves nothing — measured on the same save, every one of those seven
+stores is blocked by a ruin **and** by the kerb, and salvaging the ruin leaves
+the shop at 1×1 of its 2×2 with `reachable_level` still 2. A lot with ground the
+player cannot clear therefore says so and offers nothing. **On the player's own
+city that is 10 lot-locked buildings, 7 that name a neighbour and 0 doors** — and
+not one row that promises a number it cannot pay or a remedy that would not work.
+
+**It sits directly under the VITALS, above the checklist** — the third position
+this row has had, and the first one measured rather than argued. Under the
+utility rows and under the upgrade block both read as sensible sentences and both
+put it OFF THE SCREEN: `ui_preview --screen=building_lot_locked --size=412x915
+--rects=Lot` laid `LotSection` out at **y = 943** with its button at **y = 1033**,
+in a viewport **915** tall. The vitals answer *"what is this building"*, and
+*"LOT-LOCKED · it can only reach level 2 of 6"* is the next fact about the
+building itself — ahead of the requirement checklist, which is a list of errands
+about a level this ground cannot reach anyway. Measured after the move:
+**`LotSection` y = 322, `LotFix` y = 412**, inside a scroller that is 719 px
+tall.
+
+**Two gates hold that position.** `tools/ui_preview.gd`'s `MUST_BE_ON_SCREEN`
+names the row and its button as controls that must lie inside the viewport at
+412×915 even though they live in a scroller — `UIAudit`'s own `offscreen` check
+exempts scroller content, and rightly, which is exactly why it called the
+below-the-fold deck clean. A finding there counts into `--audit --strict`.
+`tests/test_lot_reservation.gd::test_the_lot_row_fits_the_first_screenful_of_a_412x915_phone`
+is the suite-side half: it asserts the section's index (directly after `Vitals`)
+and the arithmetic budget, because a headless run has no laid-out sizes.
+`…::test_the_panel_actually_draws_the_lot_row_and_wires_its_button` still mounts
+the real S5 and asserts the button carries the neighbour's id (A91-D-150).
+
+`BuildController.building_view()` gains `lot` (the reservation) beside the
+existing `footprint` (now explicitly the BUILT extent), plus `lot_block` — the
+plain-data block `BuildingPanel._render_lot` binds and computes nothing from. It
+carries `free_verb` (`"demolish"`, `"salvage"` or `""`) on every drawn row, which
+the panel spends on the button's tooltip — a target's accessible name (A15) that
+now says what pressing it leads to (`SALVAGE P-047`) instead of only which
+building. Nothing else was added to the block: *which* ground is in the way and
+*what state* the neighbour is in are both answers `CitySim.lot_lock` already
+gives, and a view-model field nothing draws is the shape this wave is named
+after. Eight strings:
+`ui_building_lot_title`, `ui_building_lot_reserved`, `ui_building_lot_locked`,
+`ui_building_lot_locked_salvage`, `ui_building_lot_locked_partial`,
+`ui_building_lot_locked_stuck`, `ui_building_lot_locked_ground`,
+`ui_building_lot_locked_badge`.
+
+**The blocker the row names is the first BUILDING in the lock's own blocker
+list**, which is already in a deterministic order, so the same neighbour is named
+on every machine. That list is now honest about what is standing on the ground:
+its first cut had no arm for *"buildable and empty"*, so a FREE tile of a lot fell
+through to `E_NOT_DEVELOPED` and the row could say the map was in the way when
+nothing was (Wave 29 fix, RR-240).
+
 ### 2.10 City dashboard (S8, spec §40.3)
 
 Full-screen modal, four tabs. **Overview** reproduces the spec §40.3 block verbatim in layout — each row a 48 dp band with label, value, state glyph, and a 64 × 24 dp sparkline of the last 24 game-hours (hourly samples from the sim ring buffer); tapping a row deep-links (Grid → power overlay + close; Active incidents → drawer). **Economy**: revenue/expense breakdown (per-day), 7-day treasury chart, tax-rate control (doc 03 exposes `set_tax_rate`). **Infrastructure**: power gen/cap/load + worst 5 feeders, water supply/demand + worst 5 zones, condition histogram. **Response**: per-department unit roster with status, rolling-24 h average response time, incident throughput, and the **auto-response policy editor** (spec §21.3, §2.13). Gear icon top-right → S9.
@@ -2797,3 +2891,5 @@ city can grow.
 | D-125 | **The building panel gains a one-row WATER summary beside D-115's POWER row.** `WaterPanelModel.building_row(actions, sim_id)` publishes `{zone, pressure, band_state, binding, main_distance_tiles, too_far, text_key, args}` and the row says which of the two walls this building is behind: `ui_water_row` for a zone reading, `ui_water_row_far` for *"{pct} here — {tiles} tiles from the nearest main"*. It lives in the S19 model rather than in `BuildController` for `TransformerPanelModel.building_row`'s reason: it is a reading OF A ZONE shown somewhere else, and putting it there is what stops two surfaces computing the same sentence twice. **It is drawn by `BuildingPanel._render_water_row()`, in a `WaterSection` box directly ABOVE `PowerSection`** (Wave 28 fix, doc 91 A91-D-150a — this row shipped with no caller at all in the first cut), and tapping it raises `water_row_opened(node_id, sim_id)` → `UIRoot._on_water_row_opened` → S19 **on the stage that BINDS the zone**, never on the nearest node: §2.5's supply is a min of four terms, so the binding stage is the only node where a purchase moves anything. An unserved building fires it with an empty id, exactly as an unserved POWER row does, and keeps its own sentence (`ui_water_unserved`) on S5. There is deliberately NO fix strip: doc 05 has no twin of `cmd_fix_power_capacity`, and the answer to a dry TILE is a run of main on the Utility tab. Ruling doc 93 §BD7. | §2.9, doc 05 §2.3/§2.11 | Doc 92 §67.8 measured **six different pressures in one zone whose own pressure is 1.00**, because §2.3's per-tile factor is distance to a live main. A building panel that showed only the zone would tell a player their water is fine while doc 02 refuses their upgrade at that building's own 0.50. |
 | D-126 | **`E_WATER_HEADROOM` names the purchase, and doc 05's site refusals say how far.** The row picks one of four remedy strings from `can_upgrade_water`'s new `limit` field and routes `Fix this →` on it — `FIX_COMPONENT` at the node that binds §2.5's chain (which opens S19) on the capacity arm, `FIX_BUILDING` on the pressure arm — instead of `FIX_DISTRICT` at the zone key for both. And `ui_requirement_e_no_main`, which has asked for `{need}` and `{have}` since Wave 10, is finally supplied: `cmd_place_water_component` publishes `tap_radius_tiles` and `nearest_main_tiles` (searched over the whole map, on the refusal path only), so the sentence reads *"this site taps a main within 8 tiles and the nearest live one is 23 tiles from 41, 62"*. | §2.7, §2.9, doc 05 §2.11, doc 93 §BD5 | **The remedy was wrong in both of the cases it could be shown in.** *"Add a pumping station or a storage tank in this district"* does not move a tile factor (doc 92 §67.8) and does not move a treatment-bound zone (doc 92 §67.4: 118 pumps, $5.5M, supply unmoved). And `E_NO_MAIN` rendered as *"the nearest main is more than  tiles from tile "* — doc 12 §2.7 calls this row the single most important teaching device in the game, and it was printing two empty slots. |
 | D-127 | **The placement bar answers "where CAN this go", not only "can it go here".** `BuildController.placement_sites(centre, radius, limit)` runs the ghost's own `evaluate()` over a window — `data/ui.json.placement.site_scan_radius_tiles` (10), capped at `SITE_SCAN_RADIUS_MAX` 20 — and returns `{ok, tiles, count, clean, scanned, nearest, nearest_distance, cost, reasons, advice}`. `tiles` is the set the shell paints (nearest-first, `site_rows` of them, sites with power to spare ahead of `E_TRANSFORMER_FULL` ones); `reasons` is the first-blocker histogram over the whole window; `advice` is a string KEY plus a `fix_target` in `RequirementFormatter`'s own shape, so the bar's existing `FIX THIS →` routes it with no second router. Seven sentences, in the order a player can act on them: `ui_site_found` · `ui_site_austerity` · `ui_site_funds` · `ui_site_buy_block` · `ui_site_develop_block` · `ui_site_no_shoreline` · `ui_site_unserved` · `ui_site_no_main` · `ui_site_none`. `ui/build_sheet.gd` prints it after the ghost's own sentence and memoises it per CARD and per WINDOW, so §2.7's 10 Hz revalidation never pays for 441 previews. | §2.7, doc 05 §6, doc 93 §BD8/§BD9 | **The player's first sentence, on his own save, had no answer.** *"Create a water source"*: the card enters, and there is no legal tile within forty tiles of his plant — `E_NOT_OWNED ×2140`, `E_FOOTPRINT ×1092`, `E_NO_WATER ×486`. Every refusal was correct and every one was about the ONE tile under his finger, because a ghost is a point-wise answer to a question about a set. Doc 92 §69.10 drives the fixed version end to end: three legal sites, $204,677, supply +53 %. |
+| D-128 | **The ghost shows the LOT, because that is the ground the purchase actually takes.** `BuildController.enter()` sizes to `sim.lot_for(archetype)` and `enter_water_component()` to `sim.water_lot_for(kind)`, so a `store` ghost is **2×2 from the first frame** and a `treatment` ghost 3×3. §2.7's own rule is that a ghost ASKS the command rather than re-implementing it, and `cmd_place_building` reserves the lot now (doc 02 §2.3a). The card, the price, the name key and the confirm are all unchanged; only the rectangle under the finger grew. | §2.7, doc 02 §2.3a, doc 93 §BE | **Otherwise the ghost would have been green on ground the command refuses.** A 1×1 ghost over a one-tile hole says yes; `cmd_place_building` then answers `E_FOOTPRINT` on the tile the player just tapped, having shown them nothing to suggest it would. The same disagreement in the scripted agents would have read as a *balance* result — "the city ran out of room on day 31" — when what had run out was the agreement between two functions about how big a store is (RR-239). |
+| D-129 | **A lot-locked building says which level it can still reach, names the neighbour on its ground, and routes `Fix this →` at it.** §2.9a's LOT row. `CitySim.lot_lock(sim_id)` supplies `held`, `lot`, `reachable_level`, `top_level` and an ordered `blockers` list (neighbour sim ids first, then `E_ROAD` / `E_WATER` / `E_NOT_DEVELOPED`); the panel quotes that neighbour's own CLEARING verb — `cmd_demolish_building(preview)` for anything standing, `cmd_salvage_building(preview)` for a ruin — so *"what freeing it pays"* is on the row rather than one screen away, and the quote's own `ok` decides whether a door is drawn (Wave 29 fix, RR-240). `FixRouter` answers `ACTION_FOCUS` — the remedy is a place: go and look at what is standing on your lot. **A door is drawn only where pressing it would free the lot**: the ground grows all at once or not at all, so a lot that ALSO carries road, water or undeveloped tiles says so and offers nothing. | §2.9a, doc 02 §2.3a, doc 08 §2.8 rung 12, doc 93 §BE5 | **206 buildings on the benchmark city are in this state after migration, and 0 on the founding city.** Without the row they would be silently short: a store that looks identical to the one beside it, that has quietly lost three levels of its ladder, with nothing anywhere in the game to say so or to say why. The migration is forbidden from moving or bulldozing anything (doc 93 §BE5), so the ONLY honest remedy is to tell the player and hand them the neighbour — and a state the player cannot see is authored behaviour nothing consumes, which is the shape this project keeps filing. |

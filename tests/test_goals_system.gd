@@ -17,6 +17,8 @@ extends SimTest
 ##      game-hour.
 
 const GOALS_PATH := "res://data/goals.json"
+## RR-239's one site search, shared (Wave 29 fix).
+const SiteSearch := preload("res://tools/site_search.gd")
 
 ## Every verb the UI can actually issue today. A curriculum row that asks for
 ## anything else is a row the player cannot complete — see `data/goals.json`'s
@@ -77,9 +79,10 @@ func _sim(seed_value: int = 1337) -> CitySim:
 ## and it may move.
 static func _place(sim: CitySim, archetype: String, count: int) -> int:
 	var placed := 0
-	var size: Vector2i = Vector2i.ONE
-	var foot: Array = sim.catalog.stats(archetype, 1).get("footprint", [1, 1])
-	size = Vector2i(int(foot[0]), int(foot[1]))
+	# The LOT the command reserves, not the first day's footprint (Wave 29 fix,
+	# RR-239). At the level-1 size the scan stepped past sites `cmd_place_building`
+	# refuses, so a curriculum test could fail to place its own fixture.
+	var size := SiteSearch.reservation(sim, archetype)
 	for block_id in sim.world.block_ids_sorted():
 		if placed >= count:
 			break

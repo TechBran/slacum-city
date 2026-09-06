@@ -14131,3 +14131,184 @@ The arc DOES move, and §69.4's addendum isolates that: seed 1337 at 25 game-day
 ends 4,514 / $28,174,964 against the pre-fix-pass 4,564 / $28,146,258, because
 RR-234a and RR-234b change what the curriculum agent's water sites do after they
 are paid for. An arc is a population; the four digests are the invariant.
+
+
+## 70. Wave 29 — a building reserves the ground its final form needs (2026-09-06)
+
+*Doc 02 §2.3a, doc 93 §BE, report 98 §74 RR-236..RR-239. Fork `4d78f30`.*
+
+Bigger lots mean fewer sites per block. This section is what that costs, measured
+rather than estimated, and what it does **not** cost.
+
+### 70.1 The growing set is five, and the ceiling it is measured to is not the catalog's
+
+A lot is the footprint at the tallest rung a building can **reach**, which is not
+the last row of doc 02's table. `tools/measure_lots.gd` prints both ladders:
+
+```
+tools/measure_lots.gd
+  archetype            L1     lot    top   grows
+  store                1x1    2x2    L6    YES
+  power_facility       3x3    4x4    L5    YES
+  construction_yard    2x2    3x3    L5    YES
+  water_facility       3x3    3x3    L3    no      <- L5's 4x4 is behind levels_4_5_enabled
+  source               2x2    2x2    L2    no
+  treatment            2x2    3x3    L2    YES     <- doc 02's pump column hides this
+  pump                 3x3    3x3    L3    no
+  tank                 2x2    3x3    L3    YES     <- and this
+```
+
+Two consequences worth stating as balance facts, not just as engineering ones:
+
+* **`water_facility` costs nothing.** Doc 05 ships `levels_4_5_enabled` `false`,
+  so the shell caps at L3 and its lot is the 3×3 it already stood on. Measuring
+  to the catalog's top would have taken **seven extra tiles per plant** for a rung
+  no player can buy.
+* **Two doc-05 variants DO grow** — `treatment` and `tank`, both 2×2 → 3×3 — so
+  the set this wave moves is five archetypes, not four (A91-D-156).
+
+### 70.2 Density: what a lot costs in legal sites
+
+`tools/measure_lots.gd --sites` counts legal origins over the whole 112×112 map,
+at the old level-1 footprint and at the lot. This is the honest form of "fewer
+sites per block": the same ground, asked for a bigger rectangle.
+
+**Founding city** (`data/starter_city.json`)
+
+| archetype | at L1 foot | **at LOT** | ratio | sites lost |
+|---|---|---|---|---|
+| `store` | 1,397 | **960** | 0.687 | −31.3 % |
+| `construction_yard` | 960 | **611** | 0.636 | −36.4 % |
+| `power_facility` | 611 | **341** | 0.558 | −44.2 % |
+| `water_facility` | 611 | 611 | **1.000** | none |
+
+**Benchmark city** (`tests/fixtures/bench_city.json`, 1,500 buildings)
+
+| archetype | at L1 foot | **at LOT** | ratio |
+|---|---|---|---|
+| `store` | 2,786 | **1,416** | 0.508 |
+| `construction_yard` | 1,416 | **721** | 0.509 |
+| `power_facility` | 721 | **386** | 0.535 |
+| `water_facility` | 721 | 721 | **1.000** |
+
+**Read it as the second column, not the ratio.** A store still has **960** legal
+origins on the founding city and **1,416** on a city with 1,500 buildings already
+standing; the binding constraint on where a player puts a shop has never been the
+number of free rectangles and is not one now. The ratio falls furthest for the
+power plant precisely because it is the largest and rarest thing in the game —
+one per city on both authored maps — and 341 candidate sites for a building the
+player places once is not a constraint either.
+
+**No gate is re-fitted, and that is a measurement.** The lot rule moves no price,
+no curve and no rate; it moves how much ground a placement asks for. Gate 21's
+curriculum bounds are the only cells that could have moved, and §70.4 shows they
+did not.
+
+### 70.3 The migration census
+
+| city | buildings | growers | **lot-locked** | reserved tiles | apron tiles |
+|---|---|---|---|---|---|
+| founding | 34 | 8 | **0** | 77 → **109** | 32 |
+| benchmark | 1,500 | 328 | **206** | 3,213 (unchanged) | 0 |
+| **the player's own** | 89 | 17 | **10** | **251** | 25 |
+
+The player's save (`tests/fixtures/player_save_0903`, slot 0, counted through the
+real `SaveService`) is the only one of the three that migrates on the **restore**
+path rather than at boot, and it is the only one that shows the shape a human
+actually builds: its ten are 8 stores and both power plants, and the stores are
+two tight parades of four along a street, each blocked by the next and by the
+kerb. 7 of its 17 growers still got their whole lot, which is why it has 25 tiles
+of apron where the benchmark city has none.
+
+The founding city's +32 decomposes exactly: 5 stores × 3, the plant +7, the yard
++5, and `WTR-2` (a tank) +5.
+
+The benchmark's 206 decompose exactly too: **202 stores = its 95 level-1 plus its
+107 level-2 stores, every single one of them**, plus both power plants and both
+construction yards. `gen_bench_city.py` packs buildings at their current level's
+footprint, so no young grower in that city has a spare tile — which is why its
+reserved-tile total does not move and it has no aprons at all. The founding city,
+authored with its stores two tiles apart, migrates with none locked.
+
+**Nothing is moved and nothing is demolished** (doc 93 §BE5). A lot-locked
+building keeps its ground, is told the level that ground still reaches, and is
+handed the neighbour standing on the rest (doc 12 §2.9a / D-129).
+
+### 70.4 The 45-day curriculum arc
+
+`tools/measure_curriculum.gd --days=45`, seeds 1337 / 4242 / 9001, the same rig
+`tests/test_balance_gates.gd` gate 21 reads.
+
+The scripted agents' site searches were moved to the lot in the same change
+(RR-239) — `Harness.footprint()` fed `candidate_site()` a level-1 rectangle and
+then asked the command for a lot-sized reservation, so an unmoved harness would
+have reported `E_FOOTPRINT` refusals as a **balance** result ("the city ran out of
+room on day 31") when what had run out was the agreement between two functions.
+
+**The A/B, and it isolates ONE cause.** `CitySim.lot_for` and `water_lot_for`
+are the single seam the whole rule flows through — placement, the ghost, the
+migration and the harness all ask them — so turning them back to the level-1
+footprint turns the entire feature off, and nothing else in the tree moves.
+Verified before each run with `tools/measure_lots.gd`: **rule off → 77 reserved
+tiles, 0 growers, 0 lot-locked** (exactly the fork); **rule on → 109, 8, 0**.
+
+| curriculum level | **rule OFF** (1337 / 4242 / 9001) | **rule ON** (1337 / 4242 / 9001) |
+|---|---|---|
+| 1 | 14 / 13 / 17 | 14 / 13 / 17 |
+| 2 | 46 / 43 / 50 | 46 / 43 / 50 |
+| 3 | 76 / 78 / 75 | 74 / 72 / 76 |
+| 4 | 100 / 102 / 100 | 98 / 96 / 100 |
+| 5 | 164 / 168 / 172 | 159 / 161 / 172 |
+| 6 | 232 / 179 / 194 | 184 / 187 / 200 |
+| 7 | — / 277 / 269 | 275 / — / 292 |
+
+**The result is unchanged where it is a rule and moved where it is a
+population.** Levels 1 and 2 are identical on all three seeds. Levels 3–5 are
+inside the seed spread and, if anything, marginally EARLIER with the rule on
+(L4 96–100 against 100–102), because the harness now searches for the rectangle
+the command will actually reserve instead of finding a hole the command then
+refuses (RR-239).
+
+**Two of three seeds reach level 7 either way** — the arc's headline — and
+*which* seed stalls at 6 swaps from 1337 to 4242. That is a population fact, not
+a regression: a 45-day run is one sample per seed, the two runs bracket the same
+band, and the stalling seed is the one whose repair bill ran hot (`repair_spend`
+$2,970,524 for 1337 with the rule off, $1,015,964 with it on). End state, all
+three seeds:
+
+| | rule OFF | rule ON |
+|---|---|---|
+| levels reached | 6 / 7 / 7 | 7 / 6 / 7 |
+| `population_end` | 8,365 / 9,025 / 8,628 | 8,559 / 9,158 / 7,821 |
+| `treasury_end` | $24.0M / $34.6M / $33.7M | $36.2M / $26.1M / $34.3M |
+| `road_tiles_built` | 4 / 4 / 4 | 4 / 4 / 4 |
+| `tax_changes` | 1 / 1 / 1 | 1 / 1 / 1 |
+
+**No gate cell is re-fitted.** Gate 21 reads the BOUNDS this table is fitted to,
+and every band still lands inside them; `road_tiles_built` and `tax_changes` —
+the two counters that would expose a harness that had started refusing
+placements — are byte-identical across the A/B on all three seeds, which is the
+direct evidence that RR-239's site-search change did its job.
+
+
+### 70.5 The four `profile_sim --hash-only` baselines: UNCHANGED
+
+| | at the fork (`4d78f30`) | after this lane |
+|---|---|---|
+| starter, coarse 24h | `9004573df161a57e…` | **identical** |
+| starter, fine 2.0h | `d5c6678de64cb5de…` | **identical** |
+| bench, coarse 24h | `ebb5f4762e4f2412…` | **identical** |
+| bench, fine 2.0h | `307a6a27ad6f1801…` | **identical** |
+
+**A/B-isolated to one cause, and the cause is that the reservation is DERIVED.**
+The migration demonstrably ran — the founding city's reserved tiles go 77 → 109
+and eight buildings now hold more ground than they cover — but `state_hash()`
+digests the SAVE BODY, and the only footprint in that body is `placed_records`,
+which carries **player** buildings (`P-` prefixed) and nothing else. Neither
+authored city has one, and a 24-hour advance founds no building, so the ground
+this rule changes never reaches the digest. A city with a player-placed grower
+**does** move, honestly; `tests/test_lot_reservation.gd::
+test_a_legacy_body_gets_its_lots_on_restore` is that case.
+
+This is also why doc 08 §2.8's rung 12 is a **rules** rung with an identity
+migrator rather than a shape rung: nothing new is persisted.

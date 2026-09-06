@@ -149,6 +149,80 @@ func is_top_level(archetype: String, level: int) -> bool:
 	return level >= max_level_of(archetype)
 
 
+# --------------------------------------------------- doc 02 §2.3: LOT vs BUILT
+#
+# **A building's LOT is the ground it reserves for life; its BUILT extent is the
+# ground its mesh stands on today** (doc 02 §2.3a, doc 93 §BE, Wave 29). Four of
+# the twelve archetypes author a `footprint` column that GROWS partway up the
+# ladder — store 1×1 → 2×2 at L3, power_facility 3×3 → 4×4 at L4, water_facility
+# 3×3 → 4×4 at L5, construction_yard 2×2 → 3×3 at L4 — and until this wave the
+# grid only ever knew the second of the two numbers. Placement reserved the L1
+# footprint and NOTHING ever reserved the rest, so an upgraded store's mesh
+# covered four tiles while the grid held one, and the other three stayed legally
+# placeable underneath it (measured at the fork: `can_place` returns `true` on
+# the +X tile of a level-3 store).
+#
+# The rule is now the player's own: reserve the maximum at placement, so the
+# building has room to grow old in. The two numbers are read through the two
+# accessors below and never re-derived by hand.
+
+## The BUILT extent — the doc 02 §2.3 `Foot` cell at this level, which is what
+## the mesh covers and what `game/meshes/generated/manifest.json` carries per
+## level. Falls back to 1×1 for an unknown archetype or an out-of-range level,
+## which is the smallest thing that cannot overlap a neighbour.
+func footprint_of(archetype: String, level: int) -> Vector2i:
+	var row := stats(archetype, level)
+	var foot: Variant = row.get("footprint", [1, 1])
+	if not (foot is Array) or (foot as Array).size() != 2:
+		return Vector2i.ONE
+	return Vector2i(maxi(int(foot[0]), 1), maxi(int(foot[1]), 1))
+
+
+## The LOT — the footprint at the tallest rung this archetype can ever REACH.
+##
+## `top_level` is that ceiling and defaults to the archetype's own ladder. It is
+## a parameter and not an assumption because one archetype's ceiling is not in
+## this file: doc 05 ships `water_facility` behind `levels_4_5_enabled`, which is
+## `false`, so its L5 4×4 row is ground no player can ever buy and reserving it
+## would take a tile a ninth of the map wide for a rung that does not exist.
+## `CitySim.lot_for` supplies that ceiling; everything else takes the default.
+##
+## Componentwise max rather than "the top row's cell" — `_check_monotonic`
+## already refuses a ladder whose footprint shrinks, so the two are equal on
+## every roster this catalog will load, and the max is the one that stays true
+## if that rule is ever relaxed on one axis.
+func lot_of(archetype: String, top_level: int = 0) -> Vector2i:
+	var ceiling := top_level if top_level > 0 else max_level_of(archetype)
+	ceiling = mini(ceiling, max_level_of(archetype))
+	var lot := Vector2i.ONE
+	for level in range(1, ceiling + 1):
+		var foot := footprint_of(archetype, level)
+		lot = Vector2i(maxi(lot.x, foot.x), maxi(lot.y, foot.y))
+	return lot
+
+
+## Does this archetype's footprint grow at all under `top_level`? The three that
+## do today are `store`, `power_facility` and `construction_yard`; the fourth
+## authored grower, `water_facility`, answers **false** while doc 05's
+## `levels_4_5_enabled` is off, because L1 and L3 are both 3×3.
+func grows(archetype: String, top_level: int = 0) -> bool:
+	return lot_of(archetype, top_level) != footprint_of(archetype, 1)
+
+
+## The tallest rung whose BUILT extent fits inside `held` — the answer a
+## lot-locked building owes the player ("the level it can still reach", doc 12
+## §2.9a). A building holding its whole lot answers its own ladder top.
+func level_fitting(archetype: String, held: Vector2i, top_level: int = 0) -> int:
+	var ceiling := top_level if top_level > 0 else max_level_of(archetype)
+	ceiling = mini(ceiling, max_level_of(archetype))
+	var best := 0
+	for level in range(1, ceiling + 1):
+		var foot := footprint_of(archetype, level)
+		if foot.x <= held.x and foot.y <= held.y:
+			best = level
+	return best
+
+
 ## The doc 02 §2.3 row for one archetype at one level (1-based). Read-only;
 ## returns an empty Dictionary for an unknown archetype or an out-of-range level.
 func stats(archetype: String, level: int) -> Dictionary:
