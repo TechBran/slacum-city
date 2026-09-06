@@ -1,11 +1,19 @@
 extends SimTest
-## **The LOT rule** (Wave 29, doc 02 §2.3a, doc 93 §BE, RR-236..239).
+## **The LOT rule** (Wave 29, doc 02 §2.3a, doc 93 §BE, RR-236..239 and the fix
+## pass's RR-240/RR-242).
 ##
 ## A building reserves the footprint of its FINAL form the day it is founded, so
 ## that it has room to grow old in. These tests hold the four halves of that:
 ## the catalog's two extents, the grid primitive that lets a building grow into
 ## its own reservation, the placement and upgrade doors, and the migration that
 ## gives a legacy city its lots without moving or bulldozing anything.
+##
+## …and the fifth, which is the one the first cut got wrong: **the sentence the
+## player reads and the door under it**. Four states, one of which has a button,
+## each with its own test — and the last of them drives the player's own save
+## through the real `SaveService`, because that is the city where a row that
+## quotes a verb without reading its `ok` turns into "clearing it refunds $0"
+## over a verb that answers `E_STATE`.
 
 
 ## The site search every test here uses: the ground `archetype`'s LOT needs.
