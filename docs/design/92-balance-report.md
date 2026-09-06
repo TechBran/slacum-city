@@ -13245,3 +13245,463 @@ command: `can_upgrade_power("WTR-2", 97.75)` is refused at `T-18` with `r_after`
 pool, and the binding transformer's ratio went UP, because an hour of city passed
 and the plant is not on that transformer. That is doc 92 §48.1's whole sentence,
 made against the layer that was always the honest one to make it against.
+
+## 68. Wave 28 — every building fits the transformer envelope, and the data centre did not (2026-09-05)
+
+**The player, on the device:** *"A fully loaded data center still pulls too much,
+and I haven't even upgraded it past level two. Transformers may need more power,
+or we just make the data centers fit in that envelope, so a transformer can
+handle it fully upgraded."*
+
+Ruling: doc 93 §BC. Instrument: `tools/measure_envelope.gd`, read-only, two
+arms (`--table`, `--panel`).
+
+### 68.1 The envelope table — every archetype, every level, the rung it needs
+
+A building attaches to **exactly one** transformer (doc 04 §2.1), so the rung it
+needs is the smallest capacity that carries it at doc 04 §5.3's own 0.90
+ceiling. Two columns, not one: the `base kW` doc 02 publishes, and what that
+becomes **at the archetype's own doc 01 channel peak**, which is the hour §5.3's
+gate is judged at (`CitySim.peak_component_loads`, RR-120). Peaks:
+`power_demand_residential` **1.46** (20:00), `commercial` **1.51** (10:00–18:00),
+`industrial` **1.13**, `civic` **1.15**, `datacenter` **1.00** (flat).
+
+**AT THE FORK** — ladder `[50, 150, 400, 1,000, 2,500]`, ceilings
+`[45, 135, 360, 900, 2,250]`. `X` is *no rung on the ladder carries this*:
+
+```
+archetype          class       peak   L: base kW / at peak -> rung
+house              residential x1.46  L1 3/4->1  L2 7/10->1  L3 17/25->1  L4 39/57->2  L5 91/133->2  L6 215/314->3
+apartment          residential x1.46  L1 22/32->1  L2 54/79->2  L3 130/190->3  L4 325/474->4  L5 795/1161->5  L6 1940/2832->X
+store              commercial  x1.51  L1 9/14->1  L2 21/32->1  L3 50/76->2  L4 115/174->3  L5 275/415->4  L6 645/974->5
+office             commercial  x1.51  L1 35/53->2  L2 86/130->2  L3 210/317->3  L4 515/778->4  L5 1260/1903->5  L6 3090/4666->X
+high_rise          residential x1.46  L1 90/131->2  L2 230/336->3  L3 585/854->4  L4 1490/2175->5  L5 3810/5563->X  L6 9700/14162->X
+data_center        datacenter  x1.00  L1 400/400->4  L2 1020/1020->5  L3 2600->X  L4 6630->X  L5 16900->X  L6 43150->X
+police_station     civic       x1.15  L1 25/29->1  L2 61/70->2  L3 150/172->3  L4 370/425->4  L5 900/1035->5
+fire_station       civic       x1.15  L1 28/32->1  L2 69/79->2  L3 170/195->3  L4 410/471->4  L5 1010/1162->5
+power_facility     civic       x1.15  L1..L5 0
+substation         none        x1.00  L1..L5 0
+water_facility     civic       x1.15  L1 60/69->2  L2 145/167->3  L3 360/414->4  L4 880/1012->5  L5 2160/2484->X
+construction_yard  industrial  x1.13  L1 12/14->1  L2 28/32->1  L3 66/75->2  L4 155/175->3  L5 365/412->4
+
+doc05 pump         civic       x1.15  L5 2160/2484->X          (the other 29 rows all fit)
+
+cells with NO transformer rung: 9 in doc 02, 1 in doc 05 (and that one IS
+`water_facility` L5, read through the variant table — 2,160 kW counted twice)
+```
+
+**Nine, not one.** The player found `data_center` L2 by hand — which is the cell
+that costs a *level-5* transformer, the whole ladder, for one building at level
+two of six — and behind it were `data_center` L3–L6, `high_rise` L5–L6, `office`
+L6, `apartment` L6 and `water_facility` L5. `apartment` L6 is the one worth
+naming twice: at 1,940 kW it looks comfortably inside a 2,250 kW ceiling and is
+not, because at 20:00 it asks for 2,832. **Two of the nine are invisible without
+the peak column** — `apartment` L6 (1,940 base, inside the ceiling; 2,832 at
+20:00, outside it) and `water_facility` L5 (2,160 base; 2,484 at the civic peak)
+— and that column had never been multiplied out against the ladder in any
+document. The other seven are over even at base, which is worse: they were
+checkable by reading two tables side by side, and nobody did.
+
+**AS SHIPPED** — ladder `[50, 150, 400, 1,000, 2,500, 6,750]`, ceilings
+`[45, 135, 360, 900, 2,250, 6,075]`, `data_center` seed 400 → 100, doc 93 §BC-4's
+clamp on the top rung of `high_rise` and of `data_center`. **Two columns per
+cell now, because the game applies two inequalities** (fix pass, §68.6): the left
+one is the load at rest, `base × channel peak`, and `g…` is the reading
+`CitySim.cmd_upgrade_building` actually refuses on —
+`cell(L−1) × peak + 1.15 × (cell(L) − cell(L−1))`, doc 02 §2.11's margin on the
+delta added to the pad's peak. Where a channel peaks below 1.15 the `g` column is
+the STRICTER of the two, which is the whole of the fix:
+
+```
+archetype          class       peak   L: base kW / at peak -> rung  g<gate kW>-><rung>
+house              residential x1.46  L1 3.0/4.4->1  L2 7.0/10->1 g9.0->1  L3 17/25->1 g22->1  L4 39/57->2 g50->2  L5 91/133->2 g117->2  L6 215/314->3 g275->3
+apartment          residential x1.46  L1 22/32->1  L2 54/79->2 g69->2  L3 130/190->3 g166->3  L4 325/474->4 g414->4  L5 795/1161->5 g1015->5  L6 1940/2832->6 g2477->6
+store              commercial  x1.51  L1 9.0/14->1  L2 21/32->1 g27->1  L3 50/76->2 g65->2  L4 115/174->3 g150->3  L5 275/415->4 g358->3  L6 645/974->5 g841->4
+office             commercial  x1.51  L1 35/53->2  L2 86/130->2 g112->2  L3 210/317->3 g272->3  L4 515/778->4 g668->4  L5 1260/1903->5 g1634->5  L6 3090/4666->6 g4007->6
+high_rise          residential x1.46  L1 90/131->2  L2 230/336->3 g292->3  L3 585/854->4 g744->4  L4 1490/2175->5 g1895->5  L5 3810/5563->6 g4843->6  L6 4160/6074->6 g5965->6
+data_center        datacenter  x1.00  L1 100/100->2  L2 255/255->3 g278->3  L3 650/650->4 g709->4  L4 1660/1660->5 g1812->5  L5 4230/4230->6 g4616->6  L6 5830/5830->6 g6070->6
+police_station     civic       x1.15  L1 25/29->1  L2 61/70->2 g70->2  L3 150/172->3 g172->3  L4 370/425->4 g426->4  L5 900/1035->5 g1035->5
+fire_station       civic       x1.15  L1 28/32->1  L2 69/79->2 g79->2  L3 170/195->3 g196->3  L4 410/471->4 g472->4  L5 1010/1162->5 g1162->5
+power_facility     civic       x1.15  L1 0  L2 0  L3 0  L4 0  L5 0
+substation         none        x1.00  L1 0  L2 0  L3 0  L4 0  L5 0
+water_facility     civic       x1.15  L1 60/69->2  L2 145/167->3 g167->3  L3 360/414->4 g414->4  L4 880/1012->5 g1012->5  L5 2160/2484->6 g2484->6
+construction_yard  industrial  x1.13  L1 12/14->1  L2 28/32->1 g32->1  L3 66/75->2 g75->2  L4 155/175->3 g177->3  L5 365/412->4 g417->4
+
+doc05 source_river civic       x1.15  L1 32/37->1  L2 79/91->2  L3 195/224->3  L4 470/540->4  L5 1160/1334->5
+doc05 source_well  civic       x1.15  L1 50/57->2  L2 120/138->3  L3 300/345->3  L4 735/845->4  L5 1800/2070->5
+doc05 treatment    civic       x1.15  L1 40/46->2  L2 98/113->2  L3 240/276->3  L4 590/678->4  L5 1440/1656->5
+doc05 pump         civic       x1.15  L1 60/69->2  L2 145/167->3  L3 360/414->4  L4 880/1012->5  L5 2160/2484->6
+doc05 tank         civic       x1.15  L1 5.0/5.8->1  L2 12/14->1  L3 30/34->1  L4 74/85->2  L5 180/207->3
+doc05 booster      civic       x1.15  L1 12/14->1  L2 29/33->1  L3 72/83->2  L4 175/201->3  L5 430/494->4
+
+cells with no SERVABLE rung (doc 93 §BC-1, at rest) : 0
+steps with no BUYABLE  rung (doc 93 §BC-1, at the gate): 0
+cells with NO transformer rung: 0
+```
+
+**Read `data_center` L6 across:** `5830/5830->6 g6070->6`. The cell is 5,830
+because 6,070 — the servable quotient, and what the wave first shipped — puts the
+`g` column at **6,346** and its rung at **X**. The `civic` class is the one place
+the two columns are identical, because its channel peaks at exactly 1.15.
+
+Read the rung column down each row and doc 93 §BC-3 is visible: **no archetype
+ever climbs more than one rung per level, and every L1 sits on rung 1 or 2.** At
+the fork `data_center` L1 sat on rung **4** — a $6,900 transformer before the
+first server was switched on.
+
+**The table is an UPPER bound, and deliberately.** Real demand is
+`base × state_mult × channel × occ` and `occ ≤ 1.0`
+(`PopulationSystem.occ_of`), so a cell that fits here fits in play with room to
+spare. A contract that had to model occupancy would be a contract nobody could
+check from the data files.
+
+### 68.2 Why both doors, and why the sixth rung is the LAST one
+
+The player offered two doors and the arithmetic refuses each of them alone.
+
+**Bigger transformers, alone.** `data_center` L6 at 43,150 kW wants a
+`43,150 / 0.90 = 47,944 kW` "transformer" — larger than a substation at L3
+(30,000) and **six times** the biggest feeder in the game (7,500). Every
+transformer sits under a feeder and the §5.3 gate walks it, so the true ceiling
+of the distribution model is `0.90 × 7,500 = 6,750 kW` **however large the
+transformer is**. There is no ladder that reaches 43 MW without a new conductor
+class, a new substation ladder and a new transmission ladder underneath it.
+
+**A smaller data centre, alone.** `k_dem > TAX_LEVEL_GROWTH` (2.15, doc 02 §8 /
+spec §55 rule 3) forces a six-rung demand ladder to span at least `2.15⁴ = 46×`,
+and the `vertical` class actually spans `2.55⁵ = 107.9×`. Against the old
+2,250 kW ceiling that caps the seed at `2,250 / 107.9 = 20.9 kW` — a data centre
+drawing less at level one than a `store` L3. It also collides with `high_rise`,
+whose own six-rung ladder needs the same room: two `vertical` archetypes cannot
+both be aligned to a ladder that has only `2,250 / 45 = 50×` of span between its
+first ceiling and its last.
+
+**Which of the nine each half of the fix actually closes**, because "both doors"
+is only an honest answer if the split is stated:
+
+| closed by | cells |
+|---|---|
+| **the sixth rung alone** (ceiling 2,250 → 6,075) | `apartment` L6 (2,832), `office` L6 (4,666), `high_rise` L5 (5,563), `data_center` L3 (2,600), `water_facility` L5 (2,484) — **5 of 9**, and doc 05's `pump` L5 with them |
+| **the `data_center` seed** 400 → 100 | `data_center` L4 (6,630), L5 (16,900) — **2 of 9** |
+| **the clamp** (doc 93 §BC-4) | `high_rise` L6 (14,162), `data_center` L6 (43,150) — **2 of 9** |
+
+Five of the nine were never about the data centre at all, which is why the
+player's report was worth more than the building it named.
+
+**The pair works because each buys what the other cannot.** A sixth rung lifts
+the span to `6,075 / 45 = 135×` against the 107.9× the curve needs, which is
+enough for both towers; and a seed inside **(55.4, 135] kW** is what puts the
+data centre's ladder in step with the copper. The sixth rung is
+`0.90 × FEEDER_CAPACITY[2] = 6,750 kW` — derived from the feeder, not chosen —
+and **a seventh cannot exist without a fourth conductor class**, so doc 04's
+ladder is now provably finished rather than merely longer. Gate 18c is amended
+to assert exactly that: the five shipped rungs cell by cell, the sixth against
+its own derivation.
+
+**Cost of the rung, and what it commits a city to.** $41,500 (doc 03 §2.13(b),
+the ladder's own $/kW curve continued: 10.00 / 7.33 / 7.00 / 6.90 / 6.52 → 6.15,
+× 6,750). It needs a class-3 feeder — 6,750 kW **is** `0.90 × 7,500`, so the
+rung is exactly what one class-3 run carries at §5.3's ceiling, a class-2 at
+3,000 kW cannot carry it at all, and a building at the 6,075 kW envelope loads
+that feeder to **0.81** (675 kW left for its neighbours) — and a substation at
+**L2 or better**, since `0.90 × 6,000 = 5,400 < 6,750`. A top-rung transformer is an infrastructure decision, not a pole-top,
+and the panel walk in §68.3 is where the player is told so.
+
+### 68.3 What the three surfaces say, measured on a data centre at every level
+
+`tools/measure_envelope.gd --panel`, founding city, seed 1337, 6 game-hours.
+`WTR-2` on `T-18` (an L1, 50 kW, the only customer on that pad) is re-stated as
+a `data_center` at each rung — synthetic, because doc 02 gates the archetype at
+city level 4 and the founding city is level 0, and stated rather than hidden;
+every number under it is the catalog's own stats row, the grid's own gate and the
+panel's own model.
+
+```
+DC level  base kW  next kW   pad kW  host  needs  alone  panel row
+L1        100      255       284     L1    L3     L3     ui_power_row_needs_rung to=2 rung=3 host=1 kw=400 kW
+L2        255      650       685     L1    L4     L4     ui_power_row_needs_rung to=3 rung=4 host=1 kw=1 MW
+L3        650      1660      1608    L1    L5     L5     ui_power_row_needs_rung to=4 rung=5 host=1 kw=2.5 MW
+L4        1660     4230      3719    L1    L6     L6     ui_power_row_needs_rung to=5 rung=6 host=1 kw=6.75 MW
+L5        4230     5830      2990    L1    L6     L6     ui_power_row_needs_rung to=6 rung=6 host=1 kw=6.75 MW
+L6        5830     —         —       —     —      —      (top of the ladder — no next level to size a pad for)
+
+S18 on T-18: customers=1 need_rung=4 need_bigger=true for=WTR-2 cap=1 MW second='' stranded=''
+router POWER: action=upgrade_transformer to_level=2 cost=1100 clears=false
+              | needs rung 4 (1000), host L1, for WTR-2
+router POWER (with_quote=false): needs rung 4 (1000), host L1, for WTR-2, quote=false
+```
+
+**The `alone` column and the second router line are the fix pass** (§68.6).
+`alone` is the rung a transformer *of this building's own* would have to be —
+doc 04 §2.9's parallel unit, the purchase `cmd_fix_power_capacity` sells when no
+rung under the shared pad carries the load. Here it equals `needs` at every rung,
+because `WTR-2` is the only customer on `T-18`; the two diverge exactly when a
+pad is crowded, which is the state the first cut called a wall. And the second
+router line is the shape **both production callers use** (`ui/ui_root.gd:2269`,
+`game/main.gd:2442`, `with_quote = false`): `needs` used to be written inside
+`if with_quote:` and that line printed nothing at all.
+
+**`pad kW` is `rung_needed`'s own input, and it is not monotone — which is the
+column doing its job.** It is the LIVE peak of `T-18` plus the upgrade delta, and
+live demand is `base × state × channel × occ` with `occ ≤ 1.0`
+(`PopulationSystem.occ_of`), so a building whose occupancy is still settling asks
+its pad for less than its catalog row says. L5's 3,266 kW below L4's 3,719 is
+that, not a slip: the panel answers about the city as it is, while doc 93
+§BC-1's contract is checked at `occ = 1.0` and is therefore an upper bound on
+both. The rung beside it can be checked against the ladder by hand —
+`2,250 < 3,266 ≤ 6,075` is rung 6 — which is the whole reason the input is
+printed beside the answer.
+
+**The router line is the whole of doc 93 §BC-3's second half.** Before this wave
+it stopped after `clears=false` — the player was told, correctly, that the $1,100
+purchase would not work, and nothing at all about what would. It now carries
+`needs`, so the row can say *"this is a level 1; your level 3 wants a level
+4"* and a player can decide to climb the ladder instead of tapping once and being
+refused again. The quote itself is unchanged and deliberately so:
+`cmd_upgrade_grid_component` moves one rung per call, so a quote naming L4 from
+L1 would price a purchase the verb cannot charge.
+
+### 68.4 What moved, what did not, and what is filed
+
+**Seven authored cells moved**, against nine that had no transformer:
+`data_center` power L1–L6 (400/1,020/2,600/6,630/16,900/43,150 →
+100/255/650/1,660/4,230/**5,830**) and `high_rise` L6 (9,700 → 4,160). Nothing else
+in `data/buildings.json` changed — the `water_demand` column is generated from a
+separate seed and did not move a cell, and jobs, population, footprints, decay,
+fire, crime, coverage and `min_city_level` are untouched.
+
+**Hash deltas, `tools/profile_sim.gd --hash-only`, A/B-isolated to ONE cause**
+(fork `a581948`; each arm is the whole shipped tree with `data/buildings.json`
+alone rolled back, so every arm differs from the next in exactly one column):
+
+| arm | starter coarse / fine | bench coarse / fine |
+|---|---|---|
+| **fork** `a581948` | `9004573d…` / `d5c6678d…` | `9695f766…` / `b8548805…` |
+| **A** everything except `data/buildings.json` — the sixth rung, its radius, its roster row, its price, `PowerGrid.transformer_rung_for`, the gate, the panels | `9004573d…` / `d5c6678d…` **unchanged** | `9695f766…` / `b8548805…` **unchanged** |
+| **B** A + `high_rise` L6 only (9,700 → 4,160) | `9004573d…` / `d5c6678d…` **unchanged** | `9695f766…` / `b8548805…` **unchanged** |
+| **shipped** B + `data_center` L1–L6 | `9004573d…` / `d5c6678d…` **unchanged** | `ebb5f476…` / `307a6a27…` **MOVED** |
+| **fix pass** shipped + `data_center` L6 only (6,070 → 5,830) | `9004573d…` / `d5c6678d…` **unchanged** | `ebb5f476…` / `307a6a27…` **unchanged** |
+
+**Three readings, and each was predicted before it was run.** (A) The ladder
+append is hash-neutral because appending to `CAPACITY` moves no existing
+component's `capacity_kw`, and `TRANSFORMER_SERVICE_RADIUS[5]` is read only by a
+rung neither authored city owns. (B) The `high_rise` clamp is hash-neutral
+because no city in the project holds a level-6 `high_rise` — the benchmark's
+tallest is **L4** (15 × L1, 20 × L2, 15 × L3, 9 × L4). (shipped) **The entire
+bench delta is the data centre and nothing else**: `tests/fixtures/bench_city.json`
+authors **15** of them, 3 at L1 and 12 at L2, and the founding city authors none,
+which is exactly why the starter hash does not move in any arm.
+
+The size of that delta is arithmetic anyone can check: `3 × (400 − 100) + 12 ×
+(1,020 − 255) = 900 + 9,180 = ` **10,080 kW** of base demand removed from a
+1,500-building city.
+
+**The fix pass row was predicted and then measured, and it did NOT move.** The
+correction touches exactly one cell — `data_center` L6 — and a level-6 data
+centre exists in neither authored city (the benchmark's fifteen are 3 × L1 and
+12 × L2; the founding city has none), so the cell is hash-inert by the same
+argument that made arm B hash-inert for `high_rise` L6. Isolated the same way:
+`git checkout fb21861 -- data/buildings.json` (which restores the 6,070 cell and
+nothing else — the file's only other difference from the fix-pass tree is that
+cell), all four hashes re-measured, all four identical, file restored and
+`git diff HEAD --stat` empty. So the four baselines this fix pass reports are the
+four the wave already reported: starter `9004573d…` / `d5c6678d…` (identical to
+the fork `a581948`), bench `ebb5f476…` / `307a6a27…`.
+
+**Filed to Lane B (water), not re-fitted here.** One row of doc 05's per-variant
+ladder — `pump` L5, 2,160 kW, **2,484 at the civic peak** — had **no transformer
+rung at the fork** and has one now, at no cost to doc 05: the sixth rung rescued
+it and not one number in `data/water.json` moved. It is the only doc 05 row that
+was ever over (`tank` L5 is 180 kW, `source_well` L5 1,800, `treatment` L5
+1,440), and it is doc 02's `water_facility` L5 read through the variant table, so
+it is the same physical cell as the ninth doc 02 breach rather than a tenth. The lane that owns the gate matrix should know that a top-level pump is
+now buyable where it was not, and that the purchase it needs is a $41,500
+transformer. No gate-matrix cell was re-fitted by this lane (`awaiting_consumer`:
+doc 92 §17's matrix and §18b's dark share are unmeasured against the new rung).
+
+**The data centre's operating cost fell and its revenue did not**, which is the
+direction the player asked for and a balance delta this lane publishes rather
+than absorbs: a level-5 data centre draws 4,230 kW where it drew 16,900, so the
+generation a city must own to run one falls by **12,670 kW** — from 14 % of a
+top-rung gas plant to 3.5 %. Doc 03's tax, jobs and capital columns for
+`tax_class: tech` are untouched, so the archetype is strictly more profitable
+than it was. That is a re-fit for the lane that owns doc 03's matrix; it is named
+here with its number so it cannot be discovered later as a surprise.
+
+### 68.5 Open questions this lane leaves, ranked
+
+1. **The gate matrix has not been re-measured against either half of this wave**
+   (highest, and it is a re-fit rather than a bug). §17's agent matrix, §18b's
+   50-game-day dark share and every gate fitted to them ran against a roster
+   whose data centres drew 400 / 1,020 kW at L1 / L2 and a ladder that stopped at
+   2,500 kW. Both moved. The direction is predictable and favourable — less
+   demand, one more purchase — but "predictable" is not "measured", and the lane
+   that owns the matrix should re-run `tools/measure_curriculum.gd` and gate 18b
+   before trusting any cell of it. `awaiting_consumer`.
+2. **`Curriculum` will now buy a level-6 transformer, and nothing has watched it
+   do so.** `Api.transformer_level_for` clamps to the ladder's top rung, which is
+   6 rather than 5 from this wave on, so an agent answering a power wall on a
+   full map can commit **$41,500** in one purchase where its ceiling used to be
+   $16,300. Doc 92 §17's spend rows are the reader that has not read it yet.
+3. **`swap_repair_gm` is an orphan column and now a six-cell one.** Doc 04 §2.2
+   publishes 18/18/26/38/55/80 game-minutes per rung and nothing loads it:
+   `cmd_repair_grid_component` times a crew off doc 06's
+   `transformer_failure.w_base`. Either doc 06's timing should be derived from
+   this column (it is the only place the project says a bigger transformer takes
+   longer to swap) or the column should be deleted. Filed, not fixed — this lane
+   would have been authoring a reader for a number it does not own.
+4. **A top-rung transformer needs a substation at L2 and nothing tells the player
+   so up front.** `0.90 × 6,000 = 5,400 < 6,750`, so a 6,750 kW unit under an L1
+   substation is refused by `can_upgrade_power` at the SUBSTATION hop — correctly,
+   with the right component named, but only after the transformer has been
+   bought. The placement quote (`can_serve_tile`) already walks the same path and
+   could say it at ghost time; that is doc 12's call, not this lane's.
+5. **The data centre's tax and jobs columns are unchanged while its power bill
+   fell by 12,670 kW at L5** (§68.4). Whether `tax_class: tech` should give some
+   of that back is doc 03's ruling; this lane published the number and changed no
+   dollar.
+6. **How many other generated files has a later wave hand-edited?**
+   `tools/gen_buildings.py` is the sole writer of `data/building_rules.json` and
+   it silently dropped two rulings Waves 19 and 20 had written straight into that
+   JSON — caught here, fixed here, and guarded here
+   (`verify_no_shipped_block_is_dropped`, report 98 §72 RR-222). The same trap is
+   open wherever the pattern repeats: `tools/gen_building_economy.py`,
+   `tools/gen_bench_city.py`, `tools/gen_building_shapes.py` and
+   `tools/gen_starter_city.py` all write files that later waves have amended, and
+   none of them carries the guard. Running each with `--check` against the
+   shipped file would answer it in minutes; this lane ran only its own.
+7. **Doc 02 §2.3's `data_center` L5 row still prints `—` for `Upg gh`** while
+   §2.14 says that row gained `upgrade_time_hours 185`. Pre-existing, untouched
+   by this wave, and named here because the L5 row was edited beside it.
+
+### 68.6 The fix pass — what the verifier reproduced, and what it cost
+
+Three findings sent this lane back. All three are reproduced below on the tree
+that shipped them; none is argued with.
+
+**(1) The gate measured the wrong inequality.** §68.1's first cut compared
+`base × channel_peak` to 6,075 kW. `CitySim.cmd_upgrade_building`
+(`sim/city_sim.gd:2937`) compares `power_headroom(sim_id, delta_kw × 1.15)`,
+which `PowerGrid.can_upgrade_power` adds to the component's **peak** load. On
+`data_center` L5 → L6 those are 6,070 kW and **6,346 kW**, and the envelope is
+6,075: `PowerGrid.transformer_rung_for(6346)` returns **0**. The threshold is a
+pad peak of **3,959 kW**, so any data centre staffed above **93.6 %** could never
+be bought up to L6, on any transformer, at any price — the exact archetype and
+the exact level the player reported, with gate 34 green.
+
+BC-1 is now two clauses, servable and buyable, and the clamp floors on whichever
+quotient is tighter. **Exactly one shipped cell moves: `data_center` L6, 6,070 →
+5,830.** Nothing else in the roster changes, because the buyable form is only
+tighter where a channel peaks below the 1.15 margin — `datacenter` (1.00) and
+`industrial` (1.13) — and `construction_yard`, the only industrial archetype,
+has 900 kW of slack at its top rung.
+
+**The acceptance drive: a REAL data centre, up its whole ladder, grid purchases
+only.** `cmd_place_building("data_center", …)` on the founding city, built out,
+then five upgrades, each one preceded by as many `cmd_fix_power_capacity` taps as
+the power blocker needed and by nothing else:
+
+```
+placed P-035 at (33, 35)
+L1->L2  pad 119  delta 155   gate 298   T-01 L1 -> tap $1,100 (clears=false), tap $2,800 (clears)   POWER CLEAR
+L2->L3  pad 244  delta 395   gate 698   T-01 L3 -> tap $6,900 (clears)                             POWER CLEAR
+L3->L4  pad 467  delta 1010  gate 1629  T-01 L4 -> feeder $13,650 (false), transformer $16,300     POWER CLEAR
+L4->L5  pad 790  delta 2570  gate 3746  T-01 L5 -> transformer $41,500 (false), feeder $26,000     POWER CLEAR
+L5->L6  pad 1167 delta 1600  gate 3007  T-01 L6 -> no tap needed                                   POWER CLEAR
+FINAL: L6 on T-01 (L6, 6,750 kW); grid spend $108,250; the only blocker left at
+       every rung from L3 up is E_WATER_HEADROOM, which is the water lane's wall
+```
+
+Live occupancy settles well below 1.0 as the tower grows (27 % at L5), so that
+drive never presents the published cell. Gate 34's contract is `occ = 1.0`, so
+the last step was asked again with the pad loaded to doc 02's own L5 figure:
+
+```
+ARM 2 occ=1.0: L5 cell 4230 -> L6 cell 5830, gate reads 6070 kW, envelope 6075
+ARM 2 preview blockers [E_WATER_HEADROOM] -> POWER CLEARED: true  (pad L6, 6750 kW)
+ARM 2 counterfactual (L6 = 6070 kW): gate 6346 kW -> ok=false at=T-01 kind=transformer rung=0
+```
+
+The counterfactual line is the defect, on the same grid, one number apart.
+
+**(2) The new sentence lied in a legal state.** `PowerActions.rung_needed`
+modelled "one rung under THIS pad" and did not know doc 04 §2.9's parallel
+transformer, which `cmd_fix_power_capacity` has sold since Wave 17. A level-6
+pad at **6,150 kW** is `r = 0.911`: un-shed, un-overloaded, merely past the 0.90
+UPGRADE gate. Every customer under it got `ui_power_row_no_rung` (*"nothing on
+the ladder feeds it"*) and S18 marked one STRANDED, while at the same tick the
+fix verb returned `action=place_transformer clears=true cost=42160`. The
+question is now asked about the BUILDING as well as the pad —
+`CitySim.building_peak_demand_kw` plus the same ×1.15 delta gives `alone_rung` —
+and there are three states, `needs_bigger` / `needs_second` / `no_rung_carries`,
+with the middle one carrying two new strings that name the purchase. BC-1's
+buyable clause is what keeps the third unreachable for an authored building.
+
+**(3) Three added numbers had no consumer** (the A91-D-19 shape). `armed["needs"]`
+sat inside `if with_quote:` while both production callers pass `false`, so the
+third of doc 12 D-123's "three surfaces" reached none — it is unconditional now,
+carries `sim_id`, and `UIRoot._serve_transformer_fix` hands it to S18, which says
+the sentence for the building the player came FROM (its own summary answers about
+the *hungriest* customer, and the capped list may not hold the asked-about one at
+all). `customers_need_capacity_kw` and the customer row's `needs_bigger` had one
+occurrence each, both writes; both deleted.
+
+**And the cost the first cut denied.** Doc 02 §2.14 said the clamped step *"is
+still a real one … so no upgrade in the roster is free to power"*. True against a
+bar of non-zero; false against doc 03 §9 item 4's bar, `k_dem >
+TAX_LEVEL_GROWTH` (2.15). `high_rise` L5→L6 is **×1.092** and `data_center`
+L5→L6 is **×1.378**, so both are efficiency-POSITIVE while tax grows ×2.15, and
+they are the only two such steps in fifty-six cells. Gate 34 asserts that set by
+name. Doc 93 §BC-4's rider carries the argument for paying that price rather than
+shrinking the seeds.
+
+**One number improved for free, and the tightness moved one step up rather than
+vanishing — said here so it is not found later.** At 6,070 kW an L6 data centre
+sat at `r = 0.8993` on a 6,750 kW pad: five kW under the OPERATING ceiling, which
+about fifteen streetlights (`STREETLIGHT_KW` 0.35) consume, so the top-rung data
+centre was over the ceiling on any pad with normal street load. At 5,830 it sits
+at `r = 0.864`, with **245 kW** of room under the 6,075 kW ceiling and 920 kW
+under the nameplate. What is now exactly tight is the STEP into it: the clamp
+floors on the gate, so `4,230 + 1.15 × 1,600 = 6,070` leaves **5 kW** for
+anything else on the pad. That is not the same defect wearing a new hat, and the
+difference is the whole of blocker (2): a data centre sharing its pad at L5 → L6
+is refused, `cmd_fix_power_capacity` sells it a **parallel transformer**, and the
+panel now says so in words (`needs_second`) instead of telling it to give up. The
+top of this ladder is a building that needs a transformer to itself — which is
+what doc 93 §BC-2 already says a 6,750 kW unit is: an infrastructure decision,
+not a pole-top. Buying slack instead would mean authoring a margin on a margin
+that no document owns.
+
+**Hashes: none moved.** See §68.4's fix-pass row and its isolation.
+
+**The fix pass, measured end to end** (all on the frozen tree, all reproducible):
+
+```
+tools/run_suite.sh                        -> files 157, tests 2895,
+                                             asserts 593523, failed 0, silent 0,
+                                             ALL TESTS PASSED
+tools/run_suite.sh --one=test_balance_gates.gd  -> tests 34, asserts 755, failed 0
+godot tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict
+                                          -> exit 0, 93 states, 93 clean
+python3 tools/check_doc_refs.py           -> 6222 refs, all resolving; no id twice
+python3 tools/gen_buildings.py --check    -> all invariants pass
+measure_envelope --table                  -> 0 servable, 0 buyable, 0 total
+profile_sim --hash-only (starter / bench) -> 9004573d / d5c6678d, ebb5f476 / 307a6a27
+```
+
+The wave shipped 2,893 tests; the fix pass ships **2,895** — the two added are
+the pad-past-the-top-rung case and the router-without-a-quote case, both in
+`tests/test_ui_transformer.gd`.
+
+**And one nit the verifier logged, closed.** `data/building_rules.json` was
+*value*-identical to the fork on the two Wave 19/20 rulings the generator had
+silently dropped, but not *byte*-identical: `FORCE_BLOCK` names the big MAPPINGS
+whose rows each get a line (`archetypes`, `levels`, `seed_rows`), and a LIST that
+happens to share one of those names was being blocked too, so
+`utility_spine.archetypes` came back as four lines where the ruling had written
+one. The encoder now forces a block only for a mapping under those keys, and the
+shipped rules file differs from `a581948`'s in **exactly two** ways again — the
+added `service_envelope` block and `seed_rows.data_center.power_kw` 400 → 100 —
+which is what makes `git diff` a review tool on a generated file. `data/buildings.json`
+is byte-unchanged by it, and `gen_buildings.py --check` with a block or a field
+injected still prints `2 failure(s), nothing written` and exits 1.

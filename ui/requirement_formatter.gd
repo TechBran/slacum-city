@@ -473,6 +473,9 @@ func format(code: Variant, params: Dictionary = {}) -> Dictionary:
 		"fix_target": {
 			"kind": fix_kind_out,
 			"id": fix_id,
+			# The building the row belongs to, when the params say (FIX_POWER does;
+			# Wave 28 merge). `""` otherwise — the router treats that as "no subject".
+			"sim_id": str(params.get("sim_id", "")),
 			# PA-05: what the router needs in order to ACT. See the contract
 			# table in this class's doc — it is normative for both halves.
 			"params": fix_params,
@@ -848,9 +851,16 @@ static func _fix_tile(p: Dictionary) -> Variant:
 ## before it asks doc 04, so `{need}` is the number the gate actually demanded
 ## and buying exactly it clears the row.
 static func power_headroom_params(delta_kw: float, deficit_kw: float,
-		margin: float, at_id: String) -> Dictionary:
+		margin: float, at_id: String, sim_id: String = "") -> Dictionary:
 	var required := delta_kw * margin
 	return {
+		# The BUILDING the row is about (Wave 28 merge). `FixRouter` reads it to
+		# put `needs` — which transformer rung this building's next level wants —
+		# on the answer, and S18 draws that sentence for the building the player
+		# came from. Two verifier passes found the router's `needs` reaching no
+		# surface because no production fix target ever carried the building id:
+		# the only creator is `_row` below, and it only knows what `params` tell it.
+		"sim_id": sim_id,
 		"deficit_kw": deficit_kw,
 		"required_kw": required,
 		"headroom_kw": maxf(0.0, required - deficit_kw),

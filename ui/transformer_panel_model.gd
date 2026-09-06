@@ -214,10 +214,43 @@ static func building_row(actions: PowerActions, sim_id: String) -> Dictionary:
 	# transformer, which is working perfectly — so it is the one line besides the
 	# row itself that stays on S5 (doc 93 §AY3).
 	var feeder := String(actions.sim.grid.component(transformer).get("parent", ""))
+	# **Which rung the NEXT level needs** (Wave 28, doc 12 D-123, doc 93 §BC-3).
+	# The row already named the transformer and its ratio; what it could not say
+	# is the one thing the player is deciding — whether the pad they are on can
+	# carry the upgrade they are looking at, and if not, which rung can. The
+	# numbers are `PowerActions.rung_needed`'s, which is the sim's own gate walk.
+	var next: Dictionary = actions.next_level(sim_id)
+	var upgrade := {}
+	var second := bool(next.get("needs_second", false))
+	var no_rung := bool(next.get("no_rung_carries", false))
+	if bool(next.get("needs_bigger", false)) or second or no_rung:
+		# **Which rung the sentence is about.** When a bigger unit under this
+		# building carries it, that is `needs_rung`. When none does, the answer is
+		# doc 04 §2.9's PARALLEL transformer and the rung that matters is
+		# `alone_rung` — what a pad of its own would have to be — because that is
+		# the thing `cmd_fix_power_capacity` will actually place and charge for.
+		var rung: int = int(next.get("alone_rung", 0)) if second \
+				else int(next.get("needs_rung", 0))
+		upgrade = {
+			"to_level": int(next.get("to_level", 0)),
+			"needs_rung": rung,
+			"host_level": int(next.get("host_level", 0)),
+			"needs_capacity_text": RequirementFormatter.power(
+					PowerActions.rung_capacity(rung)),
+			# Three sentences, three states, and only ONE of them is a wall:
+			# `no_rung_carries` means no transformer in the game carries this
+			# building at any price; `needs_second` means this pad cannot be
+			# re-rated to carry it but a second one beside it can, which is a
+			# purchase and not a refusal; anything else is one rung up.
+			"text_key": "ui_power_row_no_rung" if no_rung \
+					else ("ui_power_row_needs_second" if second \
+					else "ui_power_row_needs_rung"),
+		}
 	return {
 		"available": true,
 		"unserved": false,
 		"transformer": transformer,
+		"needs_upgrade": upgrade,
 		"shed": feeder != "" and actions.sim.grid.shed_feeders.has(feeder),
 		"ratio": float(block.get("load_ratio", 0.0)),
 		"band_state": StringName(String(block.get("band_state", HudModel.STATE_NORMAL))),

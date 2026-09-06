@@ -1558,12 +1558,15 @@ class Api extends RefCounted:
 	## under the 90 % headroom `PowerGrid.can_upgrade_power` demands. Clamped to
 	## the top rung: buying too small is a wasted $500, buying nothing is a wall.
 	static func transformer_level_for(kw: float) -> int:
-		var ladder: Array = PowerGrid.CAPACITY[&"transformer"]
-		var want := kw * 1.15 / 0.90
-		for i in ladder.size():
-			if float(ladder[i]) >= want:
-				return i + 1
-		return ladder.size()
+		# One ladder walk in the project, not two (Wave 28):
+		# `PowerGrid.transformer_rung_for` IS this arithmetic —
+		# `kw × 1.15 ≤ 0.90 × cap` is `kw × 1.15 / 0.90 ≤ cap` — with doc 02
+		# §2.11's upgrade margin folded into the load before it is asked. The one
+		# thing this door keeps is the CLAMP: `transformer_rung_for` answers 0
+		# for a load no rung carries, because a panel must be able to say so, and
+		# an agent about to spend money must not be handed a level 0.
+		var rung := PowerGrid.transformer_rung_for(kw * CitySim.UPGRADE_HEADROOM_MARGIN)
+		return rung if rung > 0 else (PowerGrid.CAPACITY[&"transformer"] as Array).size()
 
 	## `relief_spot`, aimed at ONE building instead of at the hottest transformer
 	## in the city. Same ring scan, same `relieved_kw > 0` gate, same determinism.

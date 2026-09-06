@@ -13,12 +13,22 @@ extends RefCounted
 const CAPACITY := {
 	&"plant_gas": [8000.0, 18000.0, 36000.0, 70000.0, 120000.0],
 	&"substation": [6000.0, 14000.0, 30000.0, 60000.0, 110000.0],
-	&"transformer": [50.0, 150.0, 400.0, 1000.0, 2500.0],
+	&"transformer": [50.0, 150.0, 400.0, 1000.0, 2500.0, 6750.0],
 }
 const FEEDER_CAPACITY := [1200.0, 3000.0, 7500.0]  # conductor class 1..3
 const TRANSMISSION_CAPACITY := [40000.0, 90000.0, 180000.0]
-const TRANSFORMER_SERVICE_RADIUS := [3, 4, 5, 6, 8]
+const TRANSFORMER_SERVICE_RADIUS := [3, 4, 5, 6, 8, 10]
 const SUBSTATION_FEEDER_SLOTS := [2, 3, 4, 6, 8]
+
+# **The transformer ladder's SIXTH rung — 6,750 kW** (Wave 28, doc 04 §2.2, doc
+# 93 §BC-2). Not a taste: it is `UPGRADE_MAX_R × FEEDER_CAPACITY[2]`, the largest
+# transformer the top conductor class can carry at §5.3's own ceiling. A seventh
+# rung is arithmetically impossible without a FOURTH conductor class, so the
+# ladder is now provably complete — and a top-rung transformer needs a class-3
+# feeder and a substation at L2 or better, which is what it costs to run a load
+# this size. Service radius extends the 3/4/5/6/8 ladder by its own last step
+# (+2). §2.6's THERMAL and HAZARD rows are per-KIND, not per-rung: an oil-filled
+# unit is an oil-filled unit, and the sixth rung adds no row there.
 
 # (theta_rated_c, tau_gs) per kind — §2.6
 const THERMAL := {
@@ -1767,6 +1777,39 @@ func block_dark_fractions(weights: Dictionary) -> Dictionary:
 ## at or under this ratio after the added load. The same 0.90 `can_upgrade_power`
 ## has always used, named so the fix planner and the panel read the one number.
 const UPGRADE_MAX_R := 0.90
+
+
+# ------------------------------------------------- the transformer envelope
+#
+# **Wave 28, doc 93 §BC.** A building attaches to exactly ONE transformer
+# (`_attachments` is a `building_id -> transformer id` map, and §2.1's attachment
+# rule picks one), so the biggest load the distribution model can serve is one
+# transformer rung at §5.3's own ceiling. Doc 02 authored six rungs of demand
+# against five rungs of copper and nobody asked the two tables to agree: at the
+# fork, **9 of the 66 published `power_demand_kw` cells had no transformer at
+# all** — `apartment` L6, `office` L6, `high_rise` L5–L6, `data_center` L3–L6 and
+# `water_facility` L5, each measured at its own doc 01 channel peak (doc 92
+# §68.1). The player found `data_center` L2 by hand.
+
+## The largest PEAK load one transformer can carry at §5.3's ceiling — the
+## envelope every authored `power_demand_kw` has to fit inside (doc 93 §BC-1).
+## Derived, never authored: it moves if and only if the ladder's top rung does.
+static func service_ceiling_kw() -> float:
+	var ladder: Array = CAPACITY[&"transformer"]
+	return UPGRADE_MAX_R * float(ladder[ladder.size() - 1])
+
+
+## The smallest transformer rung that carries `kw` at §5.3's ceiling, 1-based.
+## **0 means no rung does** — the wall doc 93 §BC-1 forbids, and the one answer
+## a caller must never silently clamp away. `Api.transformer_level_for` in
+## `tools/playtest.gd` is this function with the ×1.15 upgrade margin already
+## folded in; the panel, the fix router and the gate all read THIS one.
+static func transformer_rung_for(kw: float) -> int:
+	var ladder: Array = CAPACITY[&"transformer"]
+	for i in ladder.size():
+		if kw <= UPGRADE_MAX_R * float(ladder[i]):
+			return i + 1
+	return 0
 
 
 ## Doc 02 E2: the serving path must keep ≤ `UPGRADE_MAX_R` post-upgrade (§5.3).

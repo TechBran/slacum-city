@@ -60,11 +60,69 @@ kW throughput and the **inventory quantities doc 03 bills against** (report 98 C
 | `plant_solar` | 2k / 5k / 10k / 20k / 36k nameplate | `plant_capacity_mw` 2 / 5 / 10 / 20 / 36 | output = nameplate × sun × cloud (§2.7.6) |
 | `plant_wind` | 3k / 7k / 14k / 26k / 45k nameplate | `plant_capacity_mw` 3 / 7 / 14 / 26 / 45 | wind curve; **cutout >24 m/s** |
 | `substation` | 6k / 14k / 30k / 60k / 110k | `rated_mva` 6 / 14 / 30 / 60 / 110 | feeder slots 2/3/4/6/8; fault repair 115→215 gm; footprint 2×2 at every level per doc 02 |
-| `transformer` | 50 / 150 / 400 / 1,000 / 2,500 | `rated_mva` 0.05 / 0.15 / 0.40 / 1.00 / 2.50 | service radius 3/4/5/6/8 tiles; swap 18/18/26/38/55 gm; occupies 1 tile as grid geometry |
+| `transformer` | 50 / 150 / 400 / 1,000 / 2,500 / **6,750** | `rated_mva` 0.05 / 0.15 / 0.40 / 1.00 / 2.50 / **6.75** | service radius 3/4/5/6/8/**10** tiles; swap 18/18/26/38/55/**80** gm; occupies 1 tile as grid geometry. **Six rungs since Wave 28 — see below** |
 | `feeder` cls 1–3 | 1,200 / 3,000 / 7,500 | `line_km` = route tiles × 0.008 | underground ×2.6 cost (doc 03 applies it), ×2.2 repair time, immune to wind + lightning, flood-vulnerable |
 | `transmission` cls 1–3 | 40k / 90k / 180k | `line_km` = route tiles × 0.008 | repair 60 gm + 2 gm/tile |
 | `backup_gen` S/M/L | 150 / 600 / 2,500 | *not* in the `plants` inventory — building equipment, billed by doc 03 as capital + diesel | tank 8/16/48 gh; `fuel_efficiency_mult` 1.000 / 0.905 / 0.810 |
 | `battery` (post-MVP) | 1k / 2.5k / 6k / 14k / 30k | `rated_mva` 1 / 2.5 / 6 / 14 / 30 | 4k→120k kWh, 0.88 round-trip |
+
+> ### The transformer ladder's SIXTH rung, and why it is the last one (Wave 28)
+>
+> **Appended 2026-09-05 — doc 93 §BC-2, doc 92 §68.2, report 98 §72 RR-221.** No
+> rung below moved; the five shipped capacities, radii and swap times are exactly
+> what they were, and `tests/test_balance_gates.gd::test_gate_18c_no_capacity_constant_moved`
+> pins them cell by cell.
+>
+> **The number is derived from the feeder, not chosen:**
+> ```
+> rung 6 = UPGRADE_MAX_R × FEEDER_CAPACITY[class 3] = 0.90 × 7,500 = 6,750 kW
+> ```
+> A transformer is a child of exactly one feeder (§2.1) and §5.3's gate walks
+> that feeder, so **6,750 kW is the largest transformer any conductor class in
+> this document can carry** — and a seventh rung is arithmetically impossible
+> without a fourth conductor class, a re-scaled substation ladder and a
+> re-scaled transmission ladder underneath it. The ladder is finished, not merely
+> longer.
+>
+> **Why it had to exist.** A building attaches to exactly ONE transformer
+> (`_attachments`, §2.1), so one rung at §5.3's ceiling is the biggest load this
+> model can serve. Doc 02 §2.14 gave the growth stock a SIXTH rung of demand
+> while this document stayed at five rungs of copper, and nobody asked the two
+> tables to agree: measured at each archetype's own doc 01 channel peak — the
+> hour §5.3 is judged at (RR-120) — **nine of doc 02's sixty-six published
+> `power_demand_kw` cells had no transformer at all**, and so did doc 05's
+> `pump` L5 — which is doc 02's `water_facility` L5 read through the variant
+> table, the same 2,160 kW twice. Doc 92 §68.1 publishes the whole table; doc 93
+> §BC is the
+> ruling; `test_gate_34_every_building_fits_the_transformer_envelope` is the gate.
+>
+> **What a top-rung transformer commits a city to**, stated here so the panel
+> does not have to discover it: a **class-3 feeder** (6,750 kW IS 0.90 × 7,500,
+> so the rung is exactly what one class-3 run can carry at §5.3's ceiling and a
+> class-2 at 3,000 kW cannot carry it at all; a building at the 6,075 kW envelope
+> loads that feeder to **0.81**, leaving 675 kW for whatever else hangs off it)
+> and a
+> **substation at L2 or better** (`0.90 × 6,000 = 5,400 < 6,750`). Doc 03
+> §2.13(b) prices the unit at **$41,500**; the feeder and the substation are
+> priced there too and are the larger half of the bill.
+>
+> **What it does NOT add.** §2.6's `THERMAL` and `HAZARD` rows are per-KIND, not
+> per-rung — an oil-filled unit is an oil-filled unit — so the sixth rung inherits
+> `transformer`'s `(θ_rated 55 °C, τ 900 gs)` and `(T_knee 85, T_span 60, h_hot
+> 2.00, h_cold 0.00012)` unchanged, and `sim/power/power_grid.gd` gains no row
+> there. The service radius extends the 3/4/5/6/8 ladder by its own last step
+> (+2 → 10) and the swap time the 18/18/26/38/55 ladder by its own last ratio
+> (×1.45 → 80 gm).
+>
+> **One honest note about that last cell: `swap_repair_gm` has no reader, and it
+> did not gain one here.** `CitySim.cmd_repair_grid_component` (Wave 25) times a
+> crew off doc 06's `transformer_failure.w_base`, not off this column, so all six
+> of these numbers are documentation and none of them is a tunable anything
+> loads. The sixth is published anyway because a per-rung column that is five
+> long beside five that are six long is a worse trap than an orphan that was
+> already orphaned — but it is an orphan, it is named as one, and reconciling
+> this column with doc 06's `w_base` (or deleting it) is filed as an open
+> question in doc 92 §68.5 rather than quietly extended a rung at a time.
 
 **Inventory definitions** (the contract doc 03's `E_grid` reads, report 98 C-12):
 ```
@@ -121,6 +179,8 @@ demand_kw = min(demand_kw, base_kw × 2.2)             # demand_mult_cap
 ```
 
 **`base_kw` is owned by doc 02** (report 98 C-31). This doc's former reference table is **deleted** — a reader wanting a kW anchor reads doc 02 §2.3's `Pwr kW` column, which is generated on doc 02's `k_dem` curve family (2.35 steady / 2.45 standard / 2.55 vertical, report 98 C-13). Every worked example and test below is computed against that column.
+
+**…but the CEILING on that column is this document's** (Wave 28, doc 93 §BC-1). Ownership runs one way and the constraint runs the other: a building attaches to exactly ONE transformer (§2.1), so no cell of doc 02's column may exceed `UPGRADE_MAX_R × CAPACITY.transformer[top]` — **6,075 kW** — measured at the archetype's own channel peak from the table below, because §5.3's gate is judged at that hour (RR-120). Doc 02 §2.3 clamps its own generator against that number and mirrors it in `building_rules.json.service_envelope`; `tests/test_balance_gates.gd::test_gate_34_every_building_fits_the_transformer_envelope` re-derives the mirror from `PowerGrid` and from the class map below, so neither document can drift from the other. This paragraph is the whole of the check that did not exist: doc 02 §2.14 gave the growth stock a sixth rung of demand while §2.2's ladder had five rungs of copper, and **nine of the sixty-six published cells named a load nothing here could carry** (doc 92 §68.1).
 
 **Diurnal shape is owned by doc 01** (report 98 C-32). This doc's former `demand.tod_curves` block is **deleted**; `data/time.json` is the only diurnal curve store in the project. The grid's job is the class → channel map:
 
@@ -877,6 +937,8 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
 
 **Re-open condition.** If the benchmark's L5 transformers turn out to be an authoring error rather than a design intent — doc 09's inventory, not this doc's ladder — the correct fix is to re-author the city downward and re-close the roster, not to re-widen the gap.
 
+> **Extended, Wave 28: `placeable_levels [1,2,3,4,5,6]`** (§2.2's sixth rung, doc 93 §BC-2, report 98 §72 RR-221). Same ruling, one rung further, and the same reason inverted: this section closed the gap between the roster and the AUTHORED CITIES, and Wave 28 closes the gap between the roster and the AUTHORED BUILDINGS — nine of doc 02's `power_demand_kw` cells named a load no rung on the ladder could carry (doc 92 §68.1). Doc 03 §2.13(b) prices the sixth rung at **$41,500**; unlike Wave 17's promotion this one *is* a new price cell, because doc 04's deleted table never had a sixth rung to rescale, and §2.13(b) derives it from the five it already owns rather than inventing a magnitude. The build sheet is still unchanged for the same reason as above — `BuildController.grid_level` sells the lowest rung — and `test_gate_34_…` asserts every authored rung is both placeable and priced above $0, which is the check this section's own ruling wanted and did not have.
+
 ---
 
 ## 7. Test Plan (headless, `tests/sim/power/`)
@@ -944,7 +1006,7 @@ Color state: `NORMAL` r < 0.75; `WARNING` 0.75 ≤ r < 0.95; `CRITICAL` r ≥ 0.
     "plant_solar": {"nameplate_kw": [2000,5000,10000,20000,36000], "plant_capacity_mw": [2,5,10,20,36]},
     "plant_wind": {"nameplate_kw": [3000,7000,14000,26000,45000], "plant_capacity_mw": [3,7,14,26,45]},
     "substation": {"capacity_kw": [6000,14000,30000,60000,110000], "rated_mva": [6.0,14.0,30.0,60.0,110.0], "feeder_slots": [2,3,4,6,8], "fault_repair_gm": [115,140,165,190,215]},
-    "transformer": {"capacity_kw": [50,150,400,1000,2500], "rated_mva": [0.05,0.15,0.40,1.00,2.50], "service_radius_tiles": [3,4,5,6,8], "swap_repair_gm": [18,18,26,38,55], "grid_tiles": 1, "pole_mounted_max_level": 2},
+    "transformer": {"capacity_kw": [50,150,400,1000,2500,6750], "rated_mva": [0.05,0.15,0.40,1.00,2.50,6.75], "service_radius_tiles": [3,4,5,6,8,10], "swap_repair_gm": [18,18,26,38,55,80], "grid_tiles": 1, "pole_mounted_max_level": 2},
     "feeder": {"capacity_kw": [1200,3000,7500], "km_per_tile": 0.008, "underground_cost_mult": 2.6, "span_tiles": 4, "splice_repair_gm_base": 20, "splice_repair_gm_per_tile": 0.8, "rebuild_repair_gm_base": 35, "rebuild_repair_gm_per_tile": 1.5, "underground_repair_mult": 2.2},
     "transmission": {"capacity_kw": [40000,90000,180000], "km_per_tile": 0.008, "span_tiles": 4, "repair_gm_base": 60, "repair_gm_per_tile": 2.0},
     "battery": {"energy_kwh": [4000,10000,24000,55000,120000], "power_kw": [1000,2500,6000,14000,30000], "rated_mva": [1.0,2.5,6.0,14.0,30.0], "round_trip_efficiency": 0.88, "charge_trigger_ratio": 1.15, "_status": "post_mvp"}

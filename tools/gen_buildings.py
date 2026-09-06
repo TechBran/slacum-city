@@ -45,6 +45,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from decimal import Decimal as D, ROUND_HALF_UP, getcontext
@@ -84,6 +85,85 @@ BUILDING_RULES: Dict[str, Any] = {
                        " carry no magic number. data/economy.json (doc 03) stays"
                        " authoritative; the loader only checks k_dem > this.",
         "reason": "report 98 C-13 / spec s55 rule 3 -- every upgrade must be less utility-efficient",
+    },
+    "service_envelope": {
+        "_owner": "doc 04 s2.2 / s5.3 -- MIRRORED here exactly the way"
+                  " demand_growth_invariant mirrors doc 03's TAX_LEVEL_GROWTH."
+                  " sim/power/power_grid.gd stays authoritative; this block lets"
+                  " the generator and the loader clamp without a magic number,"
+                  " and tests assert every cell of it against its owner.",
+        "ceiling_peak_kw": D("6075"),
+        "_ceiling_derivation": "PowerGrid.UPGRADE_MAX_R (0.90) x the TOP rung of"
+                               " PowerGrid.CAPACITY.transformer (6,750 kW) = 6,075 kW."
+                               " A building attaches to exactly ONE transformer"
+                               " (doc 04 s2.1), so one rung at s5.3's ceiling is the"
+                               " largest PEAK load the distribution model can serve.",
+        "demand_class": {
+            "house": "residential", "apartment": "residential", "high_rise": "residential",
+            "store": "commercial", "office": "commercial",
+            "construction_yard": "industrial",
+            "police_station": "civic", "fire_station": "civic",
+            "water_facility": "civic", "power_facility": "civic",
+            "data_center": "datacenter",
+            "substation": "none",
+        },
+        "_demand_class_owner": "doc 04 s2.3's archetype -> demand class table, which"
+                               " sim/city_sim.gd carries as DEMAND_CLASS_CHANNEL."
+                               " `substation` draws nothing at any level (station"
+                               " service is inside capacity_kw), so it has no class.",
+        "channel_peak": {
+            "residential": D("1.46"), "commercial": D("1.51"), "industrial": D("1.13"),
+            "civic": D("1.15"), "datacenter": D("1.00"), "none": D("1.00"),
+        },
+        "_channel_peak_owner": "doc 01 -- data/time.json curves.power_demand_*, read"
+                               " by DayCurveSet.channel_peak(). The curves are"
+                               " piecewise linear on whole hours, so the peak is the"
+                               " largest keyframe. THIS is why the envelope is not a"
+                               " base-kW question: a high_rise authored at 3,810 kW"
+                               " asks its transformer for 5,563 kW at 20:00, and doc"
+                               " 04 s5.3's gate is judged at that hour"
+                               " (CitySim.peak_component_loads, RR-120).",
+        "upgrade_headroom_margin": D("1.15"),
+        "_upgrade_headroom_margin_owner": "doc 02 s2.11 -- sim/city_sim.gd"
+                       " UPGRADE_HEADROOM_MARGIN, MIRRORED here for the same reason"
+                       " ceiling_peak_kw is. cmd_upgrade_building does NOT refuse on"
+                       " the steady-state reading: it asks power_headroom for"
+                       " (cell(L) - cell(L-1)) x this margin ADDED to the pad's peak"
+                       " load. So the inequality a player actually meets when they tap"
+                       " Upgrade is cell(L-1) x channel_peak + margin x (cell(L) -"
+                       " cell(L-1)) <= ceiling_peak_kw, which is STRICTER than the"
+                       " steady-state form whenever channel_peak < margin -- exactly"
+                       " the datacenter (1.00) and industrial (1.13) classes. Wave 28"
+                       " shipped the steady form alone and left data_center L5->L6"
+                       " asking 6,346 kW against a 6,075 kW envelope: green gate, red"
+                       " game. Both forms are now clamped and both are gated.",
+        "_clamp_rule": "NEW, Wave 28 (doc 02 s2.3, doc 93 sec BC-1). Every generated"
+                       " power_demand_kw cell is the MINIMUM of three numbers: the"
+                       " curve round_rule(seed x k_dem^(L-1)); the SERVABLE ceiling"
+                       " ceiling_peak_kw / channel_peak[class]; and, for every level"
+                       " above the first, the BUYABLE ceiling (ceiling_peak_kw -"
+                       " cell(L-1) x (channel_peak - margin)) / margin, which is the"
+                       " upgrade gate cmd_upgrade_building refuses on solved for"
+                       " cell(L). Both quotients are floored onto this column's own s8"
+                       " `kw` rounding grid, so a clamp can never round UP past the"
+                       " thing it clamps to. It is the SAME shape"
+                       " coverage_ladder.max_requirement has had since doc 02 s2.9 --"
+                       " a generated ladder stopped at the ceiling of what another"
+                       " system can actually supply -- and it is applied here for the"
+                       " reason doc 93 sec G5 rider 1 already gave for the coverage"
+                       " columns and did not give for this one: demanding a service"
+                       " the player has no verb to buy is a wall with no door. The"
+                       " first level has no buyable form because nothing is upgraded"
+                       " INTO it; its gate is placement (serving_headroom_for_new),"
+                       " which is the steady form.",
+        "_clamp_binds_at_most_the_top_rung": "doc 93 sec BC-4. If the clamp bit twice"
+                                             " the archetype would have two rungs at"
+                                             " the same kW and an upgrade that costs"
+                                             " nothing to power, so an archetype whose"
+                                             " SECOND-from-top cell needs clamping has"
+                                             " the wrong seed and the seed is"
+                                             " re-derived instead. verify_invariants()"
+                                             " fails the build if that is ever untrue.",
     },
     "shared_curves": {
         "k_decay": D("1.20"),
@@ -176,6 +256,21 @@ BUILDING_RULES: Dict[str, Any] = {
                  " the city the upkeep of every building it does not own, and doc"
                  " 93 sec Y1 retires it.",
         "classes": ["residential", "commercial", "industrial", "tech"],
+        # **RESTORED, Wave 28.** Waves 19 and 20 wrote these two rulings straight
+        # into data/building_rules.json, which THIS SCRIPT overwrites: it is the
+        # sole writer of that file and it did not know about them, so the first
+        # regeneration after them dropped both. `Building.wear_may_demolish`
+        # defaults to TRUE, so the drop silently re-armed the exact physics doc
+        # 93 sec AP1 and sec AR1 exist to stop. Report 98 sec 72 RR-222,
+        # and verify_invariants() now refuses to write a file that drops a key
+        # the shipped one carries, so the next wave cannot repeat it.
+        "_wear_may_demolish_ruling": "NEW, Wave 19 (doc 93 sec AP1, measured in doc 92 sec 56.1). MAY ORDINARY WEAR TAKE A PRIVATE BUILDING ALL THE WAY TO `destroyed`? No. tools/measure_catastrophe.gd ran 45 game-days x 4 presets x 2 session kinds and found that EVERY destruction in the game comes through condition.structural_failure_p_per_hour -- 42 of 42 on standard, 0 from incident damage, 0 from fire -- and that the chain feeding it is not a disaster at all: a city that outgrows its own generation leaves ~30% of its stock permanently dark (74-107 of 251 buildings from game-day 24), the sec Y1a service clause lifts the ownership floor for exactly those, they fall unbounded to 0.10, and the 0.02/gh roll then deletes nine of them on a bad game-day -- one every 2.7 real minutes. That is the player's 2026-09-03 report, reproduced. The ruling is sec Y1's own sentence read to its end: it is THEIR asset, and an owner whose building is condemned boards it up rather than bulldozing it. So wear CONDEMNS private stock and stops; the building sits at the threshold in `damaged`, where doc 02 sec 2.12 already charges output_mult 0.40 / coverage_mult 0.25 and doc 03's f_condition pays 0.46. Neglect still costs a city roughly four fifths of its income and it is still the player's job to fix; it no longer deletes the capital they bought. NOT A SHIELD: burn_down (an unanswered tier-5 fire), doc 06's explicit destroy_building op, an event landing on a building already at the threshold (sec AP2), and this same roll on the city's OWN civic and utility stock all still demolish. Set this true to restore the pre-Wave-19 physics exactly.",
+        "wear_may_demolish": False,
+    },
+    "utility_spine": {
+        "_ruling": "NEW, Wave 20 (doc 93 sec AR1, measured in doc 92 sec 58.3). MAY ORDINARY WEAR TAKE THE CITY'S OWN GENERATION AND WATER? No. Wave 19 sec AP1 stopped wear demolishing PRIVATE stock and listed, as a deliberate exception, `this same roll on the city's OWN civic and utility stock`. That exception is the hole the player fell through: on their slot 0 the city had already lost both power plants, all three water facilities and both substations, and with no generation every remaining lot is dark forever, the sec Y1a service clause lifts the ownership floor for the WHOLE city, and there is no way back because restoring a plant costs money an insolvent city does not have. sec AP1's own argument applies here with MORE force, not less: an owner boards up a condemned building rather than bulldozing it, and the city is the owner of this one. So wear CONDEMNS the spine and stops -- the plant sits at condition.structural_failure_threshold in `damaged`, where doc 02 sec 2.12 still pays output_mult 0.40, so a neglected city browns out to two fifths of its generation and NEVER goes dark forever. THE LINE IS DRAWN AT THE SPINE AND NOT AT ALL CIVIC STOCK, and that is the ruling: a lost police station costs coverage, which is a loss the player can see, price and recover from by rebuilding one; a lost LAST power plant costs every building in the city its power, which is not recoverable at all while the treasury is negative. Generation, distribution and water are the three the city cannot function without and cannot rebuy while insolvent; police, fire and the construction yard stay losable, so neglect still takes buildings off the map. NOT A SHIELD, for the spine either: burn_down (an unanswered tier-5 fire), doc 06's explicit destroy_building cascade op and doc 07's terminal outcomes all still demolish a power plant -- a disaster still MATTERS. Set wear_may_demolish true here to restore the pre-Wave-20 physics exactly.",
+        "archetypes": ["power_facility", "substation", "water_facility"],
+        "wear_may_demolish": False,
     },
     "condition": {
         "start": D("1.00"),
@@ -254,7 +349,7 @@ BUILDING_RULES: Dict[str, Any] = {
         "store":             {"class": "steady",   "tax_class": "commercial",  "footprints": ["1x1", "1x1", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 6,  "power_kw": 9,   "water": D("0.128"), "time_h": 3,  "decay": D("0.00055"), "fire_p": D("0.00030"), "fire_load": 25, "crime": D("3.0"), "min_city": 0},
         "office":            {"class": "standard", "tax_class": "commercial",  "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 30, "power_kw": 35,  "water": D("0.32"),  "time_h": 8,  "decay": D("0.00045"), "fire_p": D("0.00020"), "fire_load": 40, "crime": D("1.5"), "min_city": 1},
         "high_rise":         {"class": "vertical", "tax_class": "residential", "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 60, "jobs": 15, "power_kw": 90,  "water": D("1.28"),  "time_h": 16, "decay": D("0.00060"), "fire_p": D("0.00026"), "fire_load": 70, "crime": D("2.5"), "min_city": 3},
-        "data_center":       {"class": "vertical", "tax_class": "tech",        "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 12, "power_kw": 400, "water": D("3.2"),   "time_h": 20, "decay": D("0.00075"), "fire_p": D("0.00060"), "fire_load": 80, "crime": D("2.0"), "min_city": 4},
+        "data_center":       {"class": "vertical", "tax_class": "tech",        "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 12, "power_kw": 100, "water": D("3.2"),   "time_h": 20, "decay": D("0.00075"), "fire_p": D("0.00060"), "fire_load": 80, "crime": D("2.0"), "min_city": 4},
         "police_station":    {"class": "standard", "tax_class": "civic",       "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 12, "power_kw": 25,  "water": D("0.192"), "time_h": 10, "decay": D("0.00040"), "fire_p": D("0.00010"), "fire_load": 30, "crime": D("0.2"), "min_city": 0, "coverage_radius": 20},
         "fire_station":      {"class": "standard", "tax_class": "civic",       "footprints": ["2x2", "2x2", "2x2", "2x2", "2x2"], "pop": 0,  "jobs": 14, "power_kw": 28,  "water": D("0.40"),  "time_h": 10, "decay": D("0.00040"), "fire_p": D("0.00006"), "fire_load": 25, "crime": D("0.3"), "min_city": 0, "coverage_radius": 18},
         "power_facility":    {"class": "vertical", "tax_class": "utility",     "footprints": ["3x3", "3x3", "3x3", "4x4", "4x4"], "pop": 0,  "jobs": 20, "power_kw": 0,   "water": D("0.96"),  "time_h": 18, "decay": D("0.00090"), "fire_p": D("0.00090"), "fire_load": 90, "crime": D("1.2"), "min_city": 0},
@@ -376,6 +471,83 @@ def ladder_round(x: D, ladder: List[List[Any]]) -> D:
     raise AssertionError("rounding ladder has no tail entry")
 
 
+def ladder_floor(x: D, ladder: List[List[Any]]) -> D:
+    """`ladder_round`'s one-sided twin: snap DOWN onto the ladder's step.
+
+    Used for the demand clamp only. The clamp is a ceiling, so it may never be
+    rounded half-UP past the capacity it clamps to -- a cell one grid step over
+    the envelope is exactly the wall doc 93 sec BC-1 forbids.
+    """
+    magnitude = abs(x)
+    for bound, step in ladder:
+        if bound is None or magnitude < D(bound):
+            step = D(str(step))
+            return (x / step).to_integral_value(rounding="ROUND_FLOOR") * step
+    raise AssertionError("rounding ladder has no tail entry")
+
+
+def demand_ceiling_kw(archetype: str, prev_kw: Optional[D] = None) -> D:
+    """doc 93 sec BC-1's ceiling on ONE authored `power_demand_kw` cell.
+
+    TWO ceilings, and the tighter one wins.
+
+    * **SERVABLE** — `ceiling_peak_kw` is a PEAK budget (what the transformer
+      carries at the hour doc 04 sec 5.3's gate is judged at) and an authored
+      cell is a BASE, so the budget is divided by the archetype's own doc 01
+      channel peak.  This is the reading a building at rest is judged on, and
+      the only reading the first level has.
+    * **BUYABLE** — `cmd_upgrade_building` does not ask that question.  It asks
+      `power_headroom(sim_id, (cell(L) - cell(L-1)) x UPGRADE_HEADROOM_MARGIN)`,
+      i.e. the pad's PEAK load plus the marked-up DELTA, so the inequality the
+      player meets is
+
+          cell(L-1) x peak + margin x (cell(L) - cell(L-1)) <= ceiling_peak_kw
+
+      Solved for `cell(L)` that is `(ceiling - cell(L-1) x (peak - margin)) /
+      margin`.  It is stricter than the servable form whenever `peak < margin`
+      -- the datacenter (1.00) and industrial (1.13) classes -- and looser
+      whenever `peak > margin`, which is why BOTH are applied rather than one.
+
+    Both are floored onto the sec 8 `kw` grid: a clamp rounded half-UP would put
+    the clamped cell one grid step past the capacity it clamps to, which is the
+    wall this function exists to forbid.
+
+    `prev_kw` is the FINAL (already clamped) cell of the level below; `None` at
+    L1, where nothing is upgraded into the row and only the servable form
+    applies.
+    """
+    env = BUILDING_RULES["service_envelope"]
+    cls = env["demand_class"][archetype]
+    peak = D(env["channel_peak"][cls])
+    ceiling = D(env["ceiling_peak_kw"])
+    kw_ladder = BUILDING_RULES["rounding"]["kw"]
+    servable = ladder_floor(ceiling / peak, kw_ladder)
+    if prev_kw is None:
+        return servable
+    margin = D(env["upgrade_headroom_margin"])
+    buyable = ladder_floor((ceiling - D(prev_kw) * (peak - margin)) / margin, kw_ladder)
+    return min(servable, buyable)
+
+
+def demand_column(archetype: str) -> List[D]:
+    """The whole `power_demand_kw` ladder for one archetype, clamped rung by
+    rung.  Sequential and not a comprehension, because the BUYABLE ceiling of
+    level L reads the CLAMPED cell of level L-1: a ladder whose top rung was
+    pulled down changes what the rung above it may ask for."""
+    seed = BUILDING_RULES["seed_rows"][archetype]
+    growth = BUILDING_RULES["growth_classes"][seed["class"]]
+    kw_ladder = BUILDING_RULES["rounding"]["kw"]
+    k_dem = growth["k_dem"]
+    out: List[D] = []
+    prev: Optional[D] = None
+    for e in range(levels_of(archetype)):
+        curve = ladder_round(D(seed["power_kw"]) * k_dem ** e, kw_ladder)
+        cell = min(curve, demand_ceiling_kw(archetype, prev))
+        out.append(cell)
+        prev = cell
+    return out
+
+
 def is_tie(x: D, step: D) -> bool:
     q = x / step
     return q - q.to_integral_value(rounding="ROUND_FLOOR") == D("0.5")
@@ -469,15 +641,15 @@ PUBLISHED: Dict[str, List[Tuple[Any, ...]]] = {
         (265, 66, _P("585"), _P("8.3"), _P("46"), _P("51"), _P("0.000864"), _P("0.00043"), 280, _P("6.40"), _P("0.50"), _P("0.44"), 3),
         (556, 139, _P("1490"), _P("21.0"), _P("79"), _P("87"), _P("0.001037"), _P("0.00055"), 560, _P("10.24"), _P("0.75"), _P("0.69"), 3),
         (1167, 292, _P("3810"), _P("54.0"), _P("134"), _P("148"), _P("0.001244"), _P("0.00070"), 1120, _P("16.38"), _P("0.95"), _P("0.94"), 4),
-        (2450, 613, _P("9700"), _P("138"), _P("227"), None, _P("0.001493"), _P("0.00089"), 2240, _P("26.21"), _P("0.95"), _P("0.94"), 5),
+        (2450, 613, _P("4160"), _P("138"), _P("227"), None, _P("0.001493"), _P("0.00089"), 2240, _P("26.21"), _P("0.95"), _P("0.94"), 5),
     ],
     "data_center": [
-        (0, 12, _P("400"), _P("3.2"), _P("20"), _P("22"), _P("0.000750"), _P("0.00060"), 80, _P("2.00"), _P("0.00"), _P("0.00"), 4),
-        (0, 25, _P("1020"), _P("8.2"), _P("34"), _P("38"), _P("0.000900"), _P("0.00077"), 160, _P("3.20"), _P("0.25"), _P("0.19"), 4),
-        (0, 53, _P("2600"), _P("21.0"), _P("58"), _P("64"), _P("0.001080"), _P("0.00098"), 320, _P("5.12"), _P("0.50"), _P("0.44"), 4),
-        (0, 111, _P("6630"), _P("53.0"), _P("98"), _P("109"), _P("0.001296"), _P("0.00126"), 640, _P("8.19"), _P("0.75"), _P("0.69"), 4),
-        (0, 233, _P("16900"), _P("135"), _P("167"), _P("185"), _P("0.001555"), _P("0.00161"), 1280, _P("13.11"), _P("0.95"), _P("0.94"), 4),
-        (0, 490, _P("43150"), _P("345"), _P("284"), None, _P("0.001866"), _P("0.00206"), 2560, _P("20.97"), _P("0.95"), _P("0.94"), 5),
+        (0, 12, _P("100"), _P("3.2"), _P("20"), _P("22"), _P("0.000750"), _P("0.00060"), 80, _P("2.00"), _P("0.00"), _P("0.00"), 4),
+        (0, 25, _P("255"), _P("8.2"), _P("34"), _P("38"), _P("0.000900"), _P("0.00077"), 160, _P("3.20"), _P("0.25"), _P("0.19"), 4),
+        (0, 53, _P("650"), _P("21.0"), _P("58"), _P("64"), _P("0.001080"), _P("0.00098"), 320, _P("5.12"), _P("0.50"), _P("0.44"), 4),
+        (0, 111, _P("1660"), _P("53.0"), _P("98"), _P("109"), _P("0.001296"), _P("0.00126"), 640, _P("8.19"), _P("0.75"), _P("0.69"), 4),
+        (0, 233, _P("4230"), _P("135"), _P("167"), _P("185"), _P("0.001555"), _P("0.00161"), 1280, _P("13.11"), _P("0.95"), _P("0.94"), 4),
+        (0, 490, _P("5830"), _P("345"), _P("284"), None, _P("0.001866"), _P("0.00206"), 2560, _P("20.97"), _P("0.95"), _P("0.94"), 5),
     ],
     "police_station": [
         (0, 12, _P("25"), _P("0.19"), _P("10"), _P("10"), _P("0.000400"), _P("0.00010"), 30, _P("0.20"), _P("0.00"), _P("0.00"), 0),
@@ -584,6 +756,9 @@ def generate_levels(archetype: str) -> List[Dict[str, Any]]:
     # build_time first: upgrade_time(L->L+1) reads the ROUNDED build_time cell.
     build_time = [ladder_round(D(seed["time_h"]) * k_time ** e, ladders["time_h"])
                   for e in range(top)]
+    # doc 93 sec BC-1's clamp. Computed for the whole ladder first, because the
+    # BUYABLE half of the ceiling reads the clamped cell one rung down.
+    power_kw = demand_column(archetype)
 
     rows: List[Dict[str, Any]] = []
     for level in range(1, top + 1):
@@ -594,7 +769,11 @@ def generate_levels(archetype: str) -> List[Dict[str, Any]]:
             "footprint": [int(w), int(h)],
             "population": int(step_round(D(seed["pop"]) * k_out ** e, derived["population"])),
             "jobs": int(step_round(D(seed["jobs"]) * k_out ** e, derived["jobs"])),
-            "power_demand_kw": ladder_round(D(seed["power_kw"]) * k_dem ** e, ladders["kw"]),
+            # doc 93 sec BC-1's clamp, the same `min(curve, ceiling)` shape the two
+            # coverage columns below have had since doc 02 sec 2.9's max_requirement
+            # -- with the SECOND ceiling Wave 28's fix pass added, the one the
+            # upgrade gate actually refuses on (see `demand_ceiling_kw`).
+            "power_demand_kw": power_kw[e],
             "water_demand": ladder_round(seed["water"] * k_dem ** e, ladders["wu"]),
             "build_time_hours": build_time[e],
             "decay_per_hour": ladder_round(seed["decay"] * shared["k_decay"] ** e, ladders["decay"]),
@@ -714,6 +893,44 @@ def verify(archetype: str, rows: List[Dict[str, Any]]) -> None:
                  % (archetype, row["level"], row["decay_per_hour"]))
 
 
+def verify_no_shipped_block_is_dropped(out_dir: str) -> None:
+    """**This script is the SOLE writer of `data/building_rules.json`, and it
+    used to overwrite blocks it had never heard of.**
+
+    Waves 19 and 20 wrote two rulings — `owner_maintenance.wear_may_demolish`
+    and the whole `utility_spine` block — straight into the JSON without adding
+    them here, so the first regeneration after them silently deleted both. That
+    is not a formatting loss: `Building.wear_may_demolish` defaults to **true**,
+    so the drop re-armed exactly the physics doc 93 §AP1 and §AR1 exist to stop
+    (ordinary wear demolishing private stock, and the city's own generation).
+    Found in Wave 28 by diffing a regeneration against the fork; report 98 §72
+    RR-222.
+
+    So: a regeneration may ADD a top-level block and may change a value, and it
+    may never REMOVE one. A block that has to go must be deleted from this file
+    first, deliberately, which is a diff a reviewer can see.
+    """
+    path = os.path.join(out_dir, "building_rules.json")
+    if not os.path.exists(path):
+        return                      # a fresh tree, or --out-dir somewhere new
+    with open(path, encoding="utf-8") as handle:
+        shipped = json.load(handle)
+    dropped = [k for k in shipped if k not in BUILDING_RULES]
+    for key in dropped:
+        fail("building_rules.json ships block '%s' and this generator would drop"
+             " it -- add it to BUILDING_RULES or delete it on purpose" % key)
+    for block, value in shipped.items():
+        if not isinstance(value, dict) or block in dropped:
+            continue
+        mine = BUILDING_RULES.get(block)
+        if not isinstance(mine, dict):
+            continue
+        for field in value:
+            if field not in mine:
+                fail("building_rules.json ships %s.%s and this generator would"
+                     " drop it" % (block, field))
+
+
 def verify_invariants() -> None:
     """The cross-cutting claims doc 02 makes about the family itself."""
     tax_growth = BUILDING_RULES["demand_growth_invariant"]["must_exceed_value"]
@@ -785,6 +1002,70 @@ def verify_invariants() -> None:
     for key in ("fire", "police"):
         if len(BUILDING_RULES["coverage_ladder"][key]) != TOP_LEVELS_PER_ARCHETYPE:
             fail("coverage_ladder.%s must carry %d rungs" % (key, TOP_LEVELS_PER_ARCHETYPE))
+
+    # ------------------------------------------------ the transformer envelope
+    # doc 93 sec BC. Every rule below is checked on the GENERATED table, so a
+    # seed edit that walks a ladder out of the envelope stops the build rather
+    # than shipping a load no transformer can carry (Wave 28).
+    env = BUILDING_RULES["service_envelope"]
+    if sorted(k for k in env["demand_class"]) != sorted(ARCHETYPE_ORDER):
+        fail("service_envelope.demand_class must name every archetype exactly once")
+    for aid in ARCHETYPE_ORDER:
+        cls = env["demand_class"][aid]
+        if cls not in env["channel_peak"]:
+            fail("service_envelope: %s names demand class %s with no channel peak"
+                 % (aid, cls))
+            continue
+        rows = generate_levels(aid)
+        peak = D(env["channel_peak"][cls])
+        margin = D(env["upgrade_headroom_margin"])
+        ceiling_peak = D(env["ceiling_peak_kw"])
+        clamped = []
+        prev_kw: Optional[D] = None
+        for row in rows:
+            kw = D(row["power_demand_kw"])
+            if kw >= demand_ceiling_kw(aid, prev_kw):
+                clamped.append(row["level"])
+            # BC-1 SERVABLE: no cell may ask for more, at its own peak hour,
+            # than one transformer can carry at doc 04 sec 5.3's ceiling.
+            if kw * peak > ceiling_peak:
+                fail("BC-1: %s L%d draws %s kW = %s kW at its peak, over the"
+                     " %s kW transformer envelope"
+                     % (aid, row["level"], kw, kw * peak, ceiling_peak))
+            # BC-1 BUYABLE: and the STEP into it has to clear the gate
+            # cmd_upgrade_building actually refuses on -- the pad's peak load
+            # plus the delta marked up by UPGRADE_HEADROOM_MARGIN. A cell that
+            # is servable but not buyable is a level the player can be shown and
+            # can never reach, which is the wall with no door in its purest form.
+            if prev_kw is not None:
+                at_gate = prev_kw * peak + margin * (kw - prev_kw)
+                if at_gate > ceiling_peak:
+                    fail("BC-1: %s L%d->L%d meets the upgrade gate at %s kW"
+                         " (%s x %s + %s x %s), over the %s kW transformer"
+                         " envelope -- servable but not buyable"
+                         % (aid, row["level"] - 1, row["level"], at_gate,
+                            prev_kw, peak, margin, kw - prev_kw, ceiling_peak))
+            prev_kw = kw
+        if D(BUILDING_RULES["seed_rows"][aid]["power_kw"]) == 0:
+            # The two grid SHELLS (power_facility, substation) draw nothing at
+            # any level -- station service is inside capacity_kw (doc 04 s2.3),
+            # and `substation` is skipped by the demand pass outright. A ladder
+            # that was flat before the clamp existed is not the clamp's doing,
+            # so BC-4 has nothing to say about it.
+            continue
+        for e in range(len(rows) - 1):
+            # BC-4: the clamp may never flatten a step. Two rungs at the same kW
+            # is an upgrade that costs nothing to power.
+            if rows[e + 1]["power_demand_kw"] <= rows[e]["power_demand_kw"]:
+                fail("BC-4: %s L%d (%s kW) does not draw more than L%d (%s kW)"
+                     % (aid, e + 2, rows[e + 1]["power_demand_kw"],
+                        e + 1, rows[e]["power_demand_kw"]))
+        # BC-4's other half: the clamp binds the TOP rung or nothing. An
+        # archetype whose second-from-top cell needs clamping has the wrong seed.
+        if clamped and clamped != [rows[-1]["level"]]:
+            fail("BC-4: %s is clamped at level(s) %s -- the clamp may bind at most"
+                 " the top rung, so re-derive the seed instead"
+                 % (aid, clamped))
 
 
 # ==========================================================================
@@ -905,7 +1186,15 @@ def _encode(value: Any, indent: int, key: Optional[str]) -> str:
         if not value:
             return "{}" if isinstance(value, dict) else "[]"
         compact = _compact(value)
-        if key not in FORCE_BLOCK and len(compact) + len(pad) <= MAX_INLINE:
+        # `FORCE_BLOCK` names the big MAPPINGS whose rows must each get a line —
+        # `archetypes`, `levels`, `seed_rows`. A LIST that happens to share one
+        # of those names is not one of them: `utility_spine.archetypes` is three
+        # strings, and blocking it re-wrote a hand-authored one-liner into four
+        # lines the first time this generator ran over Wave 20's ruling. Keeping
+        # it inline makes the regenerated file byte-identical to the one the
+        # ruling shipped, which is what makes `git diff` a review tool here.
+        forced = key in FORCE_BLOCK and (isinstance(value, dict) or key != "archetypes")
+        if not forced and len(compact) + len(pad) <= MAX_INLINE:
             return compact
         if isinstance(value, dict):
             parts = ["%s%s: %s" % (inner, _scalar(str(k)), _encode(v, indent + 1, str(k)))
@@ -936,6 +1225,7 @@ def main() -> int:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = args.out_dir or os.path.join(repo_root, "data")
 
+    verify_no_shipped_block_is_dropped(out_dir)
     verify_invariants()
     buildings = build_buildings_doc()
 

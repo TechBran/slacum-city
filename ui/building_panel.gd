@@ -1311,6 +1311,24 @@ func _render_power(block: Dictionary) -> void:
 		shed.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_apply_state_color(shed, HudModel.STATE_CRITICAL)
 		_power.add_child(shed)
+	# **WHICH RUNG the next level needs** (Wave 28, doc 12 D-123, doc 93 §BC-3).
+	# The third sentence that stays on THIS panel, and for the same reason as the
+	# other two: "the pad you are on is a level 2 and the level you are looking
+	# at needs a level 4" is a fact about THIS BUILDING'S upgrade, not about the
+	# shared transformer — the transformer is fine, it is simply the wrong size
+	# for what this player is about to buy. Drawn only when the answer is not
+	# "the one you have", so an ordinary building's panel gains no row.
+	var needs: Dictionary = row.get("needs_upgrade", {})
+	if not needs.is_empty():
+		var line := UIWidgets.label("PowerNeedsRung", _text_args(str(needs["text_key"]),
+				{"to": int(needs.get("to_level", 0)),
+				"rung": int(needs.get("needs_rung", 0)),
+				"kw": str(needs.get("needs_capacity_text", "")),
+				"host": int(needs.get("host_level", 0))},
+				str(needs.get("needs_capacity_text", ""))), &"LegendRow", true)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_apply_state_color(line, HudModel.STATE_WARNING)
+		_power.add_child(line)
 	_render_power_fix(block.get("fix", {}), str(block.get("sim_id", _sim_id)))
 
 

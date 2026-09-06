@@ -2112,14 +2112,17 @@ func close_land_panel() -> void:
 ## Returns whether the panel took the tap, so the caller can fall through to its
 ## own deselect when it did not — a build whose `TransformerPanel` has no model
 ## must deselect exactly as it does today rather than eat the tap.
-func show_transformer(component_id: String) -> bool:
+## `asked_about` is `FixRouter.route`'s `needs` block for the building whose
+## checklist row sent the player here (Wave 28 fix pass, doc 12 D-123(c)); `{}`
+## for a plain tap, which is what every other caller passes.
+func show_transformer(component_id: String, asked_about: Dictionary = {}) -> bool:
 	if transformer_panel == null:
 		return false
 	if transformer_panel.model == null:
 		transformer_panel.model = _transformer_model()
 	if transformer_panel.model == null:
 		return false
-	transformer_panel.show_component(component_id)
+	transformer_panel.show_component(component_id, asked_about)
 	return transformer_panel.is_open()
 
 
@@ -2162,8 +2165,15 @@ func close_transformer_panel() -> void:
 ## An UNSERVED building fires this with an empty id: the panel that would be
 ## opened does not exist, so the answer is to close whatever is open and clear
 ## the selection, which is exactly what a tap on empty ground does.
-func _on_power_row_opened(component_id: String, _sim_id: String) -> void:
-	if component_id == "" or not show_transformer(component_id):
+func _on_power_row_opened(component_id: String, sim_id: String) -> void:
+	# S5's POWER row knows which building it is on; S18 says that building's
+	# sentence (which rung its next level wants) instead of the hungriest
+	# customer's (Wave 28 merge — the id used to be discarded here).
+	var asked: Dictionary = {}
+	var sim := _resolved_sim()
+	if sim != null and sim_id != "":
+		asked = PowerActions.rung_needed_for_next_level(sim, sim_id)
+	if component_id == "" or not show_transformer(component_id, asked):
 		transformer_selected.emit("")
 		return
 	transformer_selected.emit(component_id)
@@ -2270,7 +2280,15 @@ func _serve_transformer_fix(fix_target: Dictionary) -> bool:
 	if String(action["action"]) != String(FixRouter.ACTION_SHEET) \
 			or StringName(str(action.get("sheet", &""))) != FixRouter.SHEET_TRANSFORMER_PANEL:
 		return false
-	if not show_transformer(str(action.get("binds_at", action.get("id", "")))):
+	# **…and WHAT the player asked about**, not only where the wall is (Wave 28
+	# fix pass). The route's `needs` is `PowerActions.rung_needed_for_next_level`
+	# for the building whose row was tapped; S18's own summary answers about the
+	# HUNGRIEST customer, and the two are not the same building — nor is the
+	# asked-about one guaranteed a row here at all, because the customer list is
+	# capped. Handing it over is what makes the router's third reading reach a
+	# surface instead of only a tool (doc 12 D-123(c), report 98 RR-223).
+	if not show_transformer(str(action.get("binds_at", action.get("id", ""))),
+			action.get("needs", {})):
 		return false
 	transformer_selected.emit(transformer_panel.selected_id())
 	return true

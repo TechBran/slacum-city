@@ -74,7 +74,7 @@ const REQUIRED_RULE_KEYS := [
 	"water_facility_variants", "water_facility_reference_variant", "coverage_ladder",
 	"min_city_level_by_level", "sixth_level_archetypes", "safety_coverage_factor",
 	"condition", "fire", "construction", "headroom_safety", "avenue_gate",
-	"state_modifiers", "seed_rows", "rounding",
+	"state_modifiers", "seed_rows", "rounding", "service_envelope",
 ]
 
 var errors: PackedStringArray = []
@@ -357,6 +357,78 @@ func _load(buildings_data: Dictionary, rules_data: Dictionary) -> void:
 	_ids = _levels.keys()
 	_ids.sort()
 	_check_utility_spine()
+	_check_service_envelope()
+
+
+## Doc 93 §BC-1 (Wave 28) — **the transformer envelope, checked on the table that
+## actually shipped** and not only in the generator that wrote it.
+##
+## A building attaches to exactly ONE transformer (doc 04 §2.1), so the largest
+## load the distribution model can serve is one rung of `PowerGrid.CAPACITY`
+## `transformer` at doc 04 §5.3's ceiling — and an authored cell is a BASE while
+## that ceiling is judged at the PEAK hour (`CitySim.peak_component_loads`), so
+## the comparison multiplies by the archetype's own doc 01 channel peak.
+##
+## `service_envelope` is doc 04's number MIRRORED, exactly the way
+## `demand_growth_invariant.must_exceed_value` mirrors doc 03's
+## `TAX_LEVEL_GROWTH`: the arithmetic lives here, and
+## `tests/test_balance_gates.gd::test_gate_34_…` is what proves the mirror still
+## equals `PowerGrid`'s own derivation and `CitySim.DEMAND_CLASS_CHANNEL`'s own
+## class map. Runs here rather than in `_load_rules` for the reason
+## `_check_utility_spine` gives one function up: `_load_rules` runs before a
+## single archetype has been read.
+func _check_service_envelope() -> void:
+	var envelope: Dictionary = _rules.get("service_envelope", {})
+	var ceiling_peak := float(envelope.get("ceiling_peak_kw", 0.0))
+	if ceiling_peak <= 0.0:
+		errors.append("building_rules: service_envelope.ceiling_peak_kw missing")
+		return
+	var demand_class: Dictionary = envelope.get("demand_class", {})
+	var channel_peak: Dictionary = envelope.get("channel_peak", {})
+	# Doc 02 §2.11's ×1.15, mirrored beside the ceiling it is applied against.
+	# `CitySim.UPGRADE_HEADROOM_MARGIN` stays authoritative and gate 34 asserts
+	# this cell against it; the mirror is REQUIRED rather than defaulted, because
+	# a missing margin would silently restore the permissive gate this clause
+	# exists to replace, and `sim/buildings/` may not reach up into `CitySim`.
+	var margin := float(envelope.get("upgrade_headroom_margin", 0.0))
+	if margin <= 0.0:
+		errors.append("building_rules: service_envelope.upgrade_headroom_margin missing")
+		return
+	for archetype: Variant in _ids:
+		var id := String(archetype)
+		var class_id := String(demand_class.get(id, ""))
+		if class_id == "":
+			errors.append("building_rules: service_envelope.demand_class has no row for %s" % id)
+			continue
+		if not channel_peak.has(class_id):
+			errors.append("building_rules: service_envelope.channel_peak has no '%s'" % class_id)
+			continue
+		var peak := float(channel_peak[class_id])
+		var previous := -1.0
+		for row: Variant in (_levels.get(id, []) as Array):
+			var base := float((row as Dictionary).get("power_demand_kw", 0.0))
+			var level := int((row as Dictionary).get("level", 0))
+			if base * peak > ceiling_peak + 1e-6:
+				errors.append(("%s L%d: %.0f kW draws %.0f kW at its own peak hour, over "
+						+ "the %.0f kW transformer envelope (doc 93 §BC-1)")
+						% [id, level, base, base * peak, ceiling_peak])
+			# **…and the STEP into it has to clear the gate the game refuses on.**
+			# `CitySim.cmd_upgrade_building` does not compare the steady-state
+			# reading to anything: it asks `power_headroom` for the DELTA marked
+			# up by `UPGRADE_HEADROOM_MARGIN`, added to the pad's peak load. A
+			# cell that is servable but not buyable is a level the panel offers
+			# and the verb can never deliver — which is precisely what shipped
+			# for `data_center` L5→L6 before this clause existed (6,346 kW
+			# against a 6,075 kW envelope).
+			if previous >= 0.0:
+				var at_gate := previous * peak + margin * (base - previous)
+				if at_gate > ceiling_peak + 1e-6:
+					errors.append(("%s L%d→L%d meets the upgrade gate at %.0f kW "
+							+ "(%.0f × %.2f + %.2f × %.0f), over the %.0f kW transformer "
+							+ "envelope — servable but not buyable (doc 93 §BC-1)")
+							% [id, level - 1, level, at_gate, previous, peak, margin,
+							base - previous, ceiling_peak])
+			previous = base
 
 
 ## Doc 93 §AR1 (Wave 20), on `owner_maintenance`'s own terms: the spine block is

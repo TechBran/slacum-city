@@ -125,13 +125,27 @@ func test_grid_placement_rejections() -> void:
 			&"E_NO_SLOT", "doc 09 §2.9.5 fills both of SUB-A's slots at t0")
 	# 2 level outside the placeable roster. Wave 17 opened it to the full doc 04
 	# §2.2 ladder (A91-D-55, doc 04 §6.1): the authored cities run L2s and L5s,
-	# so a roster that stopped at L3 sold nothing that could carry them.
-	assert_eq(sim.cmd_place_grid_component("transformer", spot, 6)["reason_code"],
+	# so a roster that stopped at L3 sold nothing that could carry them. **Wave 28
+	# appended a sixth rung** (doc 93 §BC-2), and the rung ABOVE the ladder is
+	# read off the ladder rather than spelled `6` — a literal here is how the next
+	# append turns this row red for a reason that has nothing to do with the
+	# refusal it is testing.
+	var top: int = (PowerGrid.CAPACITY[&"transformer"] as Array).size()
+	assert_eq(sim.cmd_place_grid_component("transformer", spot, top + 1)["reason_code"],
 			&"E_LEVEL_UNAVAILABLE")
 	assert_eq(sim.cmd_place_grid_component("transformer", spot, 0)["reason_code"],
 			&"E_LEVEL_UNAVAILABLE")
 	assert_true(bool(sim.cmd_place_grid_component("transformer", spot, 5, true)["ok"]),
 			"L5 — the rung tests/fixtures/bench_city.json is authored with")
+	# …and the new top rung is on the roster, refused for MONEY and not for the
+	# roster: $41,500 (doc 03 §2.13(b)) against a founding purse that has not got
+	# it. That the refusal moved from E_LEVEL_UNAVAILABLE to E_FUNDS is the whole
+	# of the append, seen from the placement door.
+	assert_eq(sim.cmd_place_grid_component("transformer", spot, top)["reason_code"],
+			&"E_FUNDS", "the sixth rung is sold, and the founding city cannot afford it")
+	sim.treasury.credit(100_000, &"test_grant")
+	assert_true(bool(sim.cmd_place_grid_component("transformer", spot, top, true)["ok"]),
+			"…and with the money it is a legal placement")
 	# 3 off the map.
 	assert_eq(sim.cmd_place_grid_component("transformer", Vector2i(-1, 5), 1)["reason_code"],
 			&"E_OUT_OF_BOUNDS")

@@ -154,6 +154,31 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			var subject := str(fix_target.get("sim_id", ""))
 			if subject != "" and sim.buildings.has(subject):
 				armed["sim_id"] = subject
+				# **…and WHICH RUNG the row is actually asking for** (Wave 28,
+				# doc 93 §BC-3). `cmd_fix_power_capacity` quotes ONE purchase —
+				# the next rung up — and returns `clears: false` when that rung
+				# is not enough, which is honest and unactionable: the player is
+				# told the purchase will not work and not what will. `rung_needed`
+				# names the rung that carries the load, so the row can say
+				# "L2 → this needs L4" and the player can decide to buy the ladder
+				# rather than tap once and be refused again. `needs_rung` 0 is
+				# `E_NEEDS_TRANSFORMER`'s own case — no rung under THIS pad
+				# carries it — and is passed through as 0 rather than clamped,
+				# because `needs_second` (buy a parallel unit) and
+				# `no_rung_carries` (nothing on the ladder feeds this at all) are
+				# two different sentences and the row has to be able to tell them
+				# apart.
+				#
+				# **Outside `with_quote`, deliberately** (Wave 28 fix pass). It
+				# used to sit inside it, and BOTH production callers —
+				# `ui/ui_root.gd` and `game/main.gd` — pass `false`, so the one
+				# number this row exists to add reached no surface at all: doc 12
+				# D-123(c) sold it as the third of three and it was billed to a
+				# test and a tool. It is a pure read of the grid — no preview, no
+				# placement search — so it costs a camera move nothing, which is
+				# the reason `with_quote` guards `cmd_fix_power_capacity` and not
+				# this.
+				armed["needs"] = PowerActions.rung_needed_for_next_level(sim, subject)
 				if with_quote:
 					armed["quote"] = sim.cmd_fix_power_capacity(subject, true)
 			return armed

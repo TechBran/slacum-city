@@ -1670,8 +1670,27 @@ func test_gate_18b_the_late_game_ceiling_is_lifted() -> void:
 ## would not raise the feeder's. Wave 6 did not move it, or any other rung, and
 ## this is the pin that says so: every published §2.2 capacity is still §2.2's,
 ## and the starter city is still the one doc 09 §2.9.5 authors.
+##
+## **Amended Wave 28 — the ladder GREW A RUNG, and no rung moved** (doc 93 §BC-2,
+## doc 92 §68.2). The assertion this gate makes is *"no published capacity moved"*,
+## and that is still exactly what it asserts: the five shipped rungs are checked
+## cell by cell against their old values, and the appended sixth is checked
+## against its own derivation — `UPGRADE_MAX_R × FEEDER_CAPACITY[2]`, the largest
+## transformer a class-3 feeder can carry at doc 04 §5.3's ceiling — rather than
+## against a literal. A gate that had refused the append would have been pinning
+## the wall gate 34 exists to remove.
 func test_gate_18c_no_capacity_constant_moved() -> void:
-	assert_eq(PowerGrid.CAPACITY[&"transformer"], [50.0, 150.0, 400.0, 1000.0, 2500.0])
+	var transformers: Array = PowerGrid.CAPACITY[&"transformer"]
+	assert_eq(transformers.slice(0, 5), [50.0, 150.0, 400.0, 1000.0, 2500.0])
+	assert_eq(transformers.size(), 6, "Wave 28 appends one rung and no more")
+	assert_almost_eq(float(transformers[5]),
+			PowerGrid.UPGRADE_MAX_R * PowerGrid.FEEDER_CAPACITY[2], 1e-6,
+			("the sixth rung is DERIVED: 0.90 x the class-3 feeder's 7,500 kW = 6,750 kW, "
+					+ "which is why a seventh rung cannot exist without a fourth "
+					+ "conductor class"))
+	assert_eq(PowerGrid.TRANSFORMER_SERVICE_RADIUS.slice(0, 5), [3, 4, 5, 6, 8])
+	assert_eq(int(PowerGrid.TRANSFORMER_SERVICE_RADIUS[5]), 10,
+			"the radius ladder extends by its own last step (+2)")
 	assert_eq(PowerGrid.CAPACITY[&"substation"], [6000.0, 14000.0, 30000.0, 60000.0, 110000.0])
 	assert_eq(PowerGrid.CAPACITY[&"plant_gas"], [8000.0, 18000.0, 36000.0, 70000.0, 120000.0])
 	assert_eq(PowerGrid.FEEDER_CAPACITY, [1200.0, 3000.0, 7500.0])
@@ -3473,6 +3492,327 @@ func test_gate_33_the_director_does_not_stall() -> void:
 					+ "Wave-17 stall sat at 0.125")
 					% [DIRECTOR_DAYS, last_day, last_day / float(DIRECTOR_DAYS),
 					DIRECTOR_LAST_START_FRACTION])
+
+
+# ================ 34 the transformer envelope (doc 93 §BC, doc 92 §68, Wave 28)
+
+## GATE 34 — **every building fits the transformer envelope.**
+##
+## The player, 2026-09-05, on the device: *"A fully loaded data center still
+## pulls too much, and I haven't even upgraded it past level two. Transformers
+## may need more power, or we just make the data centers fit in that envelope,
+## so a transformer can handle it fully upgraded."*
+##
+## They had measured the game correctly, and the hole was four times wider than
+## the one building they found. A building attaches to **exactly one**
+## transformer (`PowerGrid._attachments` is a `building_id -> transformer id`
+## map, and doc 04 §2.1's attachment rule picks one), so the largest load the
+## distribution model can serve is one rung at doc 04 §5.3's own ceiling. Doc 02
+## §2.14 then authored a SIXTH rung of demand against doc 04's five rungs of
+## copper, and nobody asked the two tables to agree. At the fork, measured at
+## each archetype's own doc 01 channel peak — the hour §5.3's gate is judged at
+## (`CitySim.peak_component_loads`, RR-120) — **nine of the sixty-six published
+## `power_demand_kw` cells had no transformer at all** — and so did one of doc
+## 05's thirty per-variant water rows, `pump` L5, which is the same 2,160 kW as
+## `water_facility` L5 read through the variant table rather than a tenth cell:
+##
+## | archetype | cells with NO rung at the fork |
+## |---|---|
+## | `apartment` | L6 (1,940 kW → 2,832 kW at 20:00) |
+## | `office` | L6 (3,090 → 4,666 at 10:00) |
+## | `high_rise` | L5 (3,810 → 5,563), L6 (9,700 → 14,162) |
+## | `data_center` | L3 (2,600), L4 (6,630), L5 (16,900), L6 (43,150) — flat channel |
+## | `water_facility` | L5 (2,160 → 2,484) — doc 05's `pump` L5 is the same cell |
+##
+## Doc 92 §68.1 publishes the whole table. This gate is the four clauses of doc
+## 93 §BC, and it fails the moment a data edit breaks any of them.
+##
+##   * **BC-1 CEILING** — two readings, because the game applies two. **SERVABLE:**
+##     no authored cell asks, at its own peak hour, for more than one transformer
+##     carries at §5.3's ceiling. **BUYABLE:** and no authored STEP meets the gate
+##     `CitySim.cmd_upgrade_building` actually refuses on — the pad's peak load
+##     plus the delta marked up by `UPGRADE_HEADROOM_MARGIN` — over that same
+##     ceiling. Wave 28 shipped the servable half alone and gate 34 went green on
+##     a `data_center` L5→L6 the verb refused: `4,230 + 1.15 × (6,070 − 4,230) =
+##     6,346 kW` against 6,075. The two forms differ by `(cell(L) − cell(L−1)) ×
+##     (margin − peak)`, so the buyable one binds exactly where a channel peaks
+##     below 1.15 — `datacenter` (1.00) and `industrial` (1.13) — and the
+##     servable one binds everywhere else.
+##   * **BC-2 SINGLE STEP** — one building upgrade never costs more than one
+##     transformer upgrade: `rung(L+1) ≤ rung(L) + 1`.
+##   * **BC-3 FOOT** — every archetype's first level is servable from the bottom
+##     of the ladder (rung 1 or 2), so a young city can afford to start it.
+##   * **BC-4 NO FLAT STEP** — the clamp may bind the top rung and nothing else,
+##     because two rungs at the same kW is an upgrade that costs no power.
+##
+## The gate reads the SHIPPED tables (`sim.catalog`, `sim.water.data`,
+## `PowerGrid`, `DayCurveSet`) and re-states no number it exists to gate; the
+## `service_envelope` mirror in `data/building_rules.json` is checked against its
+## three owners here rather than trusted.
+func test_gate_34_every_building_fits_the_transformer_envelope() -> void:
+	var sim := CitySim.boot_from_files(GATE_SEED)
+	var ladder: Array = PowerGrid.CAPACITY[&"transformer"]
+	var envelope: Dictionary = (StarterCityLoader.read_json(
+			"res://data/building_rules.json").get("service_envelope", {}) as Dictionary)
+	var demand_class: Dictionary = envelope.get("demand_class", {})
+	var channel_peak: Dictionary = envelope.get("channel_peak", {})
+
+	# (0) The mirror is a mirror. Every cell of it is another doc's number, so
+	# each one is asserted against its owner instead of being believed.
+	assert_almost_eq(float(envelope.get("ceiling_peak_kw", 0.0)),
+			PowerGrid.service_ceiling_kw(), 1e-6,
+			("service_envelope.ceiling_peak_kw must equal PowerGrid.UPGRADE_MAX_R x the "
+					+ "top transformer rung (%.2f x %.0f = %.0f kW)")
+					% [PowerGrid.UPGRADE_MAX_R, float(ladder[ladder.size() - 1]),
+					PowerGrid.service_ceiling_kw()])
+	# The second mirrored cell. The clamp and the loader both apply it, so a
+	# drift here would make the generator's ceiling and the verb's gate two
+	# different numbers — which is exactly the fault this fix pass is repairing.
+	var margin := float(envelope.get("upgrade_headroom_margin", 0.0))
+	assert_almost_eq(margin, CitySim.UPGRADE_HEADROOM_MARGIN, 1e-9,
+			("service_envelope.upgrade_headroom_margin must equal doc 02 §2.11's own "
+					+ "CitySim.UPGRADE_HEADROOM_MARGIN (%.2f)")
+					% CitySim.UPGRADE_HEADROOM_MARGIN)
+	for archetype: Variant in CitySim.DEMAND_CLASS_CHANNEL:
+		var channel := String(CitySim.DEMAND_CLASS_CHANNEL[archetype])
+		var class_id := String(demand_class.get(String(archetype), ""))
+		assert_eq("power_demand_" + class_id, channel,
+				("service_envelope.demand_class puts %s in '%s'; doc 04 §2.3's own map "
+						+ "(CitySim.DEMAND_CLASS_CHANNEL) reads '%s'")
+						% [String(archetype), class_id, channel])
+		assert_almost_eq(float(channel_peak.get(class_id, 0.0)),
+				float(sim.curves.channel_peak(channel)["value"]), 1e-6,
+				("service_envelope.channel_peak['%s'] must equal doc 01's own peak for "
+						+ "%s") % [class_id, channel])
+	assert_true(demand_class.has("substation") and not CitySim.DEMAND_CLASS_CHANNEL.has(&"substation"),
+			"substation is the one archetype with no demand class — it IS the grid")
+
+	# (1)-(4). The rungs are computed by `PowerGrid.transformer_rung_for`, which
+	# is the same function the panel and the fix router quote, so a gate green
+	# here and a panel that says something else is not reachable.
+	var checked := 0
+	var clamped_cells := 0
+	for archetype: Variant in sim.catalog.archetypes():
+		var id := String(archetype)
+		var class_id := String(demand_class.get(id, "none"))
+		var peak := float(channel_peak.get(class_id, 1.0))
+		var top: int = sim.catalog.max_level_of(id)
+		var previous_rung := 0
+		var previous_kw := -1.0
+		var clamped: Array[int] = []
+		for level in range(1, top + 1):
+			var base := float(sim.catalog.stats(id, level).get("power_demand_kw", 0.0))
+			if base <= 0.0:
+				continue  # the two grid shells draw nothing at any level
+			var at_peak := base * peak
+			# **The reading the VERB is judged on, not the one at rest.**
+			# `cmd_upgrade_building` asks `power_headroom(sim_id, delta × 1.15)`,
+			# which lands on the pad's PEAK load; for a building alone on its own
+			# pad at full occupancy — the case §5.3's gate is written against and
+			# the case gate 34 has always claimed to cover — that is exactly
+			# `cell(L−1) × peak + margin × (cell(L) − cell(L−1))`.
+			var at_gate := at_peak if previous_kw < 0.0 \
+					else previous_kw * peak + margin * (base - previous_kw)
+			var rung_servable := PowerGrid.transformer_rung_for(at_peak)
+			var rung_buyable := PowerGrid.transformer_rung_for(at_gate)
+			# The rung the player must OWN to stand a building on this level: big
+			# enough to buy the step and big enough to run it afterwards.
+			var rung := maxi(rung_servable, rung_buyable) \
+					if rung_servable > 0 and rung_buyable > 0 else 0
+			checked += 1
+			# BC-1 SERVABLE.
+			assert_true(rung_servable > 0,
+					("BC-1: %s L%d draws %.0f kW = %.0f kW at its own peak hour, and NO "
+							+ "transformer rung carries that at r %.2f. The ladder tops "
+							+ "out at %.0f kW, i.e. %.0f kW of load.")
+							% [id, level, base, at_peak, PowerGrid.UPGRADE_MAX_R,
+							float(ladder[ladder.size() - 1]), PowerGrid.service_ceiling_kw()])
+			# BC-1 BUYABLE — the half the wave shipped without, and the half the
+			# player met. A cell that passes the line above and fails this one is
+			# a level the panel offers, the catalog publishes and the upgrade verb
+			# refuses at any price: the wall with no door, one rung further up.
+			assert_true(rung_buyable > 0,
+					("BC-1: %s L%d→L%d meets the upgrade gate at %.0f kW "
+							+ "(%.0f × %.2f + %.2f × %.0f) and NO transformer rung "
+							+ "carries that at r %.2f — servable but not buyable. "
+							+ "The envelope is %.0f kW.")
+							% [id, level - 1, level, at_gate, previous_kw, peak, margin,
+							base - previous_kw, PowerGrid.UPGRADE_MAX_R,
+							PowerGrid.service_ceiling_kw()])
+			# BC-3.
+			if level == 1:
+				assert_true(rung <= 2,
+						("BC-3: %s L1 needs a rung-%d transformer ($%d). A first level "
+								+ "must be servable from the bottom of the ladder.")
+								% [id, rung, sim.econ_curves.grid_build_cost("transformer", rung)])
+			# BC-2.
+			if previous_rung > 0:
+				assert_true(rung <= previous_rung + 1,
+						("BC-2: %s L%d needs rung %d where L%d needed rung %d — one "
+								+ "building upgrade may never cost more than one "
+								+ "transformer upgrade")
+								% [id, level, rung, level - 1, previous_rung])
+			# BC-4.
+			if previous_kw >= 0.0:
+				assert_true(base > previous_kw,
+						("BC-4: %s L%d draws %.0f kW, no more than L%d's %.0f — the "
+								+ "clamp has flattened a step and that upgrade is free "
+								+ "to power")
+								% [id, level, base, level - 1, previous_kw])
+			# **A clamped cell sits AT the class ceiling, not at the envelope.**
+			# Doc 93 §BC-4 floors the quotient onto the §8 `kw` grid, so
+			# `high_rise` L6 is 4,160 and asks for 6,073.6 kW — 1.4 kW under the
+			# 6,075 envelope. Comparing `at_peak` to the envelope would therefore
+			# have found NO clamped cell anywhere and passed vacuously, which is
+			# the shape this whole gate exists to refuse. The comparison is
+			# against `_demand_ceiling`, which is the generator's own arithmetic.
+			if base >= _demand_ceiling(envelope, class_id, previous_kw) - 1e-6:
+				clamped.append(level)
+				clamped_cells += 1
+			previous_rung = rung
+			previous_kw = base
+		assert_true(clamped.is_empty() or (clamped.size() == 1 and clamped[0] == top),
+				("BC-4: %s is at the ceiling on level(s) %s — the clamp may bind at "
+						+ "most the TOP rung, so the seed is wrong and must be "
+						+ "re-derived") % [id, str(clamped)])
+	assert_eq(checked, 56,
+			("checked %d authored demand cells; doc 02 publishes 66, of which the ten "
+					+ "`power_facility` / `substation` rows draw nothing at any level")
+					% checked)
+	# **And the clamp is PRESENT, not merely permitted.** Two cells sit on their
+	# own level's ceiling — `high_rise` L6 at 4,160, floored from the SERVABLE
+	# quotient `6,075 / 1.46`, and `data_center` L6 at 5,830, floored from the
+	# BUYABLE one `(6,075 − 4,230 × (1.00 − 1.15)) / 1.15` — and asserting that
+	# keeps the four checks above from passing vacuously on a table where the
+	# clamp had been quietly removed and the seeds shrunk instead. The two cells
+	# are clamped by different halves of BC-1, which is why both halves ship.
+	assert_eq(clamped_cells, 2,
+			("%d cells sit at their level's ceiling; doc 93 §BC-4 clamps exactly two — "
+					+ "`high_rise` L6 (servable) and `data_center` L6 (buyable)")
+					% clamped_cells)
+	_assert_only_the_clamped_steps_are_efficiency_positive(sim)
+
+	# (5) Doc 05's per-variant ladders are the reading the SIM uses for a water
+	# facility (`CitySim._water_kw_by_building` overrides doc 02's shell cell),
+	# so the envelope has to hold for them too. `pump` L5 is the one row the sixth
+	# rung rescued — 2,160 kW is 2,484 at the civic peak, over the old 2,250 kW
+	# ceiling and under the new one. Every other variant row already fitted (`tank`
+	# L5 is 180 kW, `source_well` L5 1,800, `treatment` L5 1,440), which is why the
+	# 30 rows are asserted rather than assumed: the pump was the only one over, and
+	# nothing had ever checked which.
+	var civic_peak := float(channel_peak.get("civic", 1.0))
+	var water_checked := 0
+	for variant: Variant in [&"source", &"treatment", &"pump", &"tank", &"booster"]:
+		for subtype: Variant in ["river", "well"]:
+			if variant != &"source" and String(subtype) == "well":
+				continue
+			for level in range(1, 6):
+				var kw := sim.water.data.kw_required(StringName(variant), level, String(subtype))
+				if kw <= 0.0:
+					continue
+				water_checked += 1
+				assert_true(PowerGrid.transformer_rung_for(kw * civic_peak) > 0,
+						("BC-1: doc 05's %s L%d draws %.1f kW = %.0f kW at the civic peak, "
+								+ "and no transformer rung carries it")
+								% [String(variant), level, kw, kw * civic_peak])
+	assert_true(water_checked >= 30, "checked %d doc 05 component rows" % water_checked)
+
+	# (6) Every rung the ladder publishes is a rung the player can BUY. A
+	# capacity with no purchase is the shape A91-D-55 already caught once.
+	var placeable: Dictionary = BuildController.load_grid_placeable()
+	var offered: Array[int] = []
+	for entry: Variant in ((placeable["transformer"] as Dictionary).get("placeable_levels", [])
+			as Array):
+		offered.append(int(entry))   # JSON numbers arrive as floats; `has(1)` would miss
+	assert_eq(offered.size(), ladder.size(),
+			"data/grid_components.json offers %d transformer rungs; doc 04 §2.2 publishes %d"
+					% [offered.size(), ladder.size()])
+	for i in ladder.size():
+		assert_true(offered.has(i + 1), "rung %d is authored but not placeable" % (i + 1))
+		assert_true(sim.econ_curves.grid_build_cost("transformer", i + 1) > 0,
+				"rung %d is placeable but doc 03 prices it at $0" % (i + 1))
+	var radii: Array = (placeable["transformer"] as Dictionary).get("service_radius_tiles", [])
+	assert_eq(radii.size(), PowerGrid.TRANSFORMER_SERVICE_RADIUS.size(),
+			"the placement roster's radius column must span the whole ladder")
+	sim.dispose()
+
+
+## **What the clamp COSTS, said out loud and checked** (Wave 28 fix pass).
+##
+## Doc 03 §9 item 4 and report 98 C-13 / spec §55 rule 3 make `k_dem >
+## TAX_LEVEL_GROWTH` the single most important cross-doc constant in the game's
+## balance: every upgrade must be *less* utility-efficient than the last, or the
+## tax curve outruns the power bill and Pillar 5 collapses. `verify_invariants()`
+## and `test_demand_growth_invariant` both check the COEFFICIENT, and a clamped
+## cell is not on the coefficient's curve — so a clamped top step is
+## efficiency-POSITIVE and nothing was watching. Doc 02 §2.14's rider claimed the
+## opposite (*"the step is still a real one … so no upgrade in the roster is free
+## to power"*), which is true against a bar of "non-zero" and false against the
+## bar doc 03 actually sets.
+##
+## So the consequence is named rather than denied: exactly the two clamped steps
+## have a demand ratio at or below `TAX_LEVEL_GROWTH`, they are listed here by
+## name, and a third one — or either of these two moving — fails the gate. That
+## is the difference between a bounded, published exception and a silent one.
+func _assert_only_the_clamped_steps_are_efficiency_positive(sim: CitySim) -> void:
+	var tax_growth := float((StarterCityLoader.read_json(ECONOMY_DATA).get("tax", {})
+			as Dictionary).get("TAX_LEVEL_GROWTH", 0.0))
+	assert_true(tax_growth > 0.0, "doc 03's tax.TAX_LEVEL_GROWTH must be readable")
+	var positive: Array[String] = []
+	for archetype: Variant in sim.catalog.archetypes():
+		var id := String(archetype)
+		var previous := 0.0
+		for level in range(1, sim.catalog.max_level_of(id) + 1):
+			var base := float(sim.catalog.stats(id, level).get("power_demand_kw", 0.0))
+			if previous > 0.0 and base > 0.0 and base / previous <= tax_growth:
+				positive.append("%s L%d→L%d (×%.3f)" % [id, level - 1, level, base / previous])
+			previous = base
+	# Sorted, because `catalog.archetypes()` is a dictionary key order and this
+	# assertion is about the SET of efficiency-positive steps, not about which
+	# archetype the roster happens to list first.
+	positive.sort()
+	var expected: Array[String] = ["data_center L5→L6 (×1.378)", "high_rise L5→L6 (×1.092)"]
+	assert_eq(positive, expected,
+			("doc 03 §9 item 4: an upgrade whose demand grows by no more than "
+					+ "TAX_LEVEL_GROWTH (%.2f) is efficiency-POSITIVE. Exactly the two "
+					+ "cells doc 93 §BC-4 clamps may be, and they are named in doc 02 "
+					+ "§2.14; this table has %s") % [tax_growth, str(positive)])
+	# …and the clamp is the only thing that can put a step here: both named steps
+	# are the archetype's LAST, which is the only rung §BC-4 lets the clamp bind.
+	for entry in positive:
+		assert_true(entry.contains("L5→L6"), "%s is not a top step" % entry)
+
+
+## Doc 93 §BC-4's ceiling on ONE authored `power_demand_kw` cell, as an oracle
+## for gate 34 (Wave 28): `ceiling_peak_kw` is a PEAK budget and a cell is a
+## BASE, so the budget is divided by the archetype's own doc 01 channel peak and
+## **floored** onto doc 02 §8's `kw` grid. Floored, never half-up — a clamp
+## rounded up would put the clamped cell one grid step past the capacity it
+## clamps to, which is the wall §BC-1 forbids. Reads the rounding ladder from
+## `building_rules.json` rather than re-stating it, so a change to doc 02's grid
+## moves the oracle with the generator.
+static func _demand_ceiling(envelope: Dictionary, class_id: String,
+		previous_kw: float = -1.0) -> float:
+	var peak := float((envelope["channel_peak"] as Dictionary).get(class_id, 1.0))
+	var ceiling := float(envelope["ceiling_peak_kw"])
+	var raw := ceiling / maxf(0.0001, peak)
+	# **The BUYABLE ceiling, for every level but the first.** The upgrade gate is
+	# `previous × peak + margin × (cell − previous) ≤ ceiling`; solved for `cell`
+	# that is `(ceiling − previous × (peak − margin)) / margin`, and the tighter
+	# of the two quotients is the one the generator clamps on. `previous_kw < 0`
+	# is L1, which nothing is upgraded into.
+	if previous_kw >= 0.0:
+		var margin := float(envelope.get("upgrade_headroom_margin",
+				CitySim.UPGRADE_HEADROOM_MARGIN))
+		raw = minf(raw, (ceiling - previous_kw * (peak - margin)) / maxf(0.0001, margin))
+	var ladder: Array = (StarterCityLoader.read_json("res://data/building_rules.json")
+			.get("rounding", {}) as Dictionary).get("kw", [])
+	for rung: Variant in ladder:
+		var bound: Variant = (rung as Array)[0]
+		var step := float((rung as Array)[1])
+		if bound == null or raw < float(bound):
+			return floorf(raw / step) * step
+	return raw
 
 
 ## `data/economy.json`'s `city_services` block, read live so a gate cannot

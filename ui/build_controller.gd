@@ -1885,7 +1885,8 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 		# they bought exactly what the panel asked for and were refused again
 		# with a smaller deficit. One shape, shared with the water block (PA-75).
 		&"E_POWER_HEADROOM": RequirementFormatter.power_headroom_params(
-				delta_kw, deficit, headroom_margin(), sim.grid.attachment_of(sim_id)),
+				delta_kw, deficit, headroom_margin(), sim.grid.attachment_of(sim_id),
+				sim_id),
 		# PA-24: doc 02 §2.11's seventh gate, in doc 05's own unit and against
 		# doc 05's own zone. `water.can_upgrade_water` is the gate itself, asked
 		# the same question `cmd_upgrade_building` asks it.
