@@ -258,6 +258,33 @@ func remove_building(building_id: int, origin: Vector2i, size: Vector2i) -> void
 				clear_flag(x, z, FLAG_OCCUPIED)
 
 
+## **A complete digest of the flag plane** (Wave 30, doc 92 §71, RR-245).
+##
+## [can_place] reads `_flags` and nothing else, and so does `CitySim._touches_water`
+## (doc 05 §2.1's river adjacency, against `FLAG_WATER`). One hash over the whole
+## 12,544-byte plane therefore answers *"could any placement rule's verdict have
+## changed since I last asked?"* for every tile at once, in microseconds — which
+## is the question a site-search memo has to answer before it may reuse a refusal.
+##
+## **Its consumer is `Playtest.Api._map_signature`** and it has exactly one:
+## the water site scan re-ran an identical 7,650-origin sweep once a game-hour
+## while `Curriculum`'s objective sat open, and this is the term of the memo key
+## that covers `E_FOOTPRINT` and `E_NO_WATER`. It is not saved, not hashed into
+## `CitySim.state_hash` and read by nothing in `sim/`, `game/` or `ui/` — a
+## digest of state is not state.
+##
+## Conservative in the safe direction: a flag change that cannot move any
+## placement verdict (a tile going `FLAG_FLOODED`, say) still moves the digest
+## and costs the memo a re-scan. Missing a change that DOES move a verdict is
+## the failure this must not have, and hashing the whole plane is what rules it
+## out.
+## `hash()` the global, not a method on the array: `PackedByteArray` exposes no
+## `hash()` of its own in 4.7.2, and `Variant`'s hashes packed-array CONTENT,
+## which is the thing that has to be covered.
+func flags_hash() -> int:
+	return hash(_flags)
+
+
 ## Count of buildable, unoccupied tiles within a block (the post-READY direct
 ## count that gates placement — doc 09 §2.2).
 func count_buildable(bx: int, bz: int) -> int:

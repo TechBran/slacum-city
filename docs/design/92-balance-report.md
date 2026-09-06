@@ -14312,3 +14312,238 @@ test_a_legacy_body_gets_its_lots_on_restore` is that case.
 
 This is also why doc 08 §2.8's rung 12 is a **rules** rung with an identity
 migrator rather than a shape rung: nothing new is persisted.
+
+
+## 71. Wave 30 Lane A — where the suite's hour actually goes (2026-09-06)
+
+*Fork `9aecbf9`. Every number here is `tools/profile_gates.gd`, this wave's own
+instrument, run on the same machine before and after. Report 98 §75 carries the
+rulings; doc 93 §BF carries the doctrine.*
+
+**The brief said 1,562 s for `test_balance_gates.gd` and named
+`WATER_SITE_PREVIEWS` 96 → 4,096 as the suspect. The measurement says 1,564.93 s
+and the suspect is a third of the harness cost.** Both halves matter: the brief's
+number reproduces to within 0.2 %, and the cause it named is real and is not the
+whole of it.
+
+### 71.1 The instrument, and why `profile_sim` could not do this
+
+`tools/profile_sim.gd` charges each TICK PHASE for its microseconds. A scripted
+agent's `act()` runs BETWEEN two ticks, so the sim profiler charges it to nobody —
+and that is where a third of this file's wall clock lives. Four waves of runs got
+slower with no number to show it.
+
+* `tools/profile_gates.gd` — per test method, and (with `--verbs`) per agent verb
+  with SELF time, inclusive time and a call count. It runs the real `SimTest`
+  bracket, so a gate that fails here fails in `tests/run_tests.gd`.
+* `tests/run_tests.gd` and `tools/run_one_test.gd` now print a wall-clock block on
+  **every** run: every file over 1 s, and the slowest methods by name. The next
+  regression is a number in the log rather than a memory.
+
+**`--verbs` is not a wall-clock baseline.** The clock takes two
+`Time.get_ticks_usec()` readings and one allocation per instrumented verb call; on
+a run making a million of them that is real money, which is why the file total
+under `--verbs` (1,571.67 s) is a little above the clean one (1,564.93 s) and why
+the two tables are separately switchable.
+
+### 71.2 Per method, at the fork and after this lane
+
+| gate method | fork | after | Δ |
+|---|---:|---:|---:|
+| `test_gate_21_the_curriculum_is_completable_and_paced` | **537.82** | **395.93** | **−141.89** |
+| `test_gate_29_neglect_is_fatal_on_every_preset_and_ordered` | 278.40 | 281.98 | +3.58 |
+| `test_gate_33_the_director_does_not_stall` | 232.94 | 234.20 | +1.26 |
+| `test_gate_30_a_decayed_city_roster_is_bounded` | 161.15 | 162.42 | +1.27 |
+| `test_gate_18b_the_late_game_ceiling_is_lifted` | 112.70 | 113.93 | +1.23 |
+| `test_gate_32_active_play_pays_more_and_idling_still_pays` | 108.83 | 100.63 | −8.20 |
+| `test_gate_12c_the_tax_slider_is_not_a_free_lunch_for_a_real_agent` | 62.99 | 64.47 | +1.48 |
+| `test_gate_04_maintenance_pays` | 28.63 | 29.77 | +1.14 |
+| the other 26 methods | 41.47 | 42.87 | +1.40 |
+| **34 methods, total** | **1,564.93 s** | **1,426.20 s** | **−138.73 s (−8.9 %)** |
+
+`tests: 34  asserts: 755  failed: 0  silent: 0` on both sides — the same 755
+assertions, so nothing was made cheaper by asserting less.
+
+**A/B-isolated to one cause.** The saving is **141.9 s in gate 21 and 8.2 s in
+gate 32**, and those are the only two methods in the file that drive the
+`curriculum` agent — which is the only agent that opens doc 05's placement door.
+Every other method moves by +1.1 to +3.6 s, uniformly and in the same direction,
+which is the load on the box rather than the code: this "after" run had a full
+`tools/run_suite.sh` beside it and the fork run did not. (An earlier "after" pass
+with only the fork's own two neighbours read **1,414.70 s**, and gate 29 read
+281.83 against this run's 281.98 — the untouched gates are the ruler.) §71.3
+carries the reading that is immune to it.
+
+### 71.3 Per agent verb, at the fork — the table the brief did not have
+
+*Reproducibility note (merge verifier, 2026-09-06): the FORK-side `--verbs` figures in this section (207.63 s / 184.18 s / 55.20 s, the 31.3 % instrumented share, and the 212.81 s string-signature arm) were taken on an instrumented copy of the fork's `tools/playtest.gd` that was never committed — the fork has no `Clock` class, so `profile_gates.gd --verbs` cannot parse against 9aecbf9. The TIP-side figures reproduce to the call; the per-file wall times reproduce on both sides.*
+
+`tools/profile_gates.gd --file=test_balance_gates.gd --verbs`, self time
+descending:
+
+| self s | share | total s | calls | µs/call | agent verb |
+|---:|---:|---:|---:|---:|---|
+| **207.63** | 42.2 % | 207.89 | 7,333 | 28,314 | `grid_shortfall_tile` |
+| **184.18** | 37.5 % | 184.23 | 631 | 291,880 | `place_water_component` |
+| **55.20** | 11.2 % | 55.20 | 3,685 | 14,980 | `relief_spot` |
+| 20.05 | 4.1 % | 20.05 | 444,155 | 45 | `upgrade_preview` |
+| 7.36 | 1.5 % | 25.81 | 7,861 | 936 | `upgrade_candidates` |
+| 5.28 | 1.1 % | 5.60 | 6,347 | 832 | `candidate_site` |
+| 3.56 | 0.7 % | 9.16 | 6,347 | 560 | `place` |
+| 3.13 | 0.6 % | 3.13 | 3,811 | 821 | `_optional` |
+| *(34 more)* | 1.1 % | | | | |
+| **491.77** | **100 %** | | | | **42 instrumented verbs** |
+
+**Three verbs are 447 s of the 492 s.** All three are site searches, and all three
+have the same shape: a sweep that pays a full command preview for every candidate.
+
+**The same table after this lane — and this is the reading the machine's load
+cannot move**, because the call counts are identical to the last call:
+
+| agent verb | fork self s | after self s | calls (both) | Δ |
+|---|---:|---:|---:|---:|
+| `place_water_component` | 184.18 | **35.24** | 631 | **−148.94 (5.2×)** |
+| `grid_shortfall_tile` | 207.63 | **197.45** | 7,333 | −10.18 |
+| `relief_spot` | 55.20 | 55.19 | 3,685 | −0.01 *(untouched — the control)* |
+| `upgrade_preview` | 20.05 | 20.35 | 444,155 | +0.30 *(untouched)* |
+| `candidate_site` | 5.28 | 5.24 | 6,347 | −0.04 *(untouched)* |
+| **42 instrumented verbs** | **491.77** | **333.18** | | **−158.59** |
+| `place_water_component:memo` | — | 0.00 | **80 hits** | |
+| `grid_shortfall_tile:memo` | — | 0.00 | **1,462 hits** | |
+
+`relief_spot`, `upgrade_preview` and `candidate_site` are the control arms: this
+lane did not touch them and they do not move. The five verbs the table publishes have byte-identical call counts across the two runs (7,333 / 631 / 3,685 / 444,155 / 6,347) — not every verb: `_ready_blocks` gains ~6,500 calls because `_map_signature` asks it once per memo lookup (merge verifier, 2026-09-06). The airtight evidence that the agents made the same decisions in the same order is the seed-4242 `measure_utility_plan` action log, byte-identical across all 1,339 lines.
+
+**And the instrument caught this wave's own optimisation not paying.** The memo's
+first cut built its signature by string concatenation — `taps += "%d,%d,%d;"` per
+transformer — and GDScript copies the whole buffer on every `+=`, so a late-game
+city made that quadratic: **5.2 ms per signature**, against ~28 ms for the search
+it was meant to avoid. At a 16.6 % hit rate (1,462 of 8,795 asks) that is a
+**LOSS**, and the verb table said so in the only way anything could have:
+
+| `grid_shortfall_tile` self s | 7,333 calls |
+|---|---|
+| fork, no memo | **207.63** |
+| memo, signature built as a string | **212.81** — *slower than no memo at all* |
+| memo, signature as a `PackedInt32Array` hashed once | **197.45** |
+
+The middle row is what this instrument exists for. A wave that had shipped it
+would have published a memo, a test and a paragraph for a 5-second regression.
+
+### 71.4 The water sweep, priced per candidate origin
+
+Timed on the city seed 4242 reaches at 45 game-days, `source` (2×2 lot, 7,650
+candidate cells):
+
+| step | passes | seconds | µs each |
+|---|---:|---:|---:|
+| `TileGrid.can_place` | 2,062 of 7,650 | 0.006 | 0.8 |
+| `WaterSystem.nearest_main_tile` | 237 | 0.032 | 15.5 |
+| `PowerGrid.would_serve` | 1,134 | 0.137 | 66.4 |
+| **`cmd_place_water_component(preview)`** | **0** | **0.491** | **238.1** |
+| whole sweep | | **0.668** | |
+
+The preview is 73 % of the sweep and the two cheap conditions in front of it are
+things the command itself refuses on. `Curriculum._serve` asks once a game-HOUR
+while its objective is open, so on seed 4242 that sweep ran **509 times for
+784,224 candidate origins** in one 45-game-day arc.
+
+**The A/B — the fork's `tools/playtest.gd` against this branch's, driven by a copy
+of `BalanceGateRig.run`'s loop, in one process:**
+
+| seed | fork | after | speedup | `E_NO_SITE` | origins reached | previews PRICED | memo hits | `state_hash` |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| 1337 | 128.02 s | 119.65 s | 1.07× | 24 → 24 | 41,802 → 41,802 | 41,802 → **4,012** | 0 | **identical** |
+| 4242 | 285.57 s | 152.57 s | **1.87×** | 509 → 509 | 784,224 → 784,224 | 784,224 → **101,852** | 71 | **identical** |
+| 9001 | 133.36 s | 123.09 s | 1.08× | 25 → 25 | 42,805 → 42,805 | 42,805 → **5,321** | 0 | **identical** |
+| **three seeds** | **546.95 s** | **395.31 s** | **1.38×** | | | | | |
+
+**Every refusal count and every origins-reached count is byte-identical.** The
+sweep walks exactly the same ground in exactly the same order and returns exactly
+the same verdict; only the number of PRICED previews moves. 395.31 s against gate
+21's measured 392.58 s is the same three runs, which is the closure on the
+attribution.
+
+**`WATER_SITE_PREVIEWS` is not lowered, and the measurement is why.** Across all
+three seeds and all 558 `E_NO_SITE` refusals, `capped` is **0** — no sweep on any
+seed ever reached 4,096. A lower cap would be a bound fitted to nothing whose only
+possible effect is to turn a found site into a refusal. The cap stays; the cost
+went instead.
+
+### 71.5 What the other 1,073 s is, and why 10 minutes is not reachable here
+
+Instrumented agent verbs are **491.77 s of 1,571.67 s — 31.3 %**. The rest is
+`CitySim.advance_coarse_hours`, driven by horizons the gates chose:
+
+| gate | what it advances |
+|---|---|
+| 29 | `do_nothing` × 4 presets = **690 preset-days** (300 + 200 + 120 + 70) |
+| 30 | `do_nothing` **200 game-days** on `crisis` |
+| 33 | `balanced` **60 game-days**, seed 4242 |
+| 21 | `curriculum` **3 × 45 game-days** = 3,240 game-hours |
+| 18b | `balanced` 50 game-days |
+
+**A harness with every agent verb reduced to zero still leaves this file at ~18
+minutes.** The brief's target — the gates file under 10 minutes without touching a
+bound — is therefore not reachable from `tests/` and `tools/`, and this is the
+number that says so rather than an opinion. The two follow-ups that could reach it
+are `PowerGrid.would_serve` (doc 91 A91-D-160) and the horizons themselves
+(A91-D-161); neither is hash-neutral tests-and-tools work.
+
+**The runs are not redundant, and that was checked.** `_runs` already memoises
+`(strategy, days, seed)` within the file; gate 30's 200-day `crisis` run is a
+SUPERSET of gate 29's 70-day one rather than a duplicate (and a prefix cannot be
+served from a longer run, because `_summarise` reads the LIVE sim at the end);
+and `test_balance_gates.gd` is the only file in the suite that drives a
+45-game-day arc, so the brief's *"share the three curriculum runs across the gate
+files"* has no second file to share with. A static cross-file cache would have
+been authored behaviour with no consumer — this project's signature defect — so
+none was written.
+
+### 71.6 The four `profile_sim --hash-only` baselines: UNCHANGED
+
+Taken at the fork `9aecbf9` by this lane and again at its tip:
+
+| | at the fork | after this lane |
+|---|---|---|
+| starter, coarse 24h | `9004573df161a57e…` | **identical** |
+| starter, fine 2.0h | `d5c6678de64cb5de…` | **identical** |
+| bench, coarse 24h | `ebb5f4762e4f2412…` | **identical** |
+| bench, fine 2.0h | `307a6a27ad6f1801…` | **identical** |
+
+Same four digests §70.5 published at Wave 29. Nothing in `data/`, no balance
+number and no gate bound was touched; the one `sim/` change is
+`TileGrid.flags_hash()`, a read-only digest with one consumer in `tools/`, which
+is neither saved nor part of `state_hash`. The three `curriculum` `state_hash`
+values in §71.4 are the stronger statement: the arcs the gates measure are
+bit-identical, run for run.
+
+
+### 71.7 The whole suite, and what the trip-wire now names
+
+`nohup setsid tools/run_suite.sh` on this branch: **161 files, 2,993 tests,
+606,535 asserts, failed 0, silent 0, ALL TESTS PASSED**, and the run prints its
+own wall clock for the first time — 3,781.5 s in test methods, of which:
+
+| seconds | share | file |
+|---:|---:|---|
+| 1,421.1 | 37.6 % | `test_balance_gates.gd` |
+| 391.3 | 10.3 % | `test_catchup_cursor.gd` |
+| 295.7 | 7.8 % | `test_player_verbs.gd` |
+| 222.2 | 5.9 % | `test_save_determinism_days.gd` |
+| 192.3 | 5.1 % | `test_power_infra_feed.gd` |
+| 192.3 | 5.1 % | `test_land_works.gd` |
+| 120.8 | 3.2 % | `test_difficulty.gd` |
+| 106.0 | 2.8 % | `test_power_operations.gd` |
+| 99.8 | 2.6 % | `test_save_chunked_restore.gd` |
+| 78.4 | 2.1 % | `test_infra_verbs.gd` |
+| 75.9 | 2.0 % | `test_street_opportunities.gd` |
+| 72.7 | 1.9 % | `test_ui_transformer.gd` |
+
+**This is the deliverable that outlives the lane.** The brief asked for the gates
+file under 10 minutes; the honest answer is that it cannot be reached from
+`tests/` and `tools/` (§71.5), and the useful answer is that the number is now
+printed on every run, per file and per method, so the next wave that adds four
+minutes to the suite finds out on the run that added them. The eight files under
+`test_balance_gates.gd` in that table have never been measured before and are
+where a second cost lane should start.

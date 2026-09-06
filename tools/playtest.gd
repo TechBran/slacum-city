@@ -201,6 +201,127 @@ static func _write_json(path: String, report: Dictionary) -> void:
 
 
 # ===========================================================================
+# The verb clock
+# ===========================================================================
+
+## **Where an agent's game-hour goes, per verb** (Wave 30, doc 92 §71, RR-244).
+##
+## The suite's cost regression was invisible for four waves because nothing in
+## this project could answer "which verb?" — the only instrument was
+## `tools/profile_sim.gd`, which profiles the SIM's phases and sees an agent's
+## `act()` as a gap between two ticks. `tests/test_balance_gates.gd` spends most
+## of its wall clock inside `act()`, so the sim profiler was measuring the half
+## that was not the problem.
+##
+## Self-time accounting, the same shape `tools/profile_sim.gd` uses: a scope's
+## own microseconds exclude the scopes opened inside it, so a table of self-time
+## sums to the wall clock and a hot LEAF is not double-counted into its caller.
+## `total_usec` keeps the inclusive figure beside it because the two answer
+## different questions — self says *what is slow*, total says *what to stop
+## calling*.
+##
+## **Off by default and free when off.** Every instrumented verb opens with one
+## line, `var _t := Clock.scope(&"verb")`, and `scope()` returns `null` without
+## allocating while `enabled` is false — a static bool read per verb call. It is
+## turned on by `tools/profile_gates.gd` and by nothing else; no gate, no report
+## row and no `sim/` code reads it, and it can move no number in a run because
+## it only ever reads a clock.
+class Clock extends RefCounted:
+	## Set by `tools/profile_gates.gd --verbs`. Nothing in `sim/`, `tests/` or
+	## `game/` sets it, and a run with it false is byte-identical to one compiled
+	## before this class existed.
+	static var enabled := false
+
+	static var _self_usec: Dictionary = {}    # StringName -> int
+	static var _total_usec: Dictionary = {}   # StringName -> int (inclusive)
+	static var _calls: Dictionary = {}        # StringName -> int
+	static var _stack_id: Array[StringName] = []
+	static var _stack_start: Array[int] = []
+	static var _stack_child: Array[int] = []
+
+	## Opens a scope that closes itself when the caller's local goes out of
+	## scope — including on an early `return`, which is why this is an object
+	## rather than a matched `enter`/`leave` pair. `place_water_component` alone
+	## has three exits and `upgrade_water_node` has nine; a hand-matched pair
+	## would have leaked a frame on the first one anybody added.
+	static func scope(id: StringName) -> ClockScope:
+		return ClockScope.new(id) if enabled else null
+
+	static func reset() -> void:
+		_self_usec = {}
+		_total_usec = {}
+		_calls = {}
+		_stack_id = []
+		_stack_start = []
+		_stack_child = []
+
+	static func open(id: StringName) -> void:
+		_stack_id.append(id)
+		_stack_child.append(0)
+		_stack_start.append(Time.get_ticks_usec())
+
+	static func close() -> void:
+		if _stack_id.is_empty():
+			return
+		var now := Time.get_ticks_usec()
+		var id: StringName = _stack_id.pop_back()
+		var child: int = _stack_child.pop_back()
+		var total: int = now - _stack_start.pop_back()
+		_self_usec[id] = int(_self_usec.get(id, 0)) + total - child
+		_total_usec[id] = int(_total_usec.get(id, 0)) + total
+		_calls[id] = int(_calls.get(id, 0)) + 1
+		if not _stack_child.is_empty():
+			_stack_child[-1] = int(_stack_child[-1]) + total
+
+	## A COUNT with no clock, for an event that deserves a row in the verb table
+	## and has no duration worth reporting. The water site memo is the one caller:
+	## a hit's whole point is that it spends nothing, so it appears with a call
+	## count, zero self time, and therefore at the BOTTOM of the table — read it
+	## with `--top=0`.
+	static func tally(id: StringName) -> void:
+		if not enabled:
+			return
+		_calls[id] = int(_calls.get(id, 0)) + 1
+		if not _self_usec.has(id):
+			_self_usec[id] = 0
+			_total_usec[id] = 0
+
+	## `[{verb, calls, self_usec, total_usec}]`, self-time descending, verb name
+	## as the tie-break so two runs of the same seed print the same table.
+	static func rows() -> Array[Dictionary]:
+		var out: Array[Dictionary] = []
+		for id: Variant in _self_usec:
+			out.append({"verb": String(id), "calls": int(_calls[id]),
+					"self_usec": int(_self_usec[id]),
+					"total_usec": int(_total_usec[id])})
+		out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a["self_usec"]) != int(b["self_usec"]):
+				return int(a["self_usec"]) > int(b["self_usec"])
+			return String(a["verb"]) < String(b["verb"]))
+		return out
+	# **No `self_usec_of` / `calls_of` here, and that is deliberate.** The first
+	# draft had both, as the obvious pair of accessors a timing class "should"
+	# expose, and neither had a caller — `tools/profile_gates.gd` reads [rows] and
+	# nothing else does. That is this project's signature defect (A91-D-19:
+	# authored behaviour nothing consumes), committed by the lane whose own report
+	# quotes the rule. If a future reader needs one number by name, it arrives
+	# with the reader that needs it.
+
+
+## One open scope on [Clock]'s stack. Freed the instant its caller returns —
+## GDScript drops a local `RefCounted` at function exit and `NOTIFICATION_PREDELETE`
+## is where the stop-watch stops, which is what makes an early `return` safe.
+class ClockScope extends RefCounted:
+
+	func _init(id: StringName) -> void:
+		Clock.open(id)
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_PREDELETE:
+			Clock.close()
+
+
+# ===========================================================================
 # Formatting
 # ===========================================================================
 
@@ -392,6 +513,20 @@ class Api extends RefCounted:
 
 	var _block_cursor: int = 0
 	var _disabled: Dictionary = {}
+	## **The site-search memo** (Wave 30, doc 92 §71, RR-245): one GENERATION at a
+	## time. `_memo_signature` is the map the answers in `_memo` were found on, and
+	## the whole table is dropped the moment [_map_signature] disagrees.
+	##
+	## One generation rather than a keyed history for two reasons, and the second
+	## is the important one. It is bounded — a 45-game-day run asks these searches
+	## ~2,000 times and would otherwise accumulate ~2,000 entries whose keys carry
+	## the whole transformer roster. And it needs no hashing: a keyed history has
+	## to compress the signature to keep the keys small, and a 32-bit collision in
+	## a harness that has to reproduce a seed byte for byte is a silent wrong
+	## answer. The win is entirely in the "nothing moved since last game-hour"
+	## case anyway, which is the case a one-generation table catches.
+	var _memo_signature: String = ""
+	var _memo: Dictionary = {}
 
 	func _init(p_sim: CitySim) -> void:
 		sim = p_sim
@@ -466,6 +601,7 @@ class Api extends RefCounted:
 	## at a round-robin cursor, then row-major tiles inside the block. The first
 	## tile that is placeable AND inside a transformer's reach wins.
 	func candidate_site(size: Vector2i) -> Vector2i:
+		var _t := Clock.scope(&"candidate_site")
 		var blocks := _ready_blocks()
 		if blocks.is_empty():
 			return Vector2i(-1, -1)
@@ -484,6 +620,7 @@ class Api extends RefCounted:
 	## i.e. every tile where `cmd_place_building` answers `E_UNSERVED`. Row-major
 	## inside sorted block ids, so the order is the same on every run.
 	func unserved_tiles() -> Array[Vector2i]:
+		var _t := Clock.scope(&"unserved_tiles")
 		var out: Array[Vector2i] = []
 		for block_id in _ready_blocks():
 			var block: LandBlock = sim.world.block(block_id)
@@ -500,6 +637,7 @@ class Api extends RefCounted:
 	## The first buildable tile in an owned+READY block that NO transformer
 	## reaches. This is the wall — and where a transformer wants to go.
 	func unserved_site() -> Vector2i:
+		var _t := Clock.scope(&"unserved_site")
 		var tiles := unserved_tiles()
 		return tiles[0] if not tiles.is_empty() else Vector2i(-1, -1)
 
@@ -507,6 +645,7 @@ class Api extends RefCounted:
 	## strategy can deliberately walk into `E_UNSERVED` and have the command
 	## layer say so. `candidate_site` is its served twin.
 	func unserved_footprint(size: Vector2i) -> Vector2i:
+		var _t := Clock.scope(&"unserved_footprint")
 		for block_id in _ready_blocks():
 			var block: LandBlock = sim.world.block(block_id)
 			var x0: int = block.grid.x * BLOCK_TILES
@@ -526,6 +665,7 @@ class Api extends RefCounted:
 	## Ties break on the row-major order the scan already produced, which is what
 	## keeps two runs of the same seed byte-identical.
 	func best_transformer_tile() -> Vector2i:
+		var _t := Clock.scope(&"best_transformer_tile")
 		var tiles := unserved_tiles()
 		if tiles.is_empty():
 			return Vector2i(-1, -1)
@@ -545,7 +685,31 @@ class Api extends RefCounted:
 	## centre and **no transformer**, so bought land is dark land until the
 	## player buys the tap. The scan early-outs the moment a block reaches
 	## `lead`, so a comfortable block costs a handful of tile probes.
+	##
+	## **Memoised on the map, Wave 30** (doc 92 §71, RR-245 — it was the most
+	## expensive verb in the whole suite at 207.6 s of self time over 7,333 calls,
+	## 28.3 ms each). `Balanced._lead_grid` asks this once a GAME-HOUR, and the
+	## answer is a pure function of the three things [_map_signature] carries: the
+	## READY block set, the flag plane `can_place` reads, and the transformer
+	## roster `would_serve` reads. Nothing else is consulted — no price, no
+	## treasury, no clock — so an hour on which none of those moved is an hour
+	## whose answer was already computed. On the arcs this file drives, an agent
+	## takes at most ONE action a game-hour and spends most of them saving, so
+	## most hours move nothing.
 	func grid_shortfall_tile(lead: int) -> Vector2i:
+		var _t := Clock.scope(&"grid_shortfall_tile")
+		var memo_key := "shortfall/%d" % lead
+		var remembered: Variant = _memo_get(memo_key)
+		if remembered != null:
+			Clock.tally(&"grid_shortfall_tile:memo")
+			return remembered
+		_memo_put(memo_key, _grid_shortfall_tile_scan(lead))
+		return _memo[memo_key]
+
+	## [grid_shortfall_tile]'s sweep, unchanged and unmemoised — split out so the
+	## memo above is one readable door and the search underneath it is the same
+	## code it has always been.
+	func _grid_shortfall_tile_scan(lead: int) -> Vector2i:
 		for block_id in _ready_blocks():
 			var block: LandBlock = sim.world.block(block_id)
 			var x0: int = block.grid.x * BLOCK_TILES
@@ -594,6 +758,7 @@ class Api extends RefCounted:
 	## full shared edge with an owned block), computed fresh rather than read off
 	## `ownership_state`, which nothing refreshes today.
 	func purchasable_block() -> String:
+		var _t := Clock.scope(&"purchasable_block")
 		for id in sim.world.block_ids_sorted():
 			var block_id := String(id)
 			var block: LandBlock = sim.world.block(block_id)
@@ -604,6 +769,7 @@ class Api extends RefCounted:
 		return ""
 
 	func _ready_blocks() -> Array[String]:
+		var _t := Clock.scope(&"_ready_blocks")
 		var out: Array[String] = []
 		for id in sim.world.block_ids_sorted():
 			var block: LandBlock = sim.world.block(String(id))
@@ -619,6 +785,7 @@ class Api extends RefCounted:
 	## buy grid still tries to build, and the command layer answers `E_UNSERVED`.
 	## Counting those answers is how this report prices the transformer.
 	func place(archetype: String, into_the_wall: bool = false) -> Dictionary:
+		var _t := Clock.scope(&"place")
 		if not has_verb("cmd_place_building"):
 			return _log("place", archetype, CommandQueue.fail(&"E_NO_VERB"), {})
 		var size := footprint(archetype)
@@ -645,6 +812,7 @@ class Api extends RefCounted:
 	## by an accident of the scan order rather than by the decision. Ties break
 	## row-major inside sorted block ids, as every other search here does.
 	func place_near(archetype: String, centre: Vector2i) -> Dictionary:
+		var _t := Clock.scope(&"place_near")
 		if not has_verb("cmd_place_building"):
 			return _log("place_near", archetype, CommandQueue.fail(&"E_NO_VERB"), {})
 		var size := footprint(archetype)
@@ -661,6 +829,7 @@ class Api extends RefCounted:
 	## scanned row-major inside sorted owned+READY block ids so the tie-break is
 	## the same on every run.
 	func site_near(size: Vector2i, centre: Vector2i) -> Vector2i:
+		var _t := Clock.scope(&"site_near")
 		var best := Vector2i(-1, -1)
 		var best_distance := 999999
 		for block_id in _ready_blocks():
@@ -683,6 +852,7 @@ class Api extends RefCounted:
 	## controlled experiments use this: a strategy must take the ground the
 	## harness's own site search offers it, or its curve stops being comparable.
 	func place_at(archetype: String, origin: Vector2i) -> Dictionary:
+		var _t := Clock.scope(&"place_at")
 		if not has_verb("cmd_place_building"):
 			return _log("place", archetype, CommandQueue.fail(&"E_NO_VERB"), {})
 		var result: Dictionary = sim.cmd_place_building(archetype, origin)
@@ -695,11 +865,13 @@ class Api extends RefCounted:
 
 	## The doc 02 §2.11 gate, read-only. `{ok, blockers, cost}`.
 	func upgrade_preview(sim_id: String) -> Dictionary:
+		var _t := Clock.scope(&"upgrade_preview")
 		if not has_verb("cmd_upgrade_building"):
 			return CommandQueue.fail(&"E_NO_VERB")
 		return sim.cmd_upgrade_building(sim_id, true)
 
 	func upgrade(sim_id: String) -> Dictionary:
+		var _t := Clock.scope(&"upgrade")
 		if not has_verb("cmd_upgrade_building"):
 			return _log("upgrade", sim_id, CommandQueue.fail(&"E_NO_VERB"), {})
 		var result: Dictionary = sim.cmd_upgrade_building(sim_id, false)
@@ -744,6 +916,7 @@ class Api extends RefCounted:
 	## Every upgradeable building, cheapest first, id tie-break. Each entry is
 	## `{sim_id, cost, level, archetype}`; only clear-gate rows are returned.
 	func upgrade_candidates(categories: Array = []) -> Array[Dictionary]:
+		var _t := Clock.scope(&"upgrade_candidates")
 		var out: Array[Dictionary] = []
 		if not has_verb("cmd_upgrade_building"):
 			return out
@@ -785,6 +958,7 @@ class Api extends RefCounted:
 	## and a progress-first list is all towers. Neither can be asked "and what
 	## about the fire station?".
 	func archetype_upgrade_candidate(archetype: String) -> Dictionary:
+		var _t := Clock.scope(&"archetype_upgrade_candidate")
 		if not has_verb("cmd_upgrade_building"):
 			return {}
 		var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
@@ -841,6 +1015,7 @@ class Api extends RefCounted:
 	## the bottom one. This ranks on PROGRESS instead, which is what a player
 	## following that instruction does — they pick the tall one and keep going.
 	func top_upgrade_candidate() -> Dictionary:
+		var _t := Clock.scope(&"top_upgrade_candidate")
 		if not has_verb("cmd_upgrade_building"):
 			return {}
 		var m_build := float(sim.treasury.difficulty().get("M_build", 1.0))
@@ -871,6 +1046,7 @@ class Api extends RefCounted:
 	# --- the doc 93 §B verbs ------------------------------------------------
 
 	func repair(sim_id: String) -> Dictionary:
+		var _t := Clock.scope(&"repair")
 		var result := _optional("cmd_repair_building", 1, [sim_id], sim_id)
 		if bool(result["ok"]):
 			repaired += 1
@@ -889,6 +1065,7 @@ class Api extends RefCounted:
 	## straight leg), because a measurement of a verb has to measure the door the
 	## verb actually has.
 	func road_run(tiles: int) -> Array[Vector2i]:
+		var _t := Clock.scope(&"road_run")
 		var wanted := maxi(1, tiles)
 		for block_id in _ready_blocks():
 			var block: LandBlock = sim.world.block(block_id)
@@ -947,6 +1124,7 @@ class Api extends RefCounted:
 		return int((quote.get("payload", {}) as Dictionary).get("cost", 0))
 
 	func place_road(tiles: int, road_class: int = TileGrid.ROAD_STREET) -> Dictionary:
+		var _t := Clock.scope(&"place_road")
 		var run := road_run(tiles)
 		if run.is_empty():
 			return _log("place_road", "%d tiles" % tiles,
@@ -997,6 +1175,7 @@ class Api extends RefCounted:
 	## would. `{}`-empty when nothing is in range: NOT logged, because "there was
 	## nothing to tap" is not an action a player took.
 	func collect_nearby(centre: Vector2i, radius_m: float) -> Dictionary:
+		var _t := Clock.scope(&"collect_nearby")
 		if not has_verb("cmd_collect_opportunity") or sim.street == null:
 			return {}
 		var point := Vector3(float(centre.x) * 8.0 + 4.0, 0.0, float(centre.y) * 8.0 + 4.0)
@@ -1023,9 +1202,11 @@ class Api extends RefCounted:
 	## collector uses it to skip the query entirely on the ~99 game-minutes in a
 	## hundred when the street is empty.
 	func live_opportunities() -> int:
+		var _t := Clock.scope(&"live_opportunities")
 		return sim.street.live_count() if sim.street != null else 0
 
 	func demolish(sim_id: String) -> Dictionary:
+		var _t := Clock.scope(&"demolish")
 		var result := _optional("cmd_demolish_building", 1, [sim_id], sim_id)
 		if bool(result["ok"]):
 			demolished += 1
@@ -1043,6 +1224,7 @@ class Api extends RefCounted:
 		return result.get("payload", {})
 
 	func buy_block(block_id: String) -> Dictionary:
+		var _t := Clock.scope(&"buy_block")
 		var result := _optional("cmd_buy_block", 1, [block_id], block_id)
 		if bool(result["ok"]):
 			blocks_bought += 1
@@ -1093,13 +1275,29 @@ class Api extends RefCounted:
 	## walks row-major inside sorted READY block ids and asks the command; first
 	## acceptance wins, which is the same tie-break every other search here uses.
 	func place_water_component(kind: String, level: int = 1) -> Dictionary:
+		var _t := Clock.scope(&"place_water_component")
 		if not has_verb("cmd_place_water_component"):
 			return _log("water", kind, CommandQueue.fail(&"E_NO_VERB"), {})
 		# The LOT, for `footprint()`'s reason: `cmd_place_water_component` reserves
 		# doc 05's whole ladder now, and a search sized to this level's row would
 		# offer a `tank` site the command refuses (2×2 found, 3×3 reserved).
 		var size: Vector2i = sim.water_lot_for(kind)
+		# **The memo** (Wave 30, doc 92 §71, RR-245). `Curriculum._serve` asks for
+		# this component once a game-HOUR while its objective is open, and on a
+		# full map every one of those asks is the same 7,650-origin sweep with the
+		# same answer: seed 4242's 45-game-day arc ran it 509 times for 784,224
+		# candidate origins and placed nothing. `_map_signature` names every
+		# condition the answer depends on except money, and money is handled by
+		# `_money_only` below — a refusal a dollar could lift is never remembered.
+		var memo_key := "water/%s/%d" % [kind, level]
+		var remembered: Variant = _memo_get(memo_key)
+		if remembered != null:
+			Clock.tally(&"place_water_component:memo")
+			return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"), remembered)
+		var radius := int(sim.water.data.placement_value("main_tap_radius_tiles", 8))
 		var previews := 0
+		var priced := 0
+		var money_only := false
 		for block_id in _ready_blocks():
 			var block: LandBlock = sim.world.block(block_id)
 			var x0: int = block.grid.x * BLOCK_TILES
@@ -1112,10 +1310,32 @@ class Api extends RefCounted:
 					previews += 1
 					if previews > WATER_SITE_PREVIEWS:
 						return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"),
-								{"previews": previews, "blocks": _ready_blocks().size(),
-								"capped": true})
-					if not bool(sim.cmd_place_water_component(
-							kind, origin, level, true)["ok"]):
+								{"previews": previews, "priced": priced,
+								"blocks": _ready_blocks().size(), "capped": true})
+					# **Two cheap NECESSARY conditions before the priced preview**
+					# (Wave 30, doc 92 §71, RR-244). `cmd_place_water_component`
+					# refuses `E_NO_MAIN` when `nearest_main_tile` comes back empty
+					# and `E_UNSERVED` when `would_serve` is false, so an origin
+					# that fails either is an origin the preview was going to
+					# refuse — the FIRST ACCEPTED ORIGIN cannot move, and the
+					# refusal cannot either. Both are asked through the command's
+					# own doors rather than reimplemented, which is the whole
+					# reason this search previews instead of reasoning
+					# (see the header above).
+					#
+					# Measured on seed 4242's full map, per candidate origin:
+					# `can_place` 0.8 µs, `nearest_main_tile` 16 µs, `would_serve`
+					# 66 µs, the preview 238 µs — so the order is by price, and
+					# a `source` sweep that priced 2,062 origins now prices 237.
+					if sim.water.nearest_main_tile(origin, radius).is_empty():
+						continue
+					if not sim.grid.would_serve(origin):
+						continue
+					priced += 1
+					var quote: Dictionary = sim.cmd_place_water_component(
+							kind, origin, level, true)
+					if not bool(quote["ok"]):
+						money_only = money_only or _money_only(quote)
 						continue
 					var result: Dictionary = sim.cmd_place_water_component(
 							kind, origin, level, false)
@@ -1127,9 +1347,129 @@ class Api extends RefCounted:
 		# §67.4). This used to be one word on a line that looked exactly like a
 		# refusal from a scan that never ran, and the next person's only way to
 		# tell a full map from a broken search was to reimplement the search.
-		return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"),
-				{"previews": previews, "blocks": _ready_blocks().size(),
-				"capped": false})
+		#
+		# `previews` still counts what it has always counted — candidate origins
+		# the sweep REACHED, which is what the `capped` bound is measured against
+		# — and `priced` beside it is the number of preview commands that reach
+		# is now worth, i.e. the number the wall clock is proportional to. Both
+		# are read by `tools/measure_utility_plan.gd`.
+		var row := {"previews": previews, "priced": priced,
+				"blocks": _ready_blocks().size(), "capped": false}
+		# Remembered only when a dollar could not have changed the answer. A sweep
+		# whose every refusal was `E_FUNDS` or doc 03 §2.10's `E_AUSTERITY` will
+		# answer differently the hour the treasury clears, and money is the one
+		# input `_map_signature` deliberately leaves out.
+		if not money_only:
+			var kept := row.duplicate()
+			kept["memo"] = true
+			_memo_put(memo_key, kept)
+		return _log("water", kind, CommandQueue.fail(&"E_NO_SITE"), row)
+
+	# --- the site-search memo ------------------------------------------------
+
+	## The remembered answer for `key`, or `null` when the map has moved since it
+	## was found. Rotating the generation here — rather than in a separate
+	## "invalidate" call somebody has to remember to make — is what stops a stale
+	## answer being possible at all: there is one door, and it checks.
+	##
+	## `null` is an unambiguous miss because every memoised search returns a
+	## `Vector2i` or a `Dictionary` and neither can be null.
+	func _memo_get(key: String) -> Variant:
+		var signature := _map_signature()
+		if signature != _memo_signature:
+			_memo_signature = signature
+			_memo.clear()
+			return null
+		return _memo.get(key, null)
+
+	## Stores `value` against the generation the matching [_memo_get] opened. It
+	## must be called in the same breath as that miss — every caller does, on the
+	## line that computed the answer — because a `_map_signature` taken later
+	## would file a fresh answer under a map it was not found on.
+	func _memo_put(key: String, value: Variant) -> void:
+		_memo[key] = value
+
+	## **What every memoised site search's answer is a function of, and nothing
+	## else** (Wave 30, doc 92 §71, RR-245).
+	##
+	## Every term is a condition one of those searches reads, from the same place
+	## it reads it:
+	##
+	##   * the owned + READY block set — `E_NOT_OWNED`, `E_NOT_DEVELOPED`, and
+	##     the bounds of every sweep in this class;
+	##   * `TileGrid.flags_hash()` — the whole flag plane in one digest, so
+	##     `can_place` (`E_FOOTPRINT`) and `CitySim._touches_water`
+	##     (`E_NO_WATER`, which reads `FLAG_WATER`) are both covered;
+	##   * the live water edges and their path lengths — `E_NO_MAIN`, the input
+	##     to `nearest_main_tile`;
+	##   * every live transformer's tile and level — which is ALL
+	##     `PowerGrid.would_serve` reads, and therefore the whole of the coverage
+	##     question `grid_shortfall_tile` and the water scan both ask;
+	##   * `city_level` — `E_CITY_LEVEL`.
+	##
+	## Two gates need no term because they cannot move inside a run:
+	## `CitySim._water_variant_locked` reads `data/water.json` flags, and
+	## `placeable_levels` is the same file.
+	##
+	## **Money is left out on purpose.** `E_FUNDS` and doc 03 §2.10's
+	## `E_AUSTERITY` are the two blockers that clear without the map moving, and a
+	## signature carrying the balance would differ every game-hour and memoise
+	## nothing at all. The one search that can be refused for money handles them
+	## by REFUSING TO REMEMBER instead — see `_money_only`. No other memoised
+	## search here previews a price.
+	##
+	## It is CONSERVATIVE in the safe direction throughout: the flag plane moves
+	## when a tile floods, the roster moves when a transformer three blocks from
+	## anything relevant is re-rated, and either costs a re-scan that was not
+	## strictly needed. Missing a change that DOES move an answer is the failure
+	## this must not have.
+	## **Packed integers, not a built string, and the measurement is why.** The
+	## first cut accumulated `taps += "%d,%d,%d;" % […]` per transformer and
+	## `mains += …` per edge. GDScript copies the whole buffer on every `+=`, so
+	## a late-game city with a few hundred components made that quadratic:
+	## `tools/profile_gates.gd --verbs` measured **5.2 ms per signature**, which
+	## turned `grid_shortfall_tile`'s memo from a 41 s saving into a 5 s LOSS
+	## (207.63 s → 212.81 s at 1,462 hits of 8,795 asks). Appending to a
+	## `PackedInt32Array` and hashing it once is the same information at a
+	## fraction of the price — and it is the instrument this wave built catching
+	## this wave's own optimisation not paying, which is the argument for having
+	## built it.
+	func _map_signature() -> String:
+		var mains := PackedInt32Array()
+		for id: Variant in _sorted(sim.water.edges):
+			var e: WaterEdge = sim.water.edges[id]
+			if e.is_live():
+				mains.append(hash(id))
+				mains.append(e.path.size())
+		var taps := PackedInt32Array()
+		for id: Variant in sim.grid.component_ids_of_kind(&"transformer"):
+			var c: Dictionary = sim.grid.component(String(id))
+			if c["state"] == &"FAILED":
+				continue
+			var t: Vector2i = c["tile"]
+			taps.append(t.x)
+			taps.append(t.y)
+			taps.append(int(c["level"]))
+		return "%s|%d|%d|%d|%d|%d" % ["/".join(_ready_blocks()),
+				sim.world.grid.flags_hash(), sim.progression.city_level,
+				hash(mains), hash(taps), sim.water.edges.size()]
+
+	## True when every blocker on a refused preview is one MONEY can lift. Doc 03
+	## §2.10 gives two: the plain `E_FUNDS`, and `E_AUSTERITY`, which refuses the
+	## whole `construction` category at any balance while layer 2 is engaged and
+	## therefore lifts on its own schedule rather than on the map's.
+	##
+	## An empty blocker list is not money-only — that is a quote that passed, and
+	## the caller never asks about one.
+	static func _money_only(quote: Dictionary) -> bool:
+		var blockers: Array = (quote.get("payload", {}) as Dictionary).get("blockers", [])
+		if blockers.is_empty():
+			return false
+		for raw: Variant in blockers:
+			var code := StringName(raw)
+			if code != &"E_FUNDS" and code != &"E_AUSTERITY":
+				return false
+		return true
 
 	## Doc 93 §B's headline verb ("THE game"). `cmd_place_grid_component(kind,
 	## tile, level = 1, preview = false)`.
@@ -1142,6 +1482,7 @@ class Api extends RefCounted:
 	## cover the ground its own service radius claims. Doc 92 F-11 measured what
 	## buying only L1 costs (see `Balanced.GRID_LEVEL`).
 	func place_grid_component(kind: String, tile: Vector2i, level: int = 1) -> Dictionary:
+		var _t := Clock.scope(&"place_grid_component")
 		var result := _optional("cmd_place_grid_component", 3, [kind, tile, level],
 				"%s L%d@%d,%d" % [kind, level, tile.x, tile.y])
 		if bool(result["ok"]):
@@ -1153,6 +1494,7 @@ class Api extends RefCounted:
 	## would use: `cmd_place_grid_component("feeder", far_end, conductor_class)`
 	## picks the source substation and fills the polyline (the C-41 assist).
 	func route_feeder(target: Vector2i, conductor_class: int = 2) -> Dictionary:
+		var _t := Clock.scope(&"route_feeder")
 		var result := _optional("cmd_place_grid_component", 3,
 				["feeder", target, conductor_class],
 				"feeder c%d@%d,%d" % [conductor_class, target.x, target.y])
@@ -1169,6 +1511,7 @@ class Api extends RefCounted:
 	## the one a competent player watches, because a feeder past 1.05 opens and
 	## takes its whole subtree dark with it.
 	func feeder_peak_ratio() -> float:
+		var _t := Clock.scope(&"feeder_peak_ratio")
 		return float(sim.grid.worst_feeder(_ambient())["load_ratio"])
 
 	## Where new copper wants to go: the tile of the biggest transformer hanging
@@ -1176,6 +1519,7 @@ class Api extends RefCounted:
 	## lets doc 04 §2.9's transfer rule move load off it — a feeder drawn into
 	## empty ground would only ever carry buildings that do not exist yet.
 	func hot_feeder_target() -> Vector2i:
+		var _t := Clock.scope(&"hot_feeder_target")
 		var worst := String(sim.grid.worst_feeder(_ambient())["id"])
 		if worst == "":
 			return Vector2i(-1, -1)
@@ -1193,6 +1537,7 @@ class Api extends RefCounted:
 	## The $15,000 answer to `has_feeder_slot() == false`: a new substation,
 	## sited near the load it is being bought for.
 	func build_substation(centre: Vector2i) -> Dictionary:
+		var _t := Clock.scope(&"build_substation")
 		var result := place_near("substation", centre)
 		if bool(result["ok"]):
 			substations_built += 1
@@ -1203,6 +1548,7 @@ class Api extends RefCounted:
 	## §2.6's table gives a 52-game-hour MTTF at r = 1.15 and a THREE-game-hour
 	## one at r = 1.30. So this reading has to be acted on well under 1.0.
 	func transformer_peak_ratio() -> float:
+		var _t := Clock.scope(&"transformer_peak_ratio")
 		return float(sim.grid.worst_transformer(_ambient())["load_ratio"])
 
 	## Where a parallel transformer wants to go (doc 04 §2.9): the first legal
@@ -1212,6 +1558,7 @@ class Api extends RefCounted:
 	## preview's `relieved_kw` so the agent never buys a tap that relieves
 	## nothing.
 	func relief_spot(level: int, radius: int) -> Vector2i:
+		var _t := Clock.scope(&"relief_spot")
 		var hot := sim.grid.worst_transformer(_ambient())
 		if String(hot["id"]) == "":
 			return Vector2i(-1, -1)
@@ -1245,6 +1592,7 @@ class Api extends RefCounted:
 	## than the last — it is the agent failing to do the obvious thing the refusal
 	## is telling it to do, which is buy copper at the building that was refused.
 	func power_blocked_top_rung() -> Dictionary:
+		var _t := Clock.scope(&"power_blocked_top_rung")
 		if not has_verb("cmd_upgrade_building"):
 			return {}
 		for id in Api._sorted(sim.buildings):
@@ -1296,6 +1644,7 @@ class Api extends RefCounted:
 	## demand/supply); `budget` below 0 means unbounded, which is what a refusal
 	## that has already happened deserves.
 	func upgrade_water_node(zone_key: String = "", budget: int = -1) -> Dictionary:
+		var _t := Clock.scope(&"upgrade_water_node")
 		if not has_verb("cmd_upgrade_water_component"):
 			return _log("water_upgrade", "(no verb)", CommandQueue.fail(&"E_NO_VERB"), {})
 		var zones := _zones_by_need(zone_key)
@@ -1367,6 +1716,7 @@ class Api extends RefCounted:
 	## kind [supply_chain_order] puts first. `""` for a zone that has none of the
 	## three (a tank-only island).
 	func binding_supply_kind(zone_key: String) -> String:
+		var _t := Clock.scope(&"binding_supply_kind")
 		var zones := _zones_by_need(zone_key)
 		if zones.is_empty():
 			return ""
@@ -1426,6 +1776,7 @@ class Api extends RefCounted:
 	## picks exactly one. Ranked by doc 05's own utilization — `demand / supply`
 	## — with `zone_key` as the tie-break so two identical zones never swap.
 	func _zones_by_need(zone_key: String) -> Array[PressureZone]:
+		var _t := Clock.scope(&"_zones_by_need")
 		var out: Array[PressureZone] = []
 		for raw: Variant in sim.water.topology.zones:
 			var z: PressureZone = raw
@@ -1445,6 +1796,7 @@ class Api extends RefCounted:
 	## The pressure zone a building drinks from, or `""` — doc 05's access tile
 	## resolved through its own topology, never guessed from the origin.
 	func zone_key_of(sim_id: String) -> String:
+		var _t := Clock.scope(&"zone_key_of")
 		if sim_id == "":
 			return ""
 		var z: PressureZone = sim.water.zone_at(sim.water.demand.access_tile(sim_id))
@@ -1455,6 +1807,7 @@ class Api extends RefCounted:
 	## pressure already under doc 05's own `upgrade_min_pressure`, which is the
 	## number `WaterSystem.can_upgrade_water` refuses on.
 	func water_pinch_zone(ratio: float) -> String:
+		var _t := Clock.scope(&"water_pinch_zone")
 		var gate := float(sim.water.data.effect("upgrade_min_pressure", 0.55))
 		for z: PressureZone in _zones_by_need(""):
 			if z.demand_m3h <= 0.0:
@@ -1513,6 +1866,7 @@ class Api extends RefCounted:
 	## answer it: it only looks at buildings one rung short of their top, and a
 	## level-1 fire station is five rungs short of nothing.
 	func blocked_upgrade(archetype: String) -> Dictionary:
+		var _t := Clock.scope(&"blocked_upgrade")
 		if not has_verb("cmd_upgrade_building"):
 			return {}
 		# The subset is sorted, not the roster — same argument as
@@ -1591,6 +1945,7 @@ class Api extends RefCounted:
 	## `relief_spot`, aimed at ONE building instead of at the hottest transformer
 	## in the city. Same ring scan, same `relieved_kw > 0` gate, same determinism.
 	func relief_spot_near(centre: Vector2i, level: int, radius: int) -> Vector2i:
+		var _t := Clock.scope(&"relief_spot_near")
 		for dz in range(-radius, radius + 1):
 			for dx in range(-radius, radius + 1):
 				var tile := centre + Vector2i(dx, dz)
@@ -1626,6 +1981,7 @@ class Api extends RefCounted:
 	## the widened scan reaches is (46, 40).
 	func relief_spot_ring(centre: Vector2i, level: int, inner: int,
 			outer: int) -> Dictionary:
+		var _t := Clock.scope(&"relief_spot_ring")
 		var previews := 0
 		for dz in range(-inner, inner + 1):
 			for dx in range(-inner, inner + 1):
@@ -1659,6 +2015,7 @@ class Api extends RefCounted:
 	## ladder)? When there is not, more copper is not buyable at any price and
 	## the answer is a $15,000 substation instead.
 	func has_feeder_slot() -> bool:
+		var _t := Clock.scope(&"has_feeder_slot")
 		for sim_id in Api._sorted(sim.buildings):
 			if not sim.grid.has_component(String(sim_id)):
 				continue
@@ -1684,6 +2041,7 @@ class Api extends RefCounted:
 	## none of that depends on where it lands — which is what lets a saving agent
 	## price the purchase before it has found a site for it.
 	func water_quote(kind: String, level: int = 1) -> int:
+		var _t := Clock.scope(&"water_quote")
 		if not has_verb("cmd_place_water_component"):
 			return 0
 		var rules: Dictionary = sim.water.data.placeable_rules(kind)
@@ -1698,6 +2056,7 @@ class Api extends RefCounted:
 	## `E_VERB_SIGNATURE` and never called again in this run — the harness must
 	## degrade, never crash, when the command layer moves under it.
 	func _optional(verb: String, arity: int, args: Array, subject: String) -> Dictionary:
+		var _t := Clock.scope(&"_optional")
 		if not has_verb(verb):
 			return CommandQueue.fail(&"E_NO_VERB")
 		if int(verbs[verb]["required"]) > arity or int(verbs[verb]["args"]) < arity:
@@ -1715,6 +2074,7 @@ class Api extends RefCounted:
 	## `damaged` state ranks with its condition, which is where it belongs: a
 	## damaged building IS a low-condition building (doc 02 §2.12).
 	func maintenance_queue(threshold: float) -> Array[Dictionary]:
+		var _t := Clock.scope(&"maintenance_queue")
 		var out: Array[Dictionary] = []
 		for id in _sorted(sim.buildings):
 			var b: Building = sim.buildings[id]
@@ -1740,6 +2100,7 @@ class Api extends RefCounted:
 
 	## The lowest condition standing in the city, 1.0 when nothing has aged.
 	func min_condition() -> float:
+		var _t := Clock.scope(&"min_condition")
 		var lowest := 1.0
 		for id in sim.buildings:
 			var b: Building = sim.buildings[id]
@@ -1752,6 +2113,7 @@ class Api extends RefCounted:
 	## player paid for and forgot is dead capital, so a land-buying strategy has
 	## to sweep for them.
 	func undeveloped_owned_blocks() -> Array[String]:
+		var _t := Clock.scope(&"undeveloped_owned_blocks")
 		var out: Array[String] = []
 		for id in sim.world.block_ids_sorted():
 			var block: LandBlock = sim.world.block(String(id))

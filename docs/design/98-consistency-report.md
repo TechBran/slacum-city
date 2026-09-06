@@ -11845,3 +11845,174 @@ is a QUERY, its emptiness and its `reachable_level` are computed from the record
 and the catalog before the blocker list is built, and the only sim caller —
 `cmd_upgrade_building`'s ceiling — reads `reachable_level` and never `blockers`.
 The four hashes say the same thing from the other side.
+
+
+## 75. WAVE 30 — the suite's cost regression: an instrument, a filter, and a memo that is allowed to forget (binding)
+
+*Lane A of Wave 30. Fork `9aecbf9` (Waves 23–29 merged). Hash-neutral by
+measurement: all four `profile_sim --hash-only` baselines are unchanged and every
+A/B run's `state_hash` is identical, seed for seed.*
+
+**The brief.** `tools/run_suite.sh --one=test_balance_gates.gd` measured **1,562 s
+(26 min) for 33 tests** on main and the full suite ~60–65 min, against ~15 min for
+the whole suite before Wave 26. The named suspect was Wave 26's
+`WATER_SITE_PREVIEWS` 96 → 4,096. **The suspect is real and it is a third of the
+harness cost, not the whole of it** — and the reason nobody could have known that
+is RR-244.
+
+### RR-244 — the project had no instrument that could see the half that got slow
+
+`tools/profile_sim.gd` profiles the SIM. It boots a city, advances it, and charges
+each tick phase for its microseconds through `TickScheduler`'s opt-in hook. A
+scripted agent's `act()` happens BETWEEN two ticks, so the sim profiler charges it
+to nobody — and `tests/test_balance_gates.gd` spends a third of its wall clock
+there. **Four waves of the suite got slower and the only number any run printed
+was `tests:`.**
+
+Two instruments land, and they are deliberately different sizes.
+
+**(a) The suite prints its own wall clock, always.** `tests/run_tests.gd` gains a
+`---- wall clock ----` block: every file that spent ≥ 1 s, sorted, plus the
+slowest 12 methods by name. `tools/run_one_test.gd` gains the same reading for one
+file (slowest 8), because a file asked for by name is a file somebody is working
+on. Two `Time.get_ticks_usec()` reads per method is what it costs to make the next
+regression a number instead of a memory.
+
+**(b) `tools/profile_gates.gd` — per method, and per agent verb.** It runs the real
+`SimTest` bracket and reports the real verdict, so it is a slower runner and never
+a laxer one. `--verbs` opens `Playtest.Clock`, a self-time scope timer on 47
+`Api` verbs (self time excludes callees, exactly as `profile_sim` accounts).
+Scopes close on `NOTIFICATION_PREDELETE` of a local `RefCounted`, so an early
+`return` — `place_water_component` has three, `upgrade_water_node` nine — cannot
+leak a frame. Off by default and free when off: `Clock.scope()` returns `null`
+without allocating while `enabled` is false.
+
+**What it found at the fork.** 1,564.93 s over 34 methods, and the top of the verb
+table is not the suspect:
+
+| self s | calls | µs/call | agent verb |
+|---:|---:|---:|---|
+| **207.63** | 7,333 | 28,314 | `grid_shortfall_tile` |
+| **184.18** | 631 | 291,880 | `place_water_component` |
+| **55.20** | 3,685 | 14,980 | `relief_spot` |
+| 20.05 | 444,155 | 45 | `upgrade_preview` |
+| 7.36 | 7,861 | 936 | `upgrade_candidates` |
+
+Instrumented verbs are **491.77 s of 1,571.67 s (31.3 %)**. The rest is
+`advance_coarse_hours`. Doc 92 §71 carries the per-method table and the
+consequence: **a perfect harness lands this file at ~18 minutes**, so the 10-minute
+target is not reachable from `tests/` and `tools/`.
+
+### RR-245 — the water sweep pays for a preview it did not need, 780,000 times
+
+`Curriculum._serve` asks for its objective's water component **once a game-hour**
+while the objective is open, and on a full map every one of those asks is the same
+sweep with the same answer. Measured at the fork, `curriculum` / 45 game-days:
+
+| seed | `E_NO_SITE` refusals | candidate origins reached |
+|---|---:|---:|
+| 1337 | 24 | 41,802 |
+| **4242** | **509** | **784,224** |
+| 9001 | 25 | 42,805 |
+
+And the sweep's inner loop, timed per candidate origin on the city seed 4242
+reaches (`source`, 2×2, 7,650 cells):
+
+| step | of 2,062 that pass `can_place` | seconds | µs each |
+|---|---:|---:|---:|
+| `TileGrid.can_place` | 2,062 pass of 7,650 | 0.006 | 0.8 |
+| `WaterSystem.nearest_main_tile` | 237 pass | 0.032 | 15.5 |
+| `PowerGrid.would_serve` | 1,134 pass | 0.137 | 66.4 |
+| **`cmd_place_water_component(preview)`** | **0 pass** | **0.491** | **238.1** |
+
+**Two fixes, and each is provably answer-preserving.**
+
+**(a) The cheap necessary conditions go first.** `E_NO_MAIN` and `E_UNSERVED` are
+blockers the command refuses on, and the sweep now asks
+`WaterSystem.nearest_main_tile` and `PowerGrid.would_serve` — *the command's own
+doors, not a heuristic's* — before paying 238 µs to price an origin. An origin
+that fails a necessary condition is an origin the preview refuses, so the first
+ACCEPTED origin cannot move. Doc 93 §BF2 is the ruling.
+
+**(b) The refusal is remembered.** `Api._map_signature` names every input the
+answer depends on — READY block set, `TileGrid.flags_hash()`, the live water
+edges, every live transformer's tile and level, city level — and the memo holds
+**one generation**: a signature that disagrees drops the table, so a stale answer
+is not expressible. **Money is deliberately absent from the key**, because
+`E_FUNDS` and doc 03 §2.10's `E_AUSTERITY` clear without the map moving; a sweep
+whose every refusal was money-shaped is therefore **not filed at all**
+(`Api._money_only`). Doc 93 §BF3.
+
+`grid_shortfall_tile` — the most expensive verb in the file — takes the same memo,
+for the same reason: its answer reads the block set, the flag plane and the
+transformer roster, and nothing else. It is called once a game-hour by
+`Balanced._lead_grid`.
+
+**And the instrument caught this memo not paying, which is the argument for
+building it first.** The signature's first cut accumulated
+`taps += "%d,%d,%d;" % […]` per transformer; GDScript copies the whole buffer on
+every `+=`, so a late-game city made it quadratic at **5.2 ms per signature**
+against a ~28 ms search, and at a 16.6 % hit rate (1,462 of 8,795 asks) the memo
+made `grid_shortfall_tile` **slower than no memo at all** — 207.63 s at the fork,
+**212.81 s** with it. Rebuilt on a `PackedInt32Array` hashed once, the same memo
+reads **197.45 s** over the identical 7,333 calls. The middle number is the one a
+lane without an instrument ships: a memo, a test, a doc section and a five-second
+regression, all of it looking like progress. Doc 92 §71.3 has the three-row table.
+
+**One new sim accessor, and it has exactly one consumer.**
+`TileGrid.flags_hash()` returns `hash(_flags)` — a digest of the 12,544-byte flag
+plane, which is all `can_place` and `CitySim._touches_water` read. Not saved, not
+in `state_hash`, read by nothing in `sim/`, `game/` or `ui/`. It is conservative
+in the safe direction: a flooded tile moves the digest and costs a re-scan that
+was not needed; missing a change that DOES move an answer is the failure it exists
+to rule out.
+
+**The A/B, fork playtest against this branch's, driven by a copy of
+`BalanceGateRig.run`'s loop in one process** (`curriculum`, 45 game-days):
+
+| seed | fork | this branch | `E_NO_SITE` | origins reached | previews PRICED | `state_hash` |
+|---|---:|---:|---:|---:|---:|---|
+| 1337 | 128.02 s | 119.65 s | 24 → **24** | 41,802 → **41,802** | 41,802 → **4,012** | **identical** |
+| 4242 | 286.32 s | 151.93 s | 509 → **509** | 784,224 → **784,224** | 784,224 → **101,852** | **identical** |
+
+The refusal count and the origins reached are byte-identical — the sweep walks the
+same ground and returns the same verdict — and only the number of PRICED previews
+moves. That is the direct evidence that the filter removed work and not sites.
+
+**`WATER_SITE_PREVIEWS` is NOT lowered.** The brief offered "cap the previews at a
+value the measurement supports", and the measurement does not support one: no
+sweep on any of the three seeds was ever capped (`capped 0` on all 558 refusals),
+so a lower cap would be a bound fitted to nothing that could only ever turn a
+found site into a refusal. The cap stays at 4,096 and the cost went instead.
+
+### RR-246 — a field that stopped meaning its name, and the reader that arrived with it
+
+`previews` on the `E_NO_SITE` row counts *candidate origins the sweep reached* —
+what `WATER_SITE_PREVIEWS` caps, and what `tools/measure_utility_plan.gd` has
+printed since Wave 26. After RR-245 it is no longer the number of preview
+commands.
+
+The field keeps its meaning and its cap, so no bound moves and no published number
+is re-based. The row gains **`priced`** (previews actually issued — the number the
+wall clock is proportional to) and **`memo`** (a refusal answered from the
+remembered sweep), and `tools/measure_utility_plan.gd` prints all three on the
+same line **in the same commit**. A field whose reader arrives in a later wave is
+the A91-D-19 shape and this project has been sent back for it twice; doc 93 §BF4
+is the ruling.
+
+The memo hits also have a reader: `Clock.tally` puts
+`place_water_component:memo` and `grid_shortfall_tile:memo` in the verb table with
+a call count and zero self time, which is the honest shape for an event whose
+whole point is that it spends nothing. Read them with `--top=0`.
+
+### What this lane did not do, and the number that says so
+
+`Api.relief_spot` (55.2 s) is the same defect shape and is left, because its cheap
+necessary condition needs `CitySim._placeable_rules`' footprint and reaching for a
+private rule is how a harness grows a second, wrong copy (doc 91 A91-D-159).
+`PowerGrid.would_serve` being O(all components) per tile is the shared root under
+`grid_shortfall_tile`, `candidate_site`, `unserved_tiles` and this wave's own
+filter, and it is a sim read-path memo with an invalidation nobody has audited
+(A91-D-160). And 1,073 s of this file is the sim advance over 690 preset-days,
+200 decay-days, 60 director-days and 3,240 curriculum game-hours — a doc 92
+question about what a gate needs, not a performance one (A91-D-161).
