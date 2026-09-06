@@ -11653,3 +11653,25 @@ the digest. A city with a player-placed grower **does** move its hash, which is
 the honest behaviour and is what `test_a_legacy_body_gets_its_lots_on_restore`
 exercises.
 
+
+### 74.2 The suite, the audit and the four baselines, on the FINAL tree
+
+Taken on `3d0539b`, the head this lane ships.
+
+| gate | command | result |
+|---|---|---|
+| full suite | `nohup setsid tools/run_suite.sh` | **161 files, 2,981 tests, failed 0, silent 0** |
+| screen deck | `godot --headless tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict` | **exit 0, 99 of 99 states clean** |
+| doc ids | `python3 tools/check_doc_refs.py` | *6,681 references, all resolving; no id assigned twice* |
+| determinism, founding city | `tools/profile_sim.gd -- --hash-only` | `9004573df161a57e…` / `d5c6678de64cb5de…` — **byte-identical to the fork** |
+| determinism, benchmark city | `… --hash-only --city=res://tests/fixtures/bench_city.json` | `ebb5f4762e4f2412…` / `307a6a27ad6f1801…` — **byte-identical to the fork** |
+
+**The two full-suite runs before this one each failed exactly one test, and that
+is worth recording rather than hiding.** Both were started before the lot-lock
+upgrade cap landed, and both picked up the NEW test file against the OLD
+`city_sim.gd` — so
+`test_a_lot_locked_building_cannot_climb_past_the_ground_it_holds` correctly
+reported `E_MAX_LEVEL` missing from the blocker list, which is exactly the defect
+the cap closes, caught by its own test on a tree that did not yet contain the
+fix. The run above is the first whose tree has both, and it is the one this lane
+reports.
