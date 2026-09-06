@@ -4195,6 +4195,66 @@ pipeline, because in that harness the harness is the writer.
    with a jump in it. Every straight run and every simple L is fine; a chain
    solve belongs with whoever next touches `query_road_preview`.
 
+### 2.20 WHERE IT CAN GO — the placement site paint, **shipped 2026-09-06**
+
+Doc 12 §2.7 D-130's geometry, and the second layer in this document that tints
+the GROUND rather than a building.
+
+**Why it cannot be an overlay channel.** §2.5's mechanism is
+`RenderStateModel.set_overlay_channel(mode, {render_id: state})` — per BUILDING,
+riding the two `overlay_state` bits §2.6 packs into the instance buffer (C-64).
+A *legal placement site* is bare ground: there is no instance to tint, and there
+never will be, because the whole read exists to find ground with nothing on it.
+This is §2.15's congestion problem a second time (an edge is not a building),
+and it takes §2.15's answer: **one extra translucent MultiMesh of 8 m tile quads
+a hand above the surface**, `game/shaders/site_paint.gdshader` on it, built by
+`game/render/site_paint_view.gd` from `BuildSheet.site_paint()`.
+
+**Budget: +1 draw call while a refused ghost is being placed, +0 otherwise.**
+Every lit tile in the window shares one `MultiMeshInstance3D` and one material,
+and the node hides itself the moment the paint is empty — `ConstructionVehicleView`'s
+RR-83 rule again. The buffer is allocated once at
+`data/ui.json.placement.site_paint.max_tiles` (64) and `visible_instance_count`
+does the rest, so a window that shrinks from 32 sites to 3 re-uploads and never
+reallocates. `custom_aabb` is world-sized: instances are written straight into
+the buffer and never update the auto-AABB, and a window scanned at one end of
+the map must not be culled by a box computed at the other.
+
+| pose | draw calls | instances | uploads per ghost move |
+|---|---|---|---|
+| nothing being placed | **0** (node hidden) | 0 | 0 |
+| founding city, `source` on the shore | **1** | 3 | 1 |
+| founding city, `house`, window at (40, 40) | **1** | 32 (`site_rows`) | 1 |
+| player save, `source` at his plant | **0** | 0 | 0 |
+| ghost re-applied 30× on the same tile | **1** | unchanged | **0** |
+
+The last row is the layer's whole CPU story. `apply()` fingerprints the picture
+— the window, and every row's anchor, mark, ring and alpha — and returns without
+touching the buffer when it has not moved, so §2.7's 10 Hz revalidation costs
+nothing between tile boundaries (`tests/test_site_paint.gd`
+`test_the_buffer_is_not_rewritten_while_the_picture_has_not_changed`: **31
+applies, 1 upload**). The layer polls nothing, owns no clock and reads no RNG:
+the picture is a pure function of the window that was scanned and the tile the
+ghost stands on, so two devices placing the same building see the same ground.
+
+**Three channels, one of them colour** (§11 / doc 12 A5): the state hue —
+decoded to LINEAR at the write, RR-91, because a MultiMesh instance colour takes
+no sRGB decode — a procedural mark drawn from `data/ui.json.state_glyphs`'
+own four shapes (`●` clean, `▲` a site doc 93 §BD9 warns about), and an alpha
+ramp that fades with distance from the ghost. The mark is a field rather than an
+atlas page: four shapes are three lines of algebra each, against a second
+texture, a second upload and a second material for a layer whose whole budget is
+one call. `render_priority = 4` puts it over the ground and **under** §2.15's
+congestion wash at 5 — a player placing a pump with the traffic map up is
+looking for a site.
+
+**What is NOT in this budget: the scan.** `BuildController.placement_sites()` is
+**60.6 ms** on the founding city for a water card and 14.2 ms for a house, once
+per card and once per window, on the main thread. It is doc 12's cost and not
+this layer's — the paint reads a memoised answer and never scans — but it is the
+largest single-frame UI cost the project has and it is filed as
+`A91-D-164` for whoever next touches §2.13's table.
+
 ## 3. Data Schema
 
 ### 3.1 `data/render.json`

@@ -109,6 +109,45 @@ var _last_verdict: StringName = &""
 ## go" does not change while the finger moves inside the window it is about.
 var _site_hint: Dictionary = {}
 var _site_hint_card := ""
+## **…and the paint the sentence implies** (Wave 30, doc 12 D-130).
+## `_site_hint_spoken` is set by `_refresh_bar` and read by `site_paint()`, and
+## it is the whole of the "the sentence and the paint agree" requirement: the
+## ground is lit exactly when the bar printed the window's sentence, out of the
+## same memoised `site_hint()`, because the two answers come from one flag and
+## one call rather than from two conditions that could drift apart.
+var _site_hint_spoken := false
+var _site_paint_model: SitePaintModel
+
+## **The events that change which tile is a legal ORIGIN**, and therefore the
+## only ones that may throw away a memoised window (`invalidate_site_hint`).
+## Every name here is on the list because it moves a refusal code the window
+## itself publishes, and `tests/test_site_paint.gd` greps `sim/` for each one —
+## a set of event names nothing emits is exactly the defect this wave is named
+## after, one layer up.
+##
+##   block_purchased / block_ready          E_NOT_OWNED, E_NOT_DEVELOPED
+##   building_placed_sim / _removed         E_FOOTPRINT — the ground is taken
+##   building_completed                     …and a shell that finished takes its lot
+##   grid_component_placed / _removed       E_UNSERVED, E_TRANSFORMER_FULL
+##   grid_node_commissioned / _retired      …and the capacity behind them
+##   water_main_placed                      E_NO_MAIN
+##   water_component_placed                 E_NO_WATER's other half
+##   road_built                             frontage
+##   austerity_entered / _exited            E_AUSTERITY — the player's own case:
+##                                          all three shoreline sites on
+##                                          `player_save_0903` refuse for this
+##                                          and nothing else, and the freeze
+##                                          lifts one game-hour after the load
+const SITE_GROUND_EVENTS := {
+	&"block_purchased": true, &"block_ready": true,
+	&"building_placed_sim": true, &"building_removed": true,
+	&"building_completed": true,
+	&"grid_component_placed": true, &"grid_component_removed": true,
+	&"grid_node_commissioned": true, &"grid_node_retired": true,
+	&"water_main_placed": true, &"water_component_placed": true,
+	&"road_built": true,
+	&"austerity_entered": true, &"austerity_exited": true,
+}
 
 
 ## The one wiring entry point. `game/main.gd` hands over the parsed config and
@@ -123,6 +162,7 @@ func setup(cfg: UIConfig = null, p_controller: BuildController = null) -> void:
 	if controller != null and (path == null or path.sim != controller.sim):
 		path = PathTool.new(controller.sim, controller.formatter, controller.tile_m)
 	model = HudModel.new(config)
+	_site_paint_model = SitePaintModel.new(config, _palette_variant())
 	var defaults := config.section("defaults")
 	_text_scale = maxf(1.0, UIConfig.get_num(defaults, "text_scale", 1.0))
 	_touch_min = float(ThemeBuilder.touch_min_dp(config,
@@ -905,6 +945,11 @@ func path_ghost() -> Dictionary:
 
 
 func _refresh_bar() -> void:
+	# Wave 30 (D-130): the ground goes dark first and is lit again only by the
+	# one line below that prints the window's sentence. Cleared HERE rather than
+	# on each of this function's four early returns, because a flag whose reset
+	# is spread over four branches is a flag that will be left true on the fifth.
+	_site_hint_spoken = false
 	if _bar == null or controller == null:
 		return
 	var is_run := is_placing_path()
@@ -979,6 +1024,10 @@ func _refresh_bar() -> void:
 	# place it has actually verified.
 	var hint := site_hint()
 	var hint_text := _site_hint_text(hint)
+	# **The flag the ground reads** (Wave 30, doc 12 D-130). `site_paint()` lights
+	# exactly the window this line spoke about, so there is no second condition
+	# to drift out of step with this one.
+	_site_hint_spoken = hint_text != ""
 	if hint_text != "":
 		body = "%s  %s" % [body, hint_text]
 		var hint_fix: Dictionary = hint.get("fix_target", {}) as Dictionary
@@ -1008,6 +1057,48 @@ func site_hint() -> Dictionary:
 		_site_hint_card = card
 		_site_hint = controller.placement_sites()
 	return _site_hint
+
+
+## **The paint under the sentence** (Wave 30, doc 12 D-130, doc 93 §BG1).
+##
+## `game/render/site_paint_view.gd` takes this verbatim and uploads it; the suite
+## takes it without a viewport. It is the SAME `site_hint()` the placement bar
+## printed from — one `placement_sites` call, one window — and it is lit exactly
+## when that sentence was printed, which is what `_site_hint_spoken` is for.
+## Requirement (2) of D-130 is therefore not a property this function has to be
+## careful about: there is one call and one flag, so the two cannot disagree.
+func site_paint() -> Dictionary:
+	if controller == null or _site_paint_model == null or not _site_hint_spoken:
+		return {"visible": false, "tiles": [] as Array[Dictionary]}
+	return _site_paint_model.paint(site_hint(), controller.ghost(),
+			controller.centre_offset(), controller.tile_m)
+
+
+## Settings ▸ colourblind. The ground borrows the legend's hues, so it has to
+## follow the palette the theme just switched to — A6 is not a UI-layer-only
+## promise, and `rebuild_theme()` rebuilds a `Theme` and reaches no MultiMesh.
+## `game/main.gd`'s `&"colorblind"` arm is the caller.
+func set_palette_variant(variant: String) -> void:
+	if _site_paint_model != null:
+		_site_paint_model.set_palette_variant(variant)
+
+
+func _palette_variant() -> String:
+	if config == null:
+		return "default"
+	return str(config.section("defaults").get("colorblind", "default"))
+
+
+## **The map moved under the memo** (Wave 30, doc 12 D-130). §BD8's rule is that
+## the answer to "where can this go" does not change while the finger moves
+## inside the window it is about — which is true, and says nothing about the
+## batch that just bought the block the player was told to buy. The shell drains
+## the bus once a tick and calls this when a batch carried a change to the
+## ground; the next `site_hint()` re-scans, the bar re-prints and the paint
+## follows, all from the one call they share.
+func invalidate_site_hint() -> void:
+	_site_hint = {}
+	_site_hint_card = ""
 
 
 ## The window's sentence, or `""` when it has nothing to add. A window that found

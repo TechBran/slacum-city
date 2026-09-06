@@ -1061,8 +1061,17 @@ func placement_sites(centre: Vector2i = Vector2i(-1, -1), radius: int = -1,
 			var blockers := _site_blockers(verdict)
 			if _site_is_buyable(blockers):
 				var block: LandBlock = sim.world.block_of_tile(tile.x, tile.y)
+				# **The refused tile's own price** (Wave 30, `A91-D-163`). The
+				# quote that said `E_FUNDS` knows exactly what it would have
+				# charged HERE — 38,086 for a source with a one-tile lateral,
+				# where the card's headline is 37,800 — and `out["cost"]` is
+				# written only when something was legal, so the funds sentence
+				# used to read "it costs $0" at the very moment the player was
+				# being told they could not afford it. One quote, one price.
+				var quoted: Dictionary = verdict.get("params", {}) as Dictionary
 				buyable.append([_site_remedy_rank(blockers), distance, tile.y,
-						tile.x, block.id if block != null else "", blockers])
+						tile.x, block.id if block != null else "", blockers,
+						int(quoted.get("cost", 0))])
 	# **Nothing above moved the ghost.** `evaluate(tile)` takes the origin as an
 	# argument and reads `origin` for nothing, so this whole scan is a read —
 	# which is the property that lets the placement bar call it mid-drag.
@@ -1183,11 +1192,14 @@ func _site_advice(found: Dictionary, buyable: Array) -> Dictionary:
 			args["count"] = buyable.size()
 			return {"key": "ui_site_austerity", "args": args, "cost": 0,
 					"fix_target": here}
-		# 2b. Nothing but the price of the thing itself.
+		# 2b. Nothing but the price of the thing itself. The price is the one
+		#     THAT TILE was quoted (`A91-D-163`); `found["cost"]` is the cheapest
+		#     LEGAL site's, and in this branch there are none, so it is zero.
 		if blockers.has(&"E_FUNDS"):
-			args["cost"] = RequirementFormatter.money(int(found["cost"]))
+			var quoted := int(best[6])
+			args["cost"] = RequirementFormatter.money(quoted)
 			args["have"] = RequirementFormatter.money(sim.treasury.balance)
-			return {"key": "ui_site_funds", "args": args, "cost": 0,
+			return {"key": "ui_site_funds", "args": args, "cost": quoted,
 					"fix_target": here}
 		var owned := not blockers.has(&"E_NOT_OWNED")
 		var quote := sim.cmd_buy_block(block_id, true) if not owned \

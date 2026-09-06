@@ -1753,7 +1753,19 @@
 		"max_run_tiles": 48,
 		"_site_scan": "Wave 28 fix (doc 12 D-127). The build sheet answers `where CAN this go` by running the ghost's own preflight over a WINDOW, so these are the size of the window and how many origins it hands the shell to paint. They are effort numbers, not rules: a 10-tile radius is 441 previews, which is a 16x16 land block plus its neighbours' frontage -- far enough to contain the answer for a component whose main tap radius is 8, and small enough to recompute inside one placement session on a phone. site_rows caps only what the overlay DRAWS; the count and the histogram are over the whole window. BuildController.SITE_SCAN_RADIUS_MAX (20) is the hard ceiling whatever this says.",
 		"site_scan_radius_tiles": 10,
-		"site_rows": 32
+		"site_rows": 32,
+		"_site_paint": "Wave 30 (doc 12 D-130). Wave 28's window answered `where CAN this go` and the bar printed the count; nothing painted the tiles. These are the LOOK of that paint on the ground -- `ui/site_paint_model.gd` turns the same site_hint() the sentence was written from into MultiMesh rows and `game/render/site_paint_view.gd` uploads them. Not one of them is a rule: the rule is BuildController.placement_sites, and the hue and the mark are data/ui.json's own palette and state_glyphs, so the ground can never invent a fifth colour or a fifth glyph. tile_y_m sits UNDER overlay.traffic_tile_y_m (0.16) because a player placing a pump with the congestion map up is looking for a site. alpha_near/alpha_far are the distance fade measured from the GHOST, so the spots near the finger are the loud ones and 32 of them do not read as wallpaper. ring_radius/ring_width draw the one site the bar's sentence NAMES (`the nearest is N tiles away`). max_tiles is the buffer ceiling whatever site_rows says.",
+		"site_paint": {
+			"tile_y_m": 0.13,
+			"alpha_near": 0.55,
+			"alpha_far": 0.18,
+			"wash_floor": 0.34,
+			"glyph_scale": 0.3,
+			"glyph_edge": 0.05,
+			"ring_radius": 0.42,
+			"ring_width": 0.05,
+			"max_tiles": 64
+		}
 	},
 	"thresholds": {
 		"grid_normal_pct": 95,

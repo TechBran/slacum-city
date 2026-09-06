@@ -1483,6 +1483,7 @@ func feed_events(batch: Array) -> void:
 	_check_street(batch)
 	_check_construction(batch)
 	_check_land_works(batch)
+	_check_placement_ground(batch)
 	# LAST, on purpose (Wave 24 merge): `push_toast` is newest-replaces, and a
 	# cold resume drains the whole offline batch in one call — the player's own
 	# save crosses a flood band 69 times a game-day. A $14,922,000 receipt must
@@ -1768,6 +1769,30 @@ func _check_street(batch: Array) -> void:
 ## the same coin a bounty sounds (`data/audio.json`'s rule on the event) and says
 ## what it was worth — and the event log keeps it, so a player can find the
 ## number again an hour later.
+## **The batch that changed the ground under a live placement** (Wave 30, doc 12
+## D-130).
+##
+## Doc 93 §BD8 memoises the window per CARD and per WINDOW, and its reason is
+## exactly right: the answer to *"where can this go"* does not change while the
+## finger moves inside the window it is about. It says nothing about the batch
+## that just bought the block the bar told the player to buy, or the hourly
+## settlement that just lifted austerity — and on the player's own save
+## austerity is the ONLY blocker on all three shoreline sites, so that is not a
+## hypothetical. This is the other half of the memo's guard, and it is here
+## rather than in the shell because `feed_events` is the one place `ui/` already
+## sees the bus.
+func _check_placement_ground(batch: Array) -> void:
+	if build_sheet == null or not build_sheet.is_placing():
+		return
+	for entry: Variant in batch:
+		if not (entry is Dictionary):
+			continue
+		if BuildSheet.SITE_GROUND_EVENTS.has(
+				StringName(str((entry as Dictionary).get("type", "")))):
+			build_sheet.invalidate_site_hint()
+			return
+
+
 func _check_land_works(batch: Array) -> void:
 	if land_works == null:
 		return
