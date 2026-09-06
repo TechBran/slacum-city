@@ -13674,6 +13674,25 @@ that no document owns.
 
 **Hashes: none moved.** See §68.4's fix-pass row and its isolation.
 
+**The fix pass, measured end to end** (all on the frozen tree, all reproducible):
+
+```
+tools/run_suite.sh                        -> files 157, tests 2895,
+                                             asserts 593523, failed 0, silent 0,
+                                             ALL TESTS PASSED
+tools/run_suite.sh --one=test_balance_gates.gd  -> tests 34, asserts 755, failed 0
+godot tools/ui_preview.tscn -- --screen=all --size=412x915 --audit --strict
+                                          -> exit 0, 93 states, 93 clean
+python3 tools/check_doc_refs.py           -> 6222 refs, all resolving; no id twice
+python3 tools/gen_buildings.py --check    -> all invariants pass
+measure_envelope --table                  -> 0 servable, 0 buyable, 0 total
+profile_sim --hash-only (starter / bench) -> 9004573d / d5c6678d, ebb5f476 / 307a6a27
+```
+
+The wave shipped 2,893 tests; the fix pass ships **2,895** — the two added are
+the pad-past-the-top-rung case and the router-without-a-quote case, both in
+`tests/test_ui_transformer.gd`.
+
 **And one nit the verifier logged, closed.** `data/building_rules.json` was
 *value*-identical to the fork on the two Wave 19/20 rulings the generator had
 silently dropped, but not *byte*-identical: `FORCE_BLOCK` names the big MAPPINGS
