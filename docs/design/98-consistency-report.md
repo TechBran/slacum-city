@@ -11899,8 +11899,17 @@ doc 12 §2.5 mode 5's, which is a per-TILE MultiMesh for exactly the same reason
 **1 draw call**. **On `tests/fixtures/player_save_0903`, ghost on his own
 plant:** 441 scanned, **0 legal** (`E_NOT_OWNED ×210`, `E_FOOTPRINT ×133`,
 `E_NO_WATER ×98`), **nothing lit, 0 draw calls**, and the bar carrying *"the
-nearest water is 41 tiles away, at 38, 51"* with the door under it. Both
-photographed by `tools/site_paint_preview.gd`.
+nearest water is 41 tiles away, at 38, 51"* with the door under it.
+
+**Four NAMED preview states, not four argv incantations.**
+`tools/site_paint_preview.gd`'s `STATES` is this layer's deck the way
+`tools/ui_preview.gd`'s `SCREENS` is the sheet deck's: `founding_source`
+(3 lit), `founding_yard` (32 lit — the 3×3 the anchor exists for),
+`player_none` (0 lit) and `player_three` (3 lit, the freeze lifted). Each row
+carries the tile count it claims and the harness errors when a shot does not
+match it, and `test_every_named_preview_state_is_one_the_game_can_reach` drives
+all four headlessly inside the suite. RR-243's lesson applied on the way in:
+**a preview state that is not swept is a preview state that is already wrong.**
 
 ### RR-248 — the memo's other half: the batch that changed the ground
 

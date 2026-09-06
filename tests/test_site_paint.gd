@@ -684,6 +684,41 @@ func controller_sites(controller: BuildController, centre: Vector2i) -> Dictiona
 	return controller.placement_sites(centre)
 
 
+func test_every_named_preview_state_is_one_the_game_can_reach() -> void:
+	# **The deck, driven headlessly.** `tools/site_paint_preview.gd` names four
+	# states and each one claims a tile count; this drives all four through the
+	# same controller the harness uses and holds them to it, so a state that
+	# quietly stops showing what it is named for fails here rather than in a
+	# screenshot nobody took. RR-243's lesson: a preview state that is not swept
+	# is a preview state that is already wrong.
+	var preview: GDScript = load("res://tools/site_paint_preview.gd")
+	var states: Dictionary = preview.get("STATES")
+	assert_eq(states.size(), 4, "four named states")
+	var cfg := UIConfig.load_from_files()
+	var model := SitePaintModel.new(cfg)
+	for name: String in states:
+		var row: Dictionary = states[name]
+		var sim: CitySim = _restore_player_save() if str(row.get("save", "")) == "player" \
+				else _sim()
+		assert_ne(sim, null, "`%s` has a city" % name)
+		if int(row.get("balance", -1)) >= 0:
+			sim.treasury.balance = int(row["balance"])
+		if bool(row.get("lift_austerity", false)):
+			sim.treasury.austerity_active = false
+		var controller := BuildController.new(sim, RequirementFormatter.new(cfg))
+		assert_true(bool(controller.enter(str(row["card"]))["ok"]),
+				"`%s` enters the %s card" % [name, str(row["card"])])
+		var at: Vector2i = row.get("at", Vector2i(-1, -1))
+		var hint := controller.placement_sites(at)
+		if TileGrid.in_bounds(at.x, at.y):
+			controller.move_to_tile(at)
+		var paint := model.paint(hint, controller.ghost(),
+				controller.centre_offset(), controller.tile_m)
+		assert_eq((paint["tiles"] as Array).size(), int(row["expect"]),
+				"`%s` lights the %d tiles it claims" % [name, int(row["expect"])])
+		controller.cancel()
+
+
 # ---------------------------------------------------------------- fixtures
 
 func _first_legal(controller: BuildController) -> Vector2i:

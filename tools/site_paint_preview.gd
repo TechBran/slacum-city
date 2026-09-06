@@ -11,13 +11,15 @@ extends Node
 ## tile the command refuses, and takes the shot. Doc 12 §2.5's
 ## `tools/overlay_preview.gd` is the same instrument one layer over.
 ##
-##   godot --path . tools/site_paint_preview.tscn -- --card=source \
-##       --at=38,51 --out=/tmp/source_sites.png
-##   godot --path . tools/site_paint_preview.tscn -- --save=player --card=source \
-##       --out=/tmp/player_none.png
-##   godot --path . tools/site_paint_preview.tscn -- --save=player --card=source \
-##       --at=38,51 --lift-austerity --out=/tmp/player_three.png
+##   godot --path . tools/site_paint_preview.tscn -- --state=founding_source \
+##       --out=/tmp/founding_source.png
+##   for s in founding_source founding_yard player_none player_three; do \
+##       godot --path . tools/site_paint_preview.tscn -- --state=$s \
+##           --out=/tmp/shots/$s.png; done
 ##
+## * `--state=` — one of `STATES` below: the four named states of this layer,
+##   each of which asserts the tile count it claims. Everything after it is an
+##   override of that row.
 ## * `--card=` — any build-sheet archetype (`house`, `store`, …) or doc 05 water
 ##   kind (`source`, `treatment`, `pump`, `tank`).
 ## * `--at=X,Y` — where to stand the ghost. Default: the card's own window home
@@ -45,6 +47,46 @@ extends Node
 const TILE_M := 8.0
 const FIXTURE := "res://tests/fixtures/player_save_0903"
 
+## **The named preview states of this layer** — doc 12 D-130's deck, the way
+## `tools/ui_preview.gd`'s `SCREENS` is the sheet deck's. A state that cannot be
+## NAMED cannot be swept, cannot be re-shot after a change and cannot be quoted
+## in a report, which is how a preview turns into an argv incantation somebody
+## has to reconstruct from a commit message. Each row is exactly the flags below
+## it, and `--state=` applies them before any explicit flag overrides them.
+##
+## `tests/test_site_paint.gd::test_every_named_preview_state_is_one_the_game_can_reach`
+## drives all four headlessly — the card enters, the window answers, and the
+## count is the count the row claims — so a state that stops being reachable
+## fails in the suite rather than in a screenshot nobody took.
+const STATES := {
+	# The founding city's shoreline: three river intakes, all clean, the nearest
+	# 3 tiles from the ghost at $38,086. Needs a treasury, because the city opens
+	# at $24,133 and an intake is $38,086 (see `--balance=`).
+	"founding_source": {
+		"card": "source", "at": Vector2i(38, 51), "balance": 5_000_000,
+		"expect": 3,
+	},
+	# A 3×3 lot, which is the case the anchor exists for: every lit tile is
+	# `origin + (1, 1)`, so the tap that follows the paint centres the yard on
+	# the origin the window verified rather than one tile up-left of it.
+	"founding_yard": {
+		"card": "construction_yard", "at": Vector2i(40, 40), "balance": 5_000_000,
+		"expect": 32,
+	},
+	# The player's own save, ghost on his own water plant — the sentence the
+	# whole read was built for. NOTHING is lit: 441 tiles scanned, 0 legal, and
+	# the answer is the bar's words and the door under them, which fly the
+	# camera 41 tiles to the water.
+	"player_none": {"card": "source", "save": "player", "expect": 0},
+	# The same save at the water, with doc 03 §2.10's freeze lifted — which the
+	# game itself does at the first hourly settlement after the load. Three
+	# intakes, and austerity was the only thing refusing them.
+	"player_three": {
+		"card": "source", "save": "player", "at": Vector2i(38, 51),
+		"lift_austerity": true, "expect": 3,
+	},
+}
+
 var _card := "source"
 var _at := Vector2i(-1, -1)
 var _radius := -1
@@ -53,6 +95,8 @@ var _shot_at := 2.0
 var _save := ""
 var _lift_austerity := false
 var _balance := -1
+var _state := ""
+var _expect := -1
 var _timer := 0.0
 
 var _main: Node
@@ -62,6 +106,12 @@ var _paint_view: SitePaintView
 
 
 func _ready() -> void:
+	# `--state=` first, whatever order it was typed in, so an explicit flag
+	# beside it is an OVERRIDE of the named state rather than a coin toss.
+	for arg in OS.get_cmdline_user_args():
+		var text := String(arg)
+		if text.begins_with("--state="):
+			_apply_state(text.trim_prefix("--state="))
 	for arg in OS.get_cmdline_user_args():
 		var text := String(arg)
 		if text.begins_with("--card="):
@@ -86,6 +136,23 @@ func _ready() -> void:
 	_main = packed.instantiate()
 	add_child(_main)
 	_arm()
+
+
+## One row of `STATES`, applied. Unknown names are a hard error rather than a
+## silent default: a screenshot of the wrong state is worse than no screenshot.
+func _apply_state(name: String) -> void:
+	if not STATES.has(name):
+		push_error("site_paint_preview: unknown --state=%s; known: %s"
+				% [name, str(STATES.keys())])
+		return
+	_state = name
+	var row: Dictionary = STATES[name]
+	_card = str(row.get("card", _card))
+	_at = row.get("at", Vector2i(-1, -1))
+	_save = str(row.get("save", ""))
+	_balance = int(row.get("balance", -1))
+	_lift_austerity = bool(row.get("lift_austerity", false))
+	_expect = int(row.get("expect", -1))
 
 
 func _arm() -> void:
@@ -170,6 +237,11 @@ func _stage() -> void:
 	print("[site-paint] bar: %s" % sheet.placement_issue_text())
 	print("[site-paint] painted tiles=%d  draw calls=%d"
 			% [_paint_view.tile_count(), _paint_view.draw_calls()])
+	# A named state that stopped showing what it is named for is a picture of a
+	# regression, so it says so on stdout rather than in the image.
+	if _expect >= 0 and _paint_view.tile_count() != _expect:
+		push_error("site_paint_preview: state `%s` lit %d tiles, not the %d it claims"
+				% [_state, _paint_view.tile_count(), _expect])
 	for raw: Variant in (paint.get("tiles", []) as Array):
 		var row: Dictionary = raw
 		print("    origin=%s anchor=%s glyph=%d alpha=%.3f nearest=%s"
