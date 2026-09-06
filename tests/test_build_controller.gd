@@ -1471,12 +1471,25 @@ tile to fall back on" % [row["canonical"], id])
 			RequirementFormatter.FIX_COMPONENT:
 				# The failure PA-05 catalogued: a component id looked up in
 				# `CitySim.buildings`, where it has never been a key. The router
-				# resolves it with `component_tile()`, so that is what is asserted.
-				# `component_tile()` answers `Vector2i.ZERO` for an id it does not
-				# know, which is a real tile — so the lookup that decides is
-				# `component()`, whose empty dictionary cannot be mistaken.
+				# resolves it with `WorldLocator.locate_component()`, so that is
+				# what is asserted. `PowerGrid.component_tile()` answers
+				# `Vector2i.ZERO` for an id it does not know, which is a real
+				# tile — so the lookup that decides is the one whose miss cannot
+				# be mistaken for a hit.
+				#
+				# **Two namespaces, and the kind's own docstring has always said
+				# so** (Wave 28): `FIX_COMPONENT` is *"a doc 04 grid component or
+				# a doc 05 water component"*, `WorldLocator.locate_component`
+				# has asked both since Wave 18, and doc 12 D-126 makes the
+				# `E_WATER_HEADROOM` row route to the node that binds doc 05
+				# §2.5's chain. Asking only the power grid here would fail a row
+				# the router resolves perfectly well — which is this test's own
+				# failure mode, inverted.
 				var component := str(params.get("component", ""))
-				if sim.grid.component(component).is_empty():
+				var known := not sim.grid.component(component).is_empty()
+				if not known and sim.water != null:
+					known = sim.water.node(component) != null
+				if not known:
 					unroutable.append("%s: %s resolves to no component" \
 							% [row["canonical"], component])
 			RequirementFormatter.FIX_BLOCK:

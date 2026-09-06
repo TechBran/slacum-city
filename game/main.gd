@@ -1048,6 +1048,33 @@ func _wire_build_ui(ui_instance: Node) -> void:
 					_refresh_hud()
 					if power_infra != null:
 						power_infra.note_topology_changed())
+			# Wave 28 (doc 12 D-124/D-125, report 98 RR-229). S19's trio, and it
+			# is the transformer trio one utility over — same three shapes, same
+			# three answers. `water_action` carries all five of S19's verbs
+			# because the shell does exactly one thing with every one of them:
+			# re-read the city, and repaint the water overlay, because a repaired
+			# main changes a whole zone's pressure and `_feed_water_overlay` is
+			# what the map is drawn from.
+			ui_root.water_action.connect(
+				func(_action: StringName, _asset_id: String, _result: Dictionary) -> void:
+					_refresh_hud()
+					_feed_water_overlay())
+			# A row of S19's served list, or S5's one-row WATER summary tapped on
+			# a building: go and look at it. Identical to
+			# `transformer_customer_selected` above, and deliberately so — a
+			# player must not learn two gestures for one idea.
+			ui_root.water_customer_selected.connect(
+				func(sim_id: String, world_pos: Vector3) -> void:
+					camera_state.focus_on(world_pos)
+					if building_panel != null:
+						building_panel.show_building(sim_id)
+					ui_root.selected_entity_id = sim_id)
+			# A doc-05 node was selected — by a tap on its footprint, by S5's
+			# WATER row, or by a `Fix this →` on an `E_WATER_HEADROOM` row. `""`
+			# clears it. There is no `water_infra` view to ring the node in, which
+			# is why this is one line and `transformer_selected` is four.
+			ui_root.water_node_selected.connect(func(node_id: String) -> void:
+				ui_root.selected_entity_id = node_id)
 		# S16 on S5 (doc 12 §2.22 item 3): the SAME model instance the queue
 		# panel holds, so the two can never publish different numbers for one
 		# project. Three args, so the refusal is forwarded by hand — an accepted
@@ -2491,14 +2518,21 @@ func _handle_tap(screen_pos: Vector2, viewport_size: Vector2) -> void:
 		if bool(payday.get("cue", false)) and audio != null:
 			audio.ui_cue(AudioService.UI_CASH)
 		return
-	if StringName(str(pick["kind"])) == BuildController.PICK_COMPONENT \
-			and ui_root != null and ui_root.show_transformer(str(pick["id"])):
-		# S18 closes its siblings itself (`UIWidgets.close_siblings`), so the
-		# building panel and S4 stand down without being told twice (Wave 25).
-		ui_root.selected_entity_id = str(pick["id"])
-		if power_infra != null:
-			power_infra.set_selected(str(pick["id"]))
-		return
+	if StringName(str(pick["kind"])) == BuildController.PICK_COMPONENT and ui_root != null:
+		# Wave 25 / Wave 28: one pick kind, two panels. S18 first (it refuses an
+		# id the grid does not have), then S19. Both close their siblings
+		# themselves (`UIWidgets.close_siblings`), so the building panel and S4
+		# stand down without being told twice.
+		if ui_root.show_transformer(str(pick["id"])):
+			ui_root.selected_entity_id = str(pick["id"])
+			if power_infra != null:
+				power_infra.set_selected(str(pick["id"]))
+			return
+		if ui_root.show_water_node(str(pick["id"])):
+			ui_root.selected_entity_id = str(pick["id"])
+			if power_infra != null:
+				power_infra.set_selected("")   # a water node is not a pad
+			return
 	if StringName(str(pick["kind"])) == BuildController.PICK_BUILDING \
 			and building_panel != null:
 		building_panel.show_building(str(pick["id"]))   # closes S4 (doc 12 D-27)

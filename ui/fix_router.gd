@@ -72,6 +72,15 @@ const REASON_NO_SIM := &"no_sim"              ## called before boot
 ## right one: `building_panel.gd::_on_fix_pressed` intercepts `FIX_POWER` before
 ## the router ever sees it (A91-D-54), and now raises `power_row_opened`.
 const SHEET_TRANSFORMER_PANEL := &"transformer_panel"
+## Wave 28's S19 (doc 12 D-124). The surface an `E_WATER_HEADROOM` row opens when
+## the zone is short of SUPPLY — the panel that names which stage of doc 05
+## §2.5's chain binds it, which is the difference between the purchase that helps
+## and the 118 pumps doc 92 §67.4 measured buying nothing.
+const SHEET_WATER_PANEL := &"water_panel"
+## S19 opened with nothing armed: `WaterPanelModel.focus_of()` decides which verb
+## it lands on, because it knows whether the node is down and whether the zone is
+## leaking, and this does not.
+const ARM_WATER := &"water"
 ## Which of S18's two purchases the row was about. Kept on the `FIX_POWER` answer
 ## because a surface with NO in-place path has to be able to tell them apart.
 const ARM_POWER_FIX := &"power_fix"
@@ -196,10 +205,14 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			# **Wave 25.** A grid component's fix stopped being *"go and look at
 			# it"* the moment it became a thing with a panel: a transformer opens
 			# S18, where its condition, its customers, its ladder and its crew
-			# are. Every OTHER component this kind can carry — a feeder, a doc-05
-			# pump — still has no surface of its own and keeps the camera move,
-			# and the branch is decided by what the SIM says the id is rather than
-			# by how the id is spelled.
+			# are. **Wave 28 closes the sentence this paragraph used to end on** —
+			# *"a doc-05 pump still has no surface of its own and keeps the camera
+			# move"* — because it has one now (S19, doc 12 D-124). A water
+			# refusal that lands the camera on a pump without saying which stage
+			# of §2.5's chain binds is the refusal doc 92 §67.4 measured costing
+			# $5.5M in pumps that bought nothing. A feeder still keeps the camera
+			# move, and the branch is still decided by what the SIM says the id is
+			# rather than by how the id is spelled.
 			if id == "":
 				return _none(kind, id, REASON_EMPTY_ID)
 			var at: Variant = WorldLocator.locate(sim, WorldLocator.KIND_COMPONENT, id)
@@ -208,6 +221,10 @@ static func route(sim: CitySim, fix_target: Dictionary,
 			if FixRouter._opens_transformer_panel(sim, id):
 				return {"action": ACTION_SHEET, "reason": &"", "kind": kind, "id": id,
 						"sheet": SHEET_TRANSFORMER_PANEL, "arm": ARM_TRANSFORMER,
+						"binds_at": id, "world_pos": at}
+			if FixRouter._opens_water_panel(sim, id):
+				return {"action": ACTION_SHEET, "reason": &"", "kind": kind, "id": id,
+						"sheet": SHEET_WATER_PANEL, "arm": ARM_WATER,
 						"binds_at": id, "world_pos": at}
 			return {"action": ACTION_FOCUS, "reason": &"", "kind": kind, "id": id,
 					"world_pos": at}
@@ -235,6 +252,20 @@ static func _opens_transformer_panel(sim: CitySim, id: String) -> bool:
 		return false
 	return BuildController.PICKABLE_COMPONENT_KINDS.has(
 			StringName(String(sim.grid.component(id)["kind"])))
+
+
+## Is this id a doc-05 node S19 can open? **Asked of the WATER SYSTEM, never of
+## the id's spelling** — `_opens_transformer_panel`'s rule one document over, and
+## the authority is the same array the tap radius answers `PICK_COMPONENT` for
+## (`BuildController.PICKABLE_WATER_VARIANTS`), so the router and the map cannot
+## come to different conclusions about what is a thing you can open. A `junction`
+## answers false and keeps the camera move, which is right: §2.1 says a junction
+## is where mains meet, not a component.
+static func _opens_water_panel(sim: CitySim, id: String) -> bool:
+	if sim == null or sim.water == null:
+		return false
+	var node: WaterNode = sim.water.node(id)
+	return node != null and BuildController.PICKABLE_WATER_VARIANTS.has(node.variant)
 
 
 ## The `WorldLocator` kind a `RequirementFormatter.FIX_*` resolves through. They

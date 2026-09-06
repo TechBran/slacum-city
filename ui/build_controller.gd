@@ -801,6 +801,20 @@ func _component_verdict(p_origin: Vector2i, preview: Dictionary) -> Dictionary:
 	params.merge(payload, true)
 	if bool(preview["ok"]):
 		params["balance"] = sim.treasury.balance
+		# **Amber, not green** (Wave 28 fix, doc 91 A91-D-153). Doc 93 §AD3's P0
+		# for a water site: the command allows it — doc 04 §2.1 authorises no
+		# capacity refusal — and the ghost has to say that the transformer
+		# reaching this tile cannot carry it, or the player buys a pump that runs
+		# at `power_fraction 0.00`. Same code, same severity and same `Fix this →`
+		# the building path has used since Wave 12.
+		if payload.has("power_ok") and not bool(payload["power_ok"]):
+			params["need"] = float(payload.get("kw_required", 0.0))
+			return {
+				"verdict": VERDICT_WARN,
+				"code": &"E_TRANSFORMER_FULL",
+				"failure": formatter.format(&"E_TRANSFORMER_FULL", params),
+				"params": params,
+			}
 		return {"verdict": VERDICT_VALID, "code": &"", "failure": {}, "params": params}
 	if payload.has("cost"):
 		params["balance"] = sim.treasury.balance
@@ -917,6 +931,322 @@ func ghost() -> Dictionary:
 
 
 ## What `ui/build_sheet.gd`'s placement bar binds.
+# ===========================================================================
+# STEP ONE — "where CAN this go?" (Wave 28 fix; doc 12 D-127, doc 93 §BD8)
+# ===========================================================================
+#
+# The player, 2026-09-05, first sentence: *"we need to be able to create a water
+# source"*. Driven on his own device save, the card enters fine and then there is
+# **no legal tile within forty tiles of his plant** — 2,140 refusals for land he
+# does not own, 1,092 for a footprint that does not fit, 486 for an intake off
+# the shoreline. Every one of those refusals was correct and every one of them
+# was *invisible*, because a ghost answers exactly one tile at a time and the
+# question "where can this go" is a question about a SET.
+#
+# This is the missing read. It is the same `evaluate()` the ghost runs, run over
+# a window instead of a point, and it answers three things a ghost cannot:
+#
+#   1. **Which tiles CAN host it** — the set the shell paints under the ghost.
+#   2. **What is in the way, over the whole window** — a histogram, which is what
+#      turns "nowhere" into "you do not own the land".
+#   3. **What to buy first** — the cheapest single purchase that turns some tile
+#      in the window legal, as a `fix_target` the existing router already
+#      resolves (`FIX_BLOCK` → the land panel, `FIX_TILE` → the camera).
+#
+# It reads and charges nothing: every verdict is a `preview = true` quote.
+
+## How wide a window `placement_sites()` scans when the caller does not say, and
+## how many origins it hands back. Both are LAYOUT/effort numbers rather than
+## rules, so they live in `data/ui.json.placement` with these as the fallback.
+const SITE_SCAN_RADIUS_DEFAULT := 10
+const SITE_ROWS_DEFAULT := 32
+## The hard ceiling on one scan, whatever the caller asks for: 41×41. A window
+## this size is already 1,681 previews, and the honest answer past it is "look
+## somewhere else", not a longer wait on a phone.
+const SITE_SCAN_RADIUS_MAX := 20
+
+## The blockers TIME OR MONEY clears. A tile whose refusals are a subset of these
+## is not an illegal site — it is a site the player has not bought yet, and that
+## distinction is the whole difference between "nowhere" and "buy D3".
+##
+## `E_AUSTERITY` is in the list and is the one that surprised: on the player's
+## own save THREE tiles by the river refuse for nothing else at all. Doc 03
+## §2.10 layer 2 freezes every `construction` spend while the balance is under
+## water, the save restores the flag verbatim, and the first hourly settlement
+## after the load lifts it at his $14.9M — so his step one was one game-hour
+## away and no screen said so.
+const SITE_BUYABLE_BLOCKERS := [&"E_NOT_OWNED", &"E_NOT_DEVELOPED", &"E_FUNDS",
+		&"E_AUSTERITY"]
+## Cheapest remedy first, so the advice names the smallest thing that works. A
+## tile waiting on the treasury is a better answer than a tile waiting on a land
+## purchase, and a purchase is a better answer than six phases of development.
+const SITE_REMEDY_RANK := {&"E_AUSTERITY": 0, &"E_FUNDS": 1,
+		&"E_NOT_DEVELOPED": 2, &"E_NOT_OWNED": 3}
+
+
+func site_scan_radius() -> int:
+	var cfg: UIConfig = formatter.config if formatter != null else null
+	var placement: Dictionary = cfg.section("placement") if cfg != null else {}
+	return clampi(int(UIConfig.get_num(placement, "site_scan_radius_tiles",
+			SITE_SCAN_RADIUS_DEFAULT)), 1, SITE_SCAN_RADIUS_MAX)
+
+
+func site_rows() -> int:
+	var cfg: UIConfig = formatter.config if formatter != null else null
+	var placement: Dictionary = cfg.section("placement") if cfg != null else {}
+	return maxi(1, int(UIConfig.get_num(placement, "site_rows", SITE_ROWS_DEFAULT)))
+
+
+## The set, the histogram and the advice. `centre` defaults to wherever the ghost
+## is standing; `radius` and `limit` to `data/ui.json.placement`.
+##
+## Returns `{ok, kind, centre, radius, scanned, tiles, count, nearest,
+## nearest_distance, cost, reasons, advice}`. `advice` is
+## `{key, args, fix_target, cost}` — a string KEY and its arguments, never a
+## sentence, and a `fix_target` in `RequirementFormatter`'s own shape so the
+## placement bar's `FIX THIS →` can carry it without a second router.
+func placement_sites(centre: Vector2i = Vector2i(-1, -1), radius: int = -1,
+		limit: int = -1) -> Dictionary:
+	var out := {"ok": false, "kind": component_kind if component_kind != "" else archetype,
+			"centre": centre, "radius": 0, "scanned": 0,
+			"tiles": [] as Array[Vector2i], "count": 0, "clean": 0, "warned": false,
+			"nearest": Vector2i(-1, -1), "nearest_distance": -1, "cost": 0,
+			"reasons": {}, "advice": _site_advice_none()}
+	if sim == null or not is_placing():
+		return out
+	var home := centre
+	if not TileGrid.in_bounds(home.x, home.y):
+		home = origin if has_origin else _site_home()
+	var reach := clampi(radius if radius > 0 else site_scan_radius(),
+			1, SITE_SCAN_RADIUS_MAX)
+	var rows := limit if limit > 0 else site_rows()
+	out["centre"] = home
+	out["radius"] = reach
+
+	# The scan. `evaluate()` is the ghost's own preflight, so a tile in `tiles`
+	# is a tile the ghost will tint green when the finger reaches it — the two
+	# can never disagree, because they are one call.
+	var legal: Array = []            # [[distance, y, x, cost], …]
+	var buyable: Array = []          # [[distance, y, x, block_id, blockers], …]
+	var reasons: Dictionary = {}
+	var scanned := 0
+	for dy in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var tile := Vector2i(home.x + dx, home.y + dy)
+			if not TileGrid.in_bounds(tile.x, tile.y):
+				continue
+			scanned += 1
+			var verdict := evaluate(tile)
+			var distance := maxi(absi(dx), absi(dy))
+			if String(verdict["verdict"]) != String(VERDICT_BLOCKED):
+				# A WARN site is legal and the command will take it, but it is
+				# not the site to recommend: on the player's save the nearest
+				# pump site was one whose pole-top could not carry the pump
+				# (`E_TRANSFORMER_FULL`), and "nearest" would have sold him a
+				# pump at `power_fraction 0.00`. Clean sites sort first; warned
+				# ones stay in the set, behind them.
+				var params: Dictionary = verdict.get("params", {})
+				var warned := 1 if String(verdict["verdict"]) == String(VERDICT_WARN) else 0
+				legal.append([warned, distance, tile.y, tile.x,
+						int(params.get("cost", 0))])
+				continue
+			var code := StringName(str(verdict.get("code", &"")))
+			reasons[code] = int(reasons.get(code, 0)) + 1
+			var blockers := _site_blockers(verdict)
+			if _site_is_buyable(blockers):
+				var block: LandBlock = sim.world.block_of_tile(tile.x, tile.y)
+				buyable.append([_site_remedy_rank(blockers), distance, tile.y,
+						tile.x, block.id if block != null else "", blockers])
+	# **Nothing above moved the ghost.** `evaluate(tile)` takes the origin as an
+	# argument and reads `origin` for nothing, so this whole scan is a read —
+	# which is the property that lets the placement bar call it mid-drag.
+	legal.sort()
+	buyable.sort()
+	out["scanned"] = scanned
+	out["reasons"] = reasons
+	out["count"] = legal.size()
+	var tiles: Array[Vector2i] = []
+	var clean := 0
+	for entry: Variant in legal:
+		if int((entry as Array)[0]) == 0:
+			clean += 1
+		if tiles.size() >= rows:
+			continue
+		tiles.append(Vector2i(int((entry as Array)[3]), int((entry as Array)[2])))
+	out["tiles"] = tiles
+	out["clean"] = clean
+	if not legal.is_empty():
+		var first: Array = legal[0]
+		out["ok"] = true
+		out["warned"] = int(first[0]) == 1
+		out["nearest"] = Vector2i(int(first[3]), int(first[2]))
+		out["nearest_distance"] = int(first[1])
+		out["cost"] = int(first[4])
+	out["advice"] = _site_advice(out, buyable)
+	return out
+
+
+## Everything the window refused this tile for, not just the first. The water and
+## grid commands publish the whole list in `payload.blockers`; a plain building's
+## `_blocked` publishes one code, so that is the list.
+func _site_blockers(verdict: Dictionary) -> Array:
+	var params: Dictionary = verdict.get("params", {})
+	var listed: Array = params.get("blockers", []) as Array
+	if not listed.is_empty():
+		var out: Array = []
+		for entry: Variant in listed:
+			out.append(StringName(str(entry)))
+		return out
+	return [StringName(str(verdict.get("code", &"")))]
+
+
+static func _site_is_buyable(blockers: Array) -> bool:
+	if blockers.is_empty():
+		return false
+	for entry: Variant in blockers:
+		if not SITE_BUYABLE_BLOCKERS.has(StringName(str(entry))):
+			return false
+	return true
+
+
+## The most expensive remedy this tile needs — the one the advice has to name.
+static func _site_remedy_rank(blockers: Array) -> int:
+	var worst := 0
+	for entry: Variant in blockers:
+		worst = maxi(worst, int(SITE_REMEDY_RANK.get(StringName(str(entry)), 0)))
+	return worst
+
+
+## Where to look when the player has not put the ghost down yet: the city's own
+## water works if it has one (a second source belongs near the first main), else
+## the first owned block, else the middle of the map.
+func _site_home() -> Vector2i:
+	if sim == null:
+		return Vector2i(TileGrid.SIZE / 2, TileGrid.SIZE / 2)
+	if component_domain == DOMAIN_WATER and sim.water != null:
+		var keys := sim.water.nodes.keys()
+		keys.sort()
+		for key: Variant in keys:
+			return (sim.water.nodes[key] as WaterNode).tile
+	for raw: Variant in sim.world.block_ids_sorted():
+		var block: LandBlock = sim.world.block(String(raw))
+		if block != null and block.is_owned():
+			# The block's own centre tile: doc 09's blocks are 16×16 and
+			# `TileGrid.block_of` is the inverse of this arithmetic.
+			return block.grid * TileGrid.TILES_PER_BLOCK \
+					+ Vector2i(TileGrid.TILES_PER_BLOCK / 2, TileGrid.TILES_PER_BLOCK / 2)
+	return Vector2i(TileGrid.SIZE / 2, TileGrid.SIZE / 2)
+
+
+static func _site_advice_none() -> Dictionary:
+	return {"key": "", "args": {}, "fix_target": {}, "cost": 0}
+
+
+## **What to buy first.** Five answers, in the order a player can act on them.
+func _site_advice(found: Dictionary, buyable: Array) -> Dictionary:
+	var kind_key := "ui_build_card_%s_%s" % [WATER_SHELL_ARCHETYPE, String(found["kind"])] \
+			if component_domain == DOMAIN_WATER \
+			else BuildController.card_name_key(archetype, variant)
+	var base := {"kind": kind_key, "radius": int(found["radius"]),
+			"count": int(found["count"])}
+	# 1. There ARE sites: say how many and how far, so the player stops hunting.
+	if bool(found["ok"]):
+		var args := base.duplicate()
+		args["tiles"] = str(int(found["nearest_distance"]))
+		args["cost"] = RequirementFormatter.money(int(found["cost"]))
+		return {"key": "ui_site_found", "args": args, "cost": int(found["cost"]),
+				"fix_target": {"kind": RequirementFormatter.FIX_TILE,
+						"id": "%d,%d" % [int(found["nearest"].x), int(found["nearest"].y)],
+						"params": {"tile": found["nearest"]}}}
+	# 2. There is a site TIME OR MONEY would open. This is the player's own case
+	#    twice over: 2,140 of his 3,721 tiles refuse for `E_NOT_OWNED` alone, and
+	#    three tiles by his river refuse for `E_AUSTERITY` and nothing else.
+	if not buyable.is_empty():
+		var best: Array = buyable[0]
+		var distance := int(best[1])
+		var tile := Vector2i(int(best[3]), int(best[2]))
+		var block_id := String(best[4])
+		var blockers: Array = best[5]
+		var args := base.duplicate()
+		args["at"] = block_id
+		args["tiles"] = str(distance)
+		var here := {"kind": RequirementFormatter.FIX_TILE,
+				"id": "%d,%d" % [tile.x, tile.y], "params": {"tile": tile}}
+		# 2a. Nothing but doc 03 §2.10's spending freeze. The site is READY.
+		if blockers.has(&"E_AUSTERITY"):
+			args["count"] = buyable.size()
+			return {"key": "ui_site_austerity", "args": args, "cost": 0,
+					"fix_target": here}
+		# 2b. Nothing but the price of the thing itself.
+		if blockers.has(&"E_FUNDS"):
+			args["cost"] = RequirementFormatter.money(int(found["cost"]))
+			args["have"] = RequirementFormatter.money(sim.treasury.balance)
+			return {"key": "ui_site_funds", "args": args, "cost": 0,
+					"fix_target": here}
+		var owned := not blockers.has(&"E_NOT_OWNED")
+		var quote := sim.cmd_buy_block(block_id, true) if not owned \
+				else sim.cmd_start_development(block_id, true)
+		var payload: Dictionary = quote.get("payload", {})
+		var price := int(payload.get("price", payload.get("phase_cost", 0)))
+		args["cost"] = RequirementFormatter.money(price)
+		return {"key": "ui_site_buy_block" if not owned else "ui_site_develop_block",
+				"args": args, "cost": price,
+				"fix_target": {"kind": RequirementFormatter.FIX_BLOCK, "id": block_id,
+						"params": {"block_id": block_id, "tile": tile}}}
+	# 3. A river intake with no shoreline in the window. Doc 05 §6's own rule,
+	#    and the only refusal in the set that no purchase answers — the answer is
+	#    a place, so the advice IS a place.
+	var reasons: Dictionary = found["reasons"]
+	if int(reasons.get(&"E_NO_WATER", 0)) > 0:
+		var shore := _nearest_water_tile(found["centre"])
+		var args := base.duplicate()
+		args["tiles"] = str(int(shore.get("distance", -1)))
+		args["at"] = "%d, %d" % [int(shore.get("tile", Vector2i.ZERO).x),
+				int(shore.get("tile", Vector2i.ZERO).y)]
+		return {"key": "ui_site_no_shoreline", "args": args, "cost": 0,
+				"fix_target": {} if shore.is_empty() \
+						else {"kind": RequirementFormatter.FIX_TILE,
+								"id": args["at"], "params": {"tile": shore["tile"]}}}
+	# 4. Nothing in reach has power. Doc 04 §2.1 gates every placement on a
+	#    transformer reaching the site, and the answer is a transformer — the
+	#    other card on the same Infrastructure tab, which is why this is worth a
+	#    sentence of its own rather than "try somewhere else".
+	if int(reasons.get(&"E_UNSERVED", 0)) > 0 \
+			and int(reasons.get(&"E_UNSERVED", 0)) >= int(reasons.get(&"E_NO_MAIN", 0)):
+		var args := base.duplicate()
+		return {"key": "ui_site_unserved", "args": args, "cost": 0, "fix_target": {}}
+	# 5. Everything in reach is outside a main's tap radius: the answer is a run
+	#    of pipe, which is `PathTool`'s verb and not a tile.
+	if int(reasons.get(&"E_NO_MAIN", 0)) > 0:
+		var args := base.duplicate()
+		args["need"] = str(int(sim.water.data.placement_value(
+				"main_tap_radius_tiles", 8))) if sim.water != null else "8"
+		return {"key": "ui_site_no_main", "args": args, "cost": 0, "fix_target": {}}
+	# 6. Nothing here, and nothing here can be unblocked. Say so rather than
+	#    leave the player scrubbing a red ghost across the map.
+	return {"key": "ui_site_none", "args": base, "cost": 0, "fix_target": {}}
+
+
+## The nearest doc-09 water tile to `from`, searched over the whole map — this
+## runs only on the refusal path, at most once per placement session.
+func _nearest_water_tile(from: Vector2i) -> Dictionary:
+	if sim == null:
+		return {}
+	var best := Vector2i.ZERO
+	var best_d := 1 << 30
+	for y in range(TileGrid.SIZE):
+		for x in range(TileGrid.SIZE):
+			if not sim.world.grid.has_flag(x, y, TileGrid.FLAG_WATER):
+				continue
+			var d: int = maxi(absi(from.x - x), absi(from.y - y))
+			if d < best_d:
+				best_d = d
+				best = Vector2i(x, y)
+	if best_d == 1 << 30:
+		return {}
+	return {"tile": best, "distance": best_d}
+
+
 func placement_view() -> Dictionary:
 	var failure: Dictionary = _verdict.get("failure", {})
 	var cost := placement_cost() if is_placing() else 0
@@ -1105,6 +1435,62 @@ func component_near(point: Vector3, radius_m: float = -1.0) -> Dictionary:
 	return best
 
 
+## The doc-05 water variants a tap may OPEN — the same list
+## `PICKABLE_COMPONENT_KINDS` is one document over, and for the same reason: the
+## pick and the fix-router ask this array rather than either of them reading an
+## id's spelling. A `junction` is absent because §2.1 says it is not a component
+## (it is where mains meet), and a `booster` is absent because
+## `feature_flags.boosters_enabled` is off — a card that can never be placed
+## cannot be tapped either.
+const PICKABLE_WATER_VARIANTS: Array[StringName] = [
+	&"source", &"treatment", &"pump", &"tank",
+]
+
+## When one doc-02 shell hosts several doc-05 nodes — `WTR-1` hosts an intake, a
+## treatment train and a pump on one tile — this is which one the tap opens on.
+## The **reference variant first** (report 98 RR-8: doc 02 generates this
+## archetype's whole level table for `pump`, so the pump is what the shell IS),
+## then §2.5's own chain order, then the id. Deterministic on every machine, and
+## the panel lists the siblings so the other two are one tap away.
+const WATER_PICK_ORDER: Array[StringName] = [
+	&"pump", &"source", &"treatment", &"tank",
+]
+
+
+## The doc-05 node under `point`, or `{}`. **Footprint, not centre**, which is
+## the one way this differs from `component_near`: a transformer stands on one
+## tile and half a tile of tolerance is the whole of it, while a water works is
+## 2×2 or 3×3 of doc 02 shell and a tap anywhere on it is a tap on it. The
+## building pick this runs ahead of uses exactly the same test
+## (`sim_id_at_tile`), so the two can never disagree about where the site is.
+func water_node_near(point: Vector3) -> Dictionary:
+	if sim == null or sim.water == null:
+		return {}
+	var tile := BuildController.tile_at(point, tile_m)
+	var best: Dictionary = {}
+	var best_rank := WATER_PICK_ORDER.size()
+	for key: Variant in sim.water.nodes:
+		var node: WaterNode = sim.water.nodes[key]
+		if not PICKABLE_WATER_VARIANTS.has(node.variant):
+			continue
+		var size := sim.water.data.footprint_of(node.variant, node.level, node.subtype)
+		if tile.x < node.tile.x or tile.y < node.tile.y \
+				or tile.x >= node.tile.x + size.x or tile.y >= node.tile.y + size.y:
+			continue
+		var rank := WATER_PICK_ORDER.find(node.variant)
+		if rank < 0:
+			rank = WATER_PICK_ORDER.size()
+		if not best.is_empty() and (rank > best_rank
+				or (rank == best_rank and String(key) > String(best["id"]))):
+			continue
+		best_rank = rank
+		best = {"id": String(key), "kind": String(node.variant), "tile": node.tile,
+				"world_pos": Vector3((float(node.tile.x) + float(size.x) * 0.5) * tile_m,
+						0.0, (float(node.tile.y) + float(size.y) * 0.5) * tile_m),
+				"distance_m": 0.0, "domain": DOMAIN_WATER}
+	return best
+
+
 ## The roster, or `null`. The shell's binding wins; otherwise the sim is asked
 ## for a `street` member **by name**, because a statically-typed `sim.street`
 ## would not compile in a build whose `CitySim` has no such property.
@@ -1238,6 +1624,21 @@ func pick_at_ground(point: Vector3) -> Dictionary:
 		out["kind"] = PICK_COMPONENT
 		out["id"] = String(component["id"])
 		out["component"] = component
+		return out
+	# **Doc 05's nodes are components too** (Wave 28, doc 12 D-124). AHEAD of the
+	# building, and that ordering IS doc 93 §BA1's ruling made tappable: *"a
+	# `water_facility` IS the doc-05 nodes hosted on it, at their level"*, so the
+	# panel a tap on a water works should raise is the one that describes the
+	# water — the chain, the zone, the mains — and not the doc-02 shell, whose
+	# entire stat block is read out of doc 05's component table anyway. The pump
+	# ladder S5 has drawn since Wave 11 stays exactly where it is: it is reached
+	# from a goal's `Fix this →` and from the shell's own panel, both of which
+	# still resolve.
+	var node := water_node_near(point)
+	if not node.is_empty():
+		out["kind"] = PICK_COMPONENT
+		out["id"] = String(node["id"])
+		out["component"] = node
 		return out
 	var sim_id := sim_id_at_tile(tile)
 	if sim_id != "":
@@ -1914,14 +2315,51 @@ func _check_params(sim_id: String, b: Building, next_level: int,
 ## Doc 05 §6's headroom gate, as the checklist row's parameters (PA-24). The
 ## zone's spare capacity and what the next level would draw with doc 05's own
 ## safety factor on it — both read from `WaterSystem`, which is the gate.
+##
+## **The row routes to the PURCHASE now, not to the zone** (Wave 28, doc 12
+## D-126, A91-D-147). `E_WATER_HEADROOM` has one code and doc 05 §2.11 refuses on
+## two different arms behind it, and until this wave the row could not tell them
+## apart, so it sent every refusal to the same place — the zone key, as a
+## district, which is a camera move to a pump:
+##
+##   * `capacity` — the zone genuinely has no spare water. The purchase is the
+##     rung under the stage that BINDS §2.5's chain, and `WaterSystem.
+##     supply_chain` names it. `FIX_COMPONENT` on that node opens S19, where the
+##     chain is drawn and the button is quoted. Sending the player to a PUMP
+##     when treatment binds is doc 92 §67.4's $5.5M mistake with a fix button
+##     on it.
+##   * `pressure` — the zone is fine and this BUILDING is too far from a main
+##     (doc 92 §67.8: pressure 1.00 in the zone, 0.50 at the tile, 57 m³/h
+##     spare). No amount of supply moves a tile factor. The row keeps the
+##     camera on the building's own tile and the sentence says the distance,
+##     because the answer is a main and the player lays that with the path tool.
 func _water_headroom_params(sim_id: String, b: Building,
 		next_stats: Dictionary) -> Dictionary:
 	var delta_water := float(next_stats.get("water_demand", 0.0)) \
 			- float(b.stats.get("water_demand", 0.0))
 	var verdict: Dictionary = sim.water.can_upgrade_water(sim_id, delta_water)
 	var headroom := sim.water.zone_headroom_m3h(sim_id)
-	var zone: PressureZone = sim.water.zone_at(sim.water.demand.access_tile(sim_id))
+	var tile: Vector2i = sim.water.demand.access_tile(sim_id)
+	var zone: PressureZone = sim.water.zone_at(tile)
 	var zone_key := zone.zone_key if zone != null else ""
+	var limit := String(verdict.get("limit", "capacity"))
+	var chain: Dictionary = sim.water.supply_chain_of(zone) if zone != null else {}
+	var binding := String(chain.get("binding", "none"))
+	var binding_ids: Array = chain.get("binding_ids", [])
+	var fix_kind := RequirementFormatter.FIX_NONE
+	var fix_id := ""
+	if limit == "pressure":
+		fix_kind = RequirementFormatter.FIX_BUILDING
+		fix_id = sim_id
+	elif not binding_ids.is_empty():
+		fix_kind = RequirementFormatter.FIX_COMPONENT
+		fix_id = String(binding_ids[0])
+	elif zone_key != "":
+		# A zone that binds on its MAINS has no node to raise — the answer is
+		# `cmd_place_water_main`, and the camera goes to the plant so the player
+		# can see where the trunk has to start.
+		fix_kind = RequirementFormatter.FIX_DISTRICT
+		fix_id = zone_key
 	return {
 		"deficit_m3h": float(verdict.get("deficit_m3h", 0.0)),
 		"headroom_m3h": headroom,
@@ -1931,12 +2369,18 @@ func _water_headroom_params(sim_id: String, b: Building,
 		"district_id": zone_key,
 		"at": zone_key,
 		"tile": b.origin,
-		"fix_target_id": zone_key,
-		# No zone at all is not a district the camera can fly to; the row still
-		# blocks and still says why, and it offers no button rather than one
-		# that resolves to nowhere (the failure shape PA-05 catalogued).
-		"fix_kind": RequirementFormatter.FIX_DISTRICT if zone_key != "" \
-				else RequirementFormatter.FIX_NONE,
+		# Which arm refused, and what it points at — read by the row's copy and
+		# by `FixRouter`, and published so a test can assert the two agree.
+		"limit": limit,
+		"binding": binding,
+		"pressure": float(verdict.get("pressure", sim.water.pressure_at(tile))),
+		"zone_pressure": zone.pressure if zone != null else 0.0,
+		"main_distance_tiles": sim.water.topology.distance_at_tile(tile),
+		"fix_target_id": fix_id,
+		# No zone and no node at all is not a place the camera can fly to; the
+		# row still blocks and still says why, and it offers no button rather
+		# than one that resolves to nowhere (the failure shape PA-05 catalogued).
+		"fix_kind": fix_kind,
 	}
 
 

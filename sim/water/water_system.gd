@@ -385,8 +385,36 @@ func _solve_zone(z: PressureZone, dt_h: float, ch_res: float, ch_com: float,
 	z.break_penalty = breaks_penalty
 
 	# --- supply (§2.5) -----------------------------------------------------
+	#
+	# **The upstream share is split over the pumps that are RUNNING, and that is
+	# a correction rather than a change of rule** (Wave 28, A91-D-149, doc 92
+	# §69.4). §2.5 says *"shared upstream is split among pumps in proportion to
+	# `rated_flow_m3h`"*, and `WaterTopology._resolve_supply_chain` does that on
+	# TOPOLOGY change — while whether a pump runs is decided HERE, per tick, off
+	# doc 04's power fraction and the restart lockout. So a pump that was dark,
+	# tripped or inside its five-minute lockout went on holding its slice of the
+	# treated water, and the pumps that could have moved it never saw it.
+	#
+	# **Measured, seed 1337 at game-day 25** (`tools/measure_water_chain.gd`):
+	# source 257.3, treatment 385.9, pumps rated 480.0, `feed_capacity` 214.0 —
+	# and a supply of **128.6 against a demand of 135.3**, a zone in deficit with
+	# **105.5 m³/h** (most of its own chain) held by a pump that was not
+	# turning. Nothing in doc 05 authorises that loss: §2.5's sentence is about
+	# sharing what the chain makes among the pumps that can move it, and a pump
+	# that is not moving anything is not one of them.
+	#
+	# Cost is one extra pass over the zone's pumps, which is O(pumps in zone) on
+	# a term §7 test 29 budgets at 120 zones — the sum below replaces a cached
+	# float and nothing else in the tick changes.
 	var supply_raw := 0.0
 	var trip := _k_trip_fraction
+	var running_rated := 0.0
+	for node_id in z.live_pump_ids:
+		var counted: WaterNode = nodes[node_id]
+		var counted_fraction := power_fraction_of(counted)
+		if counted_fraction >= trip and counted.restart_timer_min <= 0.0:
+			running_rated += float(data.component(counted.variant, counted.level)
+					.get("rated_flow_m3h", 0.0))
 	for node_id in z.live_pump_ids:
 		var pump: WaterNode = nodes[node_id]
 		var fraction := power_fraction_of(pump)
@@ -395,7 +423,13 @@ func _solve_zone(z: PressureZone, dt_h: float, ch_res: float, ch_com: float,
 			pump.flow_m3h = 0.0
 			continue
 		var rated := float(data.component(pump.variant, pump.level).get("rated_flow_m3h", 0.0))
-		pump.flow_m3h = minf(rated * fraction * pump.cond_factor(), pump.share_m3h)
+		# `share_m3h` stays the topology-time figure — it is what doc 05 §3.2
+		# persists and what `WaterTopology` publishes — and the tick uses the
+		# re-split of the SAME upstream capacity over the running set. With every
+		# live pump running the two are identical, which is why both shipped
+		# cities' baselines do not move.
+		var share := z.upstream_cap_m3h * rated / maxf(running_rated, EPSILON)
+		pump.flow_m3h = minf(rated * fraction * pump.cond_factor(), share)
 		supply_raw += pump.flow_m3h
 	z.supply_m3h = minf(supply_raw, z.feed_capacity_m3h) if not z.edge_ids.is_empty() \
 			else supply_raw
@@ -821,20 +855,239 @@ func zone_headroom_m3h(building_id: String) -> float:
 	return 0.0 if z == null else z.headroom_m3h()
 
 
+## §2.11's upgrade gate. Two arms, and **the answer now says WHICH ONE said no**
+## (`limit`), because the two want opposite purchases: `capacity` is short of
+## supply and is answered by the stage [method supply_chain] names, while
+## `pressure` is short of the per-tile factor §2.3 derives from DISTANCE TO A
+## MAIN and is answered by laying one closer. Doc 92 §67.8 measured a zone at
+## pressure 1.00 with 57.1 m³/h of unused headroom whose high-rise was refused at
+## its own tile's 0.50 — every number in that refusal said "capacity", and the
+## thing that was short was a pipe.
+##
+## **A ZERO-delta upgrade needs no headroom** (A91-D-139, and it is
+## `PowerGrid.can_upgrade_power`'s own Wave-17 sentence one document over): doc
+## 02's water column is 0.0 for a `substation` and a `power_facility`, so a grid
+## shell that stands outside every pressure zone was refused
+## `BLOCKED_WATER_CAPACITY` for the rest of its life by the `z == null` line
+## below — for water it does not drink and would not have drunk at the next
+## level either. A building that asks for no more water cannot exhaust anything.
 func can_upgrade_water(building_id: String, delta_water_m3h: float) -> Dictionary:
+	if delta_water_m3h <= 0.0:
+		return {"ok": true, "reason": "", "deficit_m3h": 0.0, "limit": "none"}
 	var tile := demand.access_tile(building_id)
 	var z := zone_at(tile)
 	if z == null or z.dead:
-		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY", "deficit_m3h": delta_water_m3h}
+		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY",
+				"deficit_m3h": delta_water_m3h, "limit": "no_zone"}
 	var safety := data.effect("upgrade_headroom_safety", 1.10)
 	var required := delta_water_m3h * safety
 	var headroom := z.headroom_m3h()
 	if headroom < required:
 		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY",
-				"deficit_m3h": required - headroom}
-	if pressure_at(tile) < data.effect("upgrade_min_pressure", 0.55):
-		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY", "deficit_m3h": 0.0}
-	return {"ok": true, "reason": "", "deficit_m3h": 0.0}
+				"deficit_m3h": required - headroom, "limit": "capacity",
+				"zone_key": z.zone_key, "binding": String(supply_chain_of(z)["binding"])}
+	var pressure := pressure_at(tile)
+	if pressure < data.effect("upgrade_min_pressure", 0.55):
+		return {"ok": false, "reason": "BLOCKED_WATER_CAPACITY", "deficit_m3h": 0.0,
+				"limit": "pressure", "zone_key": z.zone_key,
+				"pressure": pressure, "zone_pressure": z.pressure,
+				"main_distance_tiles": topology.distance_at_tile(tile),
+				"tile_factor": topology.factor_at_tile(tile)}
+	return {"ok": true, "reason": "", "deficit_m3h": 0.0, "limit": "none"}
+
+
+# ---------------------------------------------------- §2.5 the chain, named
+
+## The four terms of §2.5's supply expression, in the order the doc writes them.
+## `mains` is `feed_capacity` — the only term that is not a node, and the one
+## doc 92 §67.8 measured binding two of three seeds at exactly 214.0 m³/h.
+const SUPPLY_STAGES: Array[StringName] = [&"source", &"treatment", &"pump", &"mains"]
+
+
+## Doc 05 §2.5's chain for one zone, **with the stage that binds NAMED**.
+##
+## `S(z) = min( Σ min(rated·power·condition, share) , feed_capacity )` is four
+## numbers wearing one name, and until this method every reader had to
+## re-derive them: `tests/balance_gate_rig.gd` summed three of them,
+## `tools/playtest.gd` summed the same three a second time to sort its purchase
+## order, and the game itself summed none — so a player whose zone was
+## treatment-bound was sold pumps (doc 92 §67.4 measured 118 of them, $5.5M, and
+## the zone's supply did not move). This is that read, once, and every consumer
+## is pointed at it.
+##
+## Returns `{zone_key, live, source_m3h, treatment_m3h, upstream_m3h,
+## pump_rated_m3h, pump_available_m3h, mains_m3h, supply_m3h, demand_m3h,
+## headroom_m3h, pressure, binding, binding_m3h, binding_ids, stranded_m3h,
+## next_binding, next_binding_m3h}`.
+##
+## **`stranded_m3h` is water the chain paid for and the zone never saw.** §2.5
+## splits upstream capacity among pumps in proportion to rated flow at TOPOLOGY
+## time, but whether a pump runs is decided per TICK — so a dark or tripped pump
+## keeps its share and the pumps that could have used it never see it. It is a
+## rule with a defect's smell and it is reported rather than silently absorbed.
+func supply_chain(zone_key: String) -> Dictionary:
+	return supply_chain_of(topology.zone_by_key(zone_key))
+
+
+func supply_chain_of(z: PressureZone) -> Dictionary:
+	if z == null:
+		return {"zone_key": "", "live": false, "source_m3h": 0.0, "treatment_m3h": 0.0,
+				"upstream_m3h": 0.0, "pump_m3h": 0.0, "pump_rated_m3h": 0.0, "pump_available_m3h": 0.0,
+				"mains_m3h": 0.0, "supply_m3h": 0.0, "demand_m3h": 0.0,
+				"headroom_m3h": 0.0, "pressure": 0.0, "binding": "none",
+				"binding_m3h": 0.0, "binding_ids": [], "stranded_m3h": 0.0,
+				"next_binding": "none", "next_binding_m3h": 0.0}
+	var source_yield := 0.0
+	for node_id in z.source_ids:
+		var n: WaterNode = nodes[node_id]
+		if n.is_live():
+			source_yield += float(data.component(n.variant, n.level, n.subtype)
+					.get("yield_m3h", 0.0)) * n.cond_factor()
+	var treatment := 0.0
+	for node_id in z.treatment_ids:
+		var n: WaterNode = nodes[node_id]
+		if n.is_live():
+			treatment += float(data.component(n.variant, n.level)
+					.get("throughput_m3h", 0.0)) * n.cond_factor()
+	var pump_rated := 0.0
+	var pump_available := 0.0
+	var pump_delivering := 0.0
+	var running_rated := 0.0
+	for node_id in z.live_pump_ids:
+		var counted: WaterNode = nodes[node_id]
+		if power_fraction_of(counted) >= _k_trip_fraction \
+				and counted.restart_timer_min <= 0.0:
+			running_rated += float(data.component(counted.variant, counted.level)
+					.get("rated_flow_m3h", 0.0))
+	for node_id in z.live_pump_ids:
+		var n: WaterNode = nodes[node_id]
+		var rated := float(data.component(n.variant, n.level).get("rated_flow_m3h", 0.0))
+		pump_rated += rated
+		var fraction := power_fraction_of(n)
+		if fraction >= _k_trip_fraction and n.restart_timer_min <= 0.0:
+			var effective := rated * fraction * n.cond_factor()
+			pump_available += effective
+			# §2.5's own expression, per pump: `min(rated · power · condition,
+			# share)`, with `_solve_zone`'s own re-split of the upstream over the
+			# RUNNING pumps (A91-D-149). The two must be the same arithmetic or
+			# the panel would quote a term the tick does not deliver.
+			pump_delivering += minf(effective,
+					minf(source_yield, treatment) * rated / maxf(running_rated, EPSILON))
+	var mains := z.feed_capacity_m3h if not z.edge_ids.is_empty() else INF
+	# **The pump TERM is what the pumps deliver, not what they are rated to.**
+	# Measured on the curriculum arc at game-day 20 (doc 92 §69.4): a zone with
+	# `pump_available` 235.6 and `feed_capacity` 214.0 supplying **129.1**, where
+	# an argmin over the rated side names `mains` and the mains are carrying 60 %
+	# of what they could. The term that binds is the pumps, and the reason is the
+	# share split — so the chain says `pump`, which is also the purchase that
+	# moves it (a bigger running pump takes a bigger share).
+	var terms := {
+		&"source": source_yield, &"treatment": treatment,
+		&"pump": pump_delivering, &"mains": mains,
+	}
+	var binding := &"none"
+	var binding_value := INF
+	if not z.dead:
+		for stage: StringName in SUPPLY_STAGES:
+			var value := float(terms[stage])
+			if value < binding_value:
+				binding_value = value
+				binding = stage
+	# The term that would bind NEXT — what the player buys AFTER this one, and
+	# the reason the panel can say "raise the intake and the mains bind at 214".
+	var next_binding := &"none"
+	var next_value := INF
+	if not z.dead:
+		for stage: StringName in SUPPLY_STAGES:
+			if stage == binding:
+				continue
+			var value := float(terms[stage])
+			if value < next_value:
+				next_value = value
+				next_binding = stage
+	# **Exactly the share-split loss, and nothing else.** What the running pumps
+	# could take (`min(upstream, Σ rated·power·condition)`) minus what §2.5's
+	# proportional share lets them take. It does not read `supply_m3h`, so it is
+	# answerable before the first tick and is not confounded by the feed min-cut.
+	#
+	# **Since A91-D-149 it is normally ZERO**, and that is the point of keeping
+	# it: the split is now over the RUNNING pumps, so the only water it can find
+	# is water a running pump is individually too small to take. It stays
+	# published so the next regression of this shape is a number on a table
+	# rather than a difference nobody computes.
+	var stranded := maxf(0.0,
+			minf(minf(source_yield, treatment), pump_available) - pump_delivering) \
+			if not z.dead else 0.0
+	return {
+		"zone_key": z.zone_key, "live": not z.dead,
+		"source_m3h": source_yield, "treatment_m3h": treatment,
+		"upstream_m3h": minf(source_yield, treatment),
+		"pump_m3h": pump_delivering,
+		"pump_rated_m3h": pump_rated, "pump_available_m3h": pump_available,
+		"mains_m3h": z.feed_capacity_m3h,
+		"supply_m3h": z.supply_m3h, "demand_m3h": z.demand_m3h,
+		"headroom_m3h": z.headroom_m3h(), "pressure": z.pressure,
+		"binding": String(binding),
+		"binding_m3h": 0.0 if binding == &"none" else binding_value,
+		"binding_ids": stage_node_ids(z, binding),
+		"stranded_m3h": stranded,
+		"next_binding": String(next_binding),
+		"next_binding_m3h": 0.0 if next_binding == &"none" else next_value,
+	}
+
+
+## The nodes (or, for `mains`, the feed edges) that make up one stage of the
+## chain, cheapest rung first so the caller's first entry is the smallest
+## purchase that moves the term — `tools/playtest.gd`'s `supply_chain_order`
+## ordering, stated once where every reader can have it.
+func stage_node_ids(z: PressureZone, stage: StringName) -> Array:
+	if z == null:
+		return []
+	if stage == &"mains":
+		return z.feed_edge_ids.duplicate()
+	var ids: Array = []
+	match stage:
+		&"source":
+			ids = z.source_ids
+		&"treatment":
+			ids = z.treatment_ids
+		&"pump":
+			ids = z.pump_ids
+		_:
+			return []
+	var rows: Array = []
+	for node_id in ids:
+		rows.append({"id": String(node_id), "level": (nodes[node_id] as WaterNode).level})
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a["level"]) != int(b["level"]):
+			return int(a["level"]) < int(b["level"])
+		return String(a["id"]) < String(b["id"]))
+	var out: Array = []
+	for row: Dictionary in rows:
+		out.append(String(row["id"]))
+	return out
+
+
+## Every live zone's chain, in `zone_key` order.
+##
+## **Its consumer is `tools/measure_water_chain.gd` and nothing else**, and that
+## is stated rather than implied: the first cut of this docstring claimed *"the
+## overlay's `which zone is short of what` read"*, and no overlay reader exists —
+## `game/main.gd::_feed_water_overlay` bands `pressure_at` per BUILDING, which is
+## the right number for a map and a different question from this one. A committed
+## instrument is a consumer; a docstring that names a second one that does not
+## exist is the A91-D-19 shape written in a comment.
+func supply_chains() -> Array:
+	var out: Array = []
+	for z: PressureZone in topology.zones:
+		out.append(supply_chain_of(z))
+	return out
+
+
+## The chain of the zone a NODE sits in — what the water panel (doc 12 S19)
+## opens on when the player taps a pump.
+func supply_chain_at_node(node_id: String) -> Dictionary:
+	return supply_chain_of(topology.zone_of(node_id))
 
 
 ## §2.9 / C-46: the candidate set AND the three hazard multipliers doc 06
@@ -997,6 +1250,38 @@ func set_segment_repaired(edge_id: String) -> void:
 	main.incident_pressure_penalty = 0.0
 	main.condition = maxf(main.condition, data.repair_post_condition("main_break"))
 	topology_dirty = true
+
+
+## **The hold is released when the incident LEAVES, and resolving is only one of
+## the three ways it can** (Wave 28, A91-D-145).
+##
+## §2.8 says doc 06's tiered `zone_pressure_delta` "is held until the incident
+## resolves", and the same section says this doc's flat
+## `break_pressure_penalty_fallback` fires "only for a broken segment with **no
+## owning doc-06 incident**". Between those two sentences is a lifecycle with
+## three exits — RESOLVED, FAILED, ABANDONED — of which only the first ever
+## reached `set_segment_repaired`. A break that nobody answered therefore went
+## terminal, was pruned out of doc 06's active set, and left this side holding a
+## −0.80 magnitude keyed to an incident that no longer exists, forever, with the
+## fallback it should have fallen back to unreachable because `owning_incident`
+## was still set.
+##
+## Measured on the player's save (doc 92 §69.1): three such mains, three held
+## 0.80s summing to 2.40, clamped to §2.8's `break_penalty_cap` — a zone pinned
+## at **P = 0.50** with 31 m³/h of spare supply and every building in it under
+## the 0.55 upgrade gate.
+##
+## This releases the CLAIM, not the BREAK: the pipe is still broken, still
+## leaking `capacity × 0.25 × severity`, and still wants the crew
+## `CitySim.cmd_repair_water_asset` sends. What changes is that its pressure
+## penalty becomes this doc's own honest `0.12 × severity` — the number §2.8
+## authored for exactly this case — and the state has a door.
+func release_segment_incident(edge_id: String) -> void:
+	var main: WaterEdge = edges.get(edge_id)
+	if main == null or main.owning_incident == "":
+		return
+	main.owning_incident = ""
+	main.incident_pressure_penalty = 0.0
 
 
 ## A zone-wide held delta for a doc-06 incident with no owning segment.

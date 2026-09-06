@@ -2178,6 +2178,9 @@ func _restore_incidents(body: Dictionary) -> void:
 	# than being handed one they never accepted.
 	contracts.deserialize(body.get("contracts", {}))
 	_restore_storm_prep(body.get("storm_prep", {}))
+	# **Both halves of doc 05 §2.8's claim are finally in memory at the same
+	# time**, so this is the only line in the load that can check they agree.
+	_reconcile_water_incident_holds()
 
 
 func _restore_finish(body: Dictionary) -> void:
@@ -4590,13 +4593,61 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 		cost += lateral.size() * econ_curves.water_main_cost_per_tile(tier, m_build)
 	if not grid.would_serve(tile):
 		blockers.append(&"E_UNSERVED")
-	if treasury.balance < cost:
+	# **Doc 93 §AD3's P0, one document over** (Wave 28 fix, doc 91 A91-D-153).
+	# `cmd_place_building` has asked doc 04 whether the transformer can CARRY the
+	# new load since Wave 12 — a WARNING and not a refusal, because doc 04 §2.1
+	# gates placement on coverage and authorises no capacity refusal — and this
+	# verb, which places the heaviest single draw in doc 05's roster, never asked
+	# at all. **Measured on the player's save**: a pump sited at (36, 44) passed
+	# every check, was built, was commissioned, and ran at `power_fraction 0.00`
+	# for a week because the pole-top that reaches that tile was already full.
+	# `power_ok` false is what the ghost turns amber on; the placement is still
+	# allowed, exactly as a house's is.
+	var served := grid.can_serve_tile(tile, water.data.kw_required(variant, level, subtype),
+			_ambient_c(), peak_component_loads())
+	# **The preview has to be able to say `E_AUSTERITY`** (Wave 28 fix, doc 91
+	# A91-D-151). `treasury.balance < cost` is not the whole of doc 03 §2.10:
+	# layer 2 refuses every `construction` spend outright while austerity is
+	# active, whatever the balance is. Quoting on the balance alone made the
+	# GHOST say `valid` and the COMMAND answer `E_AUSTERITY` — measured on the
+	# player's own save, which loads austerity-active at a balance of
+	# $14,899,376 — and doc 12 §2.7 is explicit that the preview and the commit
+	# are one code path.
+	#
+	# **The funds test itself is untouched.** `Treasury.can_spend` would have
+	# been the tidier call and it is NOT the same number: it admits a spend down
+	# to the credit floor, which is a doc 03 §2.10 layer-4 decision this verb has
+	# never made. The austerity arm is added beside the balance test, not in
+	# place of it.
+	if treasury.austerity_active \
+			and Treasury.AUSTERITY_BLOCKED_CATEGORIES.has(&"construction"):
+		blockers.append(&"E_AUSTERITY")
+	elif treasury.balance < cost:
 		blockers.append(&"E_FUNDS")
 
+	# **`E_NO_MAIN` has to say HOW FAR** (Wave 28, doc 12 D-126). The refusal
+	# carried `tap_distance = -1` — "not within the radius" — and the string
+	# table's own sentence has asked for the distance and the radius since Wave
+	# 10, so the player was told "the nearest main is more than  tiles from tile
+	# ". A second search, out to the whole map, answers the question the copy was
+	# already asking. It runs ONLY on the refusal path, so a legal placement pays
+	# nothing for it.
+	var reach := int(tap.get("distance", -1))
+	var nearest := reach
+	if tap.is_empty():
+		var far := water.nearest_main_tile(tile, TileGrid.SIZE)
+		nearest = int(far.get("distance", -1)) if not far.is_empty() else -1
 	var quote := {"blockers": blockers, "cost": cost, "level": level,
 			"footprint": [size.x, size.y], "lateral_tiles": lateral.size(),
-			"main": String(tap.get("edge", "")), "tap_distance": int(tap.get("distance", -1)),
-			"kw_required": water.data.kw_required(variant, level, subtype)}
+			"main": String(tap.get("edge", "")), "tap_distance": reach,
+			"tap_radius_tiles": radius, "nearest_main_tiles": nearest,
+			"requires_water_adjacent": bool(rules.get("requires_water_adjacent", false)),
+			"kw_required": water.data.kw_required(variant, level, subtype),
+			"power_ok": bool(served["ok"]),
+			"component": String(served.get("at", "")),
+			"transformer": String(served.get("transformer", "")),
+			"deficit_kw": float(served.get("deficit_kw", 0.0)),
+			"ratio": float(served.get("r_after", 0.0))}
 	if not blockers.is_empty():
 		return CommandQueue.fail(blockers[0], quote)
 	if preview:
@@ -4614,7 +4665,23 @@ func cmd_place_water_component(kind: String, tile: Vector2i, level: int = 1,
 	b.stats = shell_stats
 	b.max_level = catalog.max_level_of(WATER_SHELL_ARCHETYPE)
 	_stamp_building_rules(b)
-	b.level = level
+	# **`pending_level`, not `level`** (Wave 28 fix, doc 91 A91-D-152). A shell
+	# under construction is doc 02 §2.12's NEW BUILD and `Building.is_new_build()`
+	# is `state == under_construction and level == 0`; `complete_construction`
+	# reads `pending_level` and is the line that promotes it. Writing `level`
+	# here instead made every water site look like an UPGRADE IN PROGRESS from
+	# the moment it was paid for, and `condemn_unanswered` — whose own comment
+	# says a new build must be destroyed rather than stranded, because *"it is no
+	# longer `under_construction`, so `complete_construction` can never run"* —
+	# therefore took the other branch and put it in `damaged` at level 1.
+	#
+	# **Measured on the player's own save**, driving his own second sentence: the
+	# pump placed at (36, 44) for $45,858 caught fire on game-day 1
+	# (`building_condemned_by_fire`, incident 2235), landed in `damaged` at level
+	# 1 condition 0.10, and its node `P-094-PMP` was still `offline_manual`
+	# thirty game-days later — a pump the player had bought that could never
+	# pump, with no verb anywhere in the game to finish it.
+	b.pending_level = level
 	b.built_at_minutes = clock.sim_time_minutes()
 	world.grid.stamp_building(grid_id, tile, size)
 	buildings[sim_id] = b
@@ -4738,7 +4805,13 @@ func cmd_place_water_main(tiles: Array, tier: String = "service",
 		blockers.append(&"E_NOT_CONNECTED")
 	var cost := path.size() * econ_curves.water_main_cost_per_tile(tier,
 			float(treasury.difficulty().get("M_build", 1.0)))
-	if treasury.balance < cost:
+	# Doc 03 §2.10 layer 2, in the quote — see `cmd_place_water_component`'s note.
+	# This is the seam the verifier drove on the player's save: `PathTool` said
+	# `valid`, `can_confirm` said true, and the commit came back `E_AUSTERITY`.
+	if treasury.austerity_active \
+			and Treasury.AUSTERITY_BLOCKED_CATEGORIES.has(&"construction"):
+		blockers.append(&"E_AUSTERITY")
+	elif treasury.balance < cost:
 		blockers.append(&"E_FUNDS")
 	var quote := {"blockers": blockers, "cost": cost, "tiles": path.size(),
 			"tier": tier, "capacity_m3h": water.data.main_capacity(tier)}
@@ -4844,6 +4917,204 @@ func cmd_restore_water_main(edge_id: String) -> Dictionary:
 	if bool(result["ok"]):
 		water.rebuild_zones()
 	return result
+
+
+# ---------------------------------------- doc 05 §2.12 repair, given a door
+
+## The crew a water repair asks for and the MVP binding it gets, both the same
+## `cmd_repair_grid_component` uses one document over: doc 09 §2.3's
+## `UTILITY_CORRIDOR` phase lays this exact equipment and asks for the same crew,
+## so a city that can develop a block can dig up a main.
+const WATER_REPAIR_CREW_TYPE := &"heavy_equipment_crew"
+const WATER_REPAIR_CREW := "YARD-CREW-1"
+
+
+## **Repair a doc-05 water asset — a MAIN or a NODE — by sending a crew.**
+##
+## Doc 05 §2.12 has published `damage_fraction` and its work-content formula
+## since C-16, and doc 03 §2.5 has published the price that consumes them:
+## `CostCurves.capital_value_water_main` and `capital_value_water_component`
+## have existed since the water block landed and **nothing in this project ever
+## called either of them.** So doc 05 could break a main and doc 03 could price
+## putting it back, and no verb in the game spent the money — which is this
+## project's signature defect wearing a pipe.
+##
+## What it is worth, measured on the player's own save (doc 92 §69.1): three
+## `service` mains left `broken` at severity 1.00, leaking **40.1 m³/h** — 95 %
+## of that city's entire water demand — each holding a doc-06 tier-5
+## `zone_pressure_delta` of −0.80 whose incident had gone terminal and been
+## pruned. Their sum clamps to §2.8's `break_penalty_cap`, so the zone sat at
+## **P = 1.00 − 0.50 = 0.50** for as long as the city ran, **89 of 89 buildings
+## under the 0.55 upgrade gate**, with 31 m³/h of supply spare. The city could
+## not grow and nothing in the game could tell the player why, because the only
+## screen a main is ever named on is doc 06's incident drawer and the incident
+## was gone.
+##
+## Checks run in this order; the FIRST blocker is the reason code and the full
+## list rides in `payload.blockers` (`preview = true` quotes without charging):
+##
+##   1 E_UNKNOWN_COMPONENT   no such main or node id (a `junction` is not an
+##                           asset — §2.1: it is where mains meet)
+##   2 E_NOT_DAMAGED         nothing to buy: a standing asset above doc 03's
+##                           `GRID_REPAIR_MIN_DAMAGE_FRACTION` floor of wear
+##   3 E_ALREADY_REPAIRING   a crew is already on it
+##   4 E_FUNDS / E_AUSTERITY
+##
+## Price is doc 03 §2.5's `capital_value × damage_fraction × 0.85 × M_repair`,
+## against doc 03's own water capital: a main is `tiles × price_per_tile` at its
+## tier, a node is its build price at its level. This document authors no dollar.
+func cmd_repair_water_asset(asset_id: String, preview: bool = false) -> Dictionary:
+	var node: WaterNode = water.nodes.get(asset_id)
+	var edge: WaterEdge = water.edges.get(asset_id)
+	if (node == null or node.variant == &"junction") and edge == null:
+		return CommandQueue.fail(&"E_UNKNOWN_COMPONENT",
+				{"blockers": [&"E_UNKNOWN_COMPONENT"], "asset": asset_id})
+	var is_main := node == null
+	var kind := "main_break" if is_main else _water_failure_kind(node.variant)
+	var condition := edge.condition if is_main else node.condition
+	var severity := edge.severity if is_main else 0.0
+	var frozen := edge.frozen if is_main else false
+	var down := edge.is_broken() if is_main else (not node.is_live()
+			and node.state != &"offline_manual")
+	# §2.12's two readings of "how damaged": a STANDING asset is its wear
+	# (`overhaul`, `damage_fraction = 1 − condition`), a DOWN one is at least the
+	# break's own severity conversion. Never less than the wear, so a crew called
+	# to a broken main is never billed under an overhaul of the same pipe.
+	var damage := clampf(1.0 - condition, 0.0, 1.0)
+	if down:
+		damage = maxf(damage, water.damage_fraction(severity, frozen))
+	var m_repair := float(treasury.difficulty().get("M_repair", 1.0))
+	var capital := econ_curves.capital_value_water_main(edge.tier, edge.path.size()) \
+			if is_main else econ_curves.capital_value_water_component(
+					water.data.variant_cost_ratio(node.variant, node.subtype), node.level)
+	var cost := econ_curves.repair_cost(capital, damage, m_repair)
+	var blockers: Array = []
+	if damage <= 0.0 or cost <= 0 or (not down
+			and damage < econ_curves.grid_repair_min_damage()):
+		blockers.append(&"E_NOT_DAMAGED")
+	var in_flight := water_repair_job(asset_id)
+	if in_flight >= 0:
+		blockers.append(&"E_ALREADY_REPAIRING")
+	# **No austerity arm here, and that is doc 03 §2.10's ruling and not an
+	# omission.** The category is `repair`, which layer 2 does not block —
+	# `AUSTERITY_BLOCKED_CATEGORIES` is `construction`/`land`/`vehicle` — because
+	# a city in austerity must still be allowed to stop a leak. So this quote's
+	# only money test is the balance, exactly as `cmd_repair_grid_component`'s is.
+	if treasury.balance < cost:
+		blockers.append(&"E_FUNDS")
+	# §2.12's work content, in the crew-minutes doc 05 owns, converted to the
+	# crew-HOURS doc 02's queue runs on. `water_repair_truck` is the reference
+	# crew (`crew_mult` 1.00), so this is the base content undivided.
+	var crew_hours := water.repairs.work_content_minutes(kind, maxf(severity, damage)) / 60.0
+	var restored := water.data.repair_post_condition(kind)
+	var zone := water.topology.zone_of(asset_id)
+	var quote := {"blockers": blockers, "asset": asset_id,
+			"target_kind": "edge" if is_main else "node",
+			"kind": kind, "cost": cost, "capital": capital,
+			"balance": treasury.balance, "condition": condition,
+			"damage_fraction": damage, "crew_hours": crew_hours,
+			"crew_type": String(WATER_REPAIR_CREW_TYPE), "job_id": in_flight,
+			"repair_target": restored, "down": down,
+			"leak_m3h": (edge.capacity_m3h * water.data.global_value(
+					"leak_frac_of_capacity", 0.25) * severity) if is_main and down else 0.0,
+			"zone": zone.zone_key if zone != null else "",
+			"customers": zone.building_count if zone != null else 0}
+	if not blockers.is_empty():
+		return CommandQueue.fail(blockers[0], quote)
+	if preview:
+		return CommandQueue.ok(quote)
+
+	var paid := treasury.spend(cost, &"repair", "repair " + asset_id)
+	if not bool(paid["ok"]):
+		quote["blockers"] = [_spend_reason(paid)]
+		return CommandQueue.fail(_spend_reason(paid), quote)
+	var job_id := construction.submit(&"repair", asset_id, crew_hours,
+			WATER_REPAIR_CREW_TYPE,
+			{"water_asset": asset_id, "target_kind": quote["target_kind"],
+			"kind": kind, "cost": cost, "damage_fraction": damage,
+			"repair_target": restored})
+	construction.assign_crew(job_id, WATER_REPAIR_CREW)
+	quote["job_id"] = job_id
+	# Consumers, named: `ui/water_panel_model.gd` re-reads the job for its ETA
+	# and `data/ui.json.event_log` files it under `water`. No toast — the panel
+	# the player is standing in shows the crew and its clock, exactly as doc 04's
+	# does; the ARRIVAL is what raises a banner, through the
+	# `water_asset_repaired` binding in `data/notifications.json` (there is
+	# deliberately no binding for THIS event, which is why it is named here).
+	bus.emit(&"water_asset_repair_started", {"asset": asset_id,
+			"target_kind": quote["target_kind"], "kind": kind, "cost": cost,
+			"damage_fraction": damage, "crew_hours": crew_hours, "job_id": job_id,
+			"zone": quote["zone"], "leak_m3h": quote["leak_m3h"]})
+	stats_add(&"water_assets_repaired")
+	return CommandQueue.ok(quote)
+
+
+## Doc 05 §2.9's failure kind for a node variant — the row `data/water.json`
+## `repair.base_minutes` and `repair.post_repair_condition` are keyed by.
+static func _water_failure_kind(variant: StringName) -> String:
+	match variant:
+		&"pump", &"booster":
+			return "pump_failure"
+		&"treatment":
+			return "treatment_failure"
+		&"source":
+			return "source_failure"
+	# A tank has no failure row of its own (§2.9 rolls none for it), so the crew
+	# that visits one is doing §2.12's overhaul.
+	return "overhaul"
+
+
+## The live repair job on this water asset, or `-1`. The single reader of the
+## `water_asset` payload key — `E_ALREADY_REPAIRING` and the panel's ETA both ask
+## this rather than each walking the queue.
+func water_repair_job(asset_id: String) -> int:
+	for job in construction.active_jobs():
+		if StringName(String(job["kind"])) != &"repair":
+			continue
+		if String((job.get("payload", {}) as Dictionary).get("water_asset", "")) == asset_id:
+			return int(job["job_id"])
+	return -1
+
+
+## A finished water repair: the crew has arrived, dug, and left. The main or the
+## node goes back in service at §2.12's `post_repair_condition`, the leak stops,
+## and — the half that matters on the player's save — **the doc-06 hold is
+## released**. Called from `_route_completed_jobs` ahead of
+## `on_construction_completed`, whose first act is a `buildings` lookup on
+## `payload.sim_id`, which a water asset id never is.
+func _complete_water_repair(job: Dictionary) -> void:
+	var payload: Dictionary = job.get("payload", {})
+	var asset_id := String(payload.get("water_asset", ""))
+	var target := float(payload.get("repair_target", 0.85))
+	var was_down := false
+	if String(payload.get("target_kind", "")) == "edge":
+		var edge: WaterEdge = water.edges.get(asset_id)
+		if edge == null:
+			return
+		was_down = edge.is_broken() or edge.state == &"isolated"
+		water.set_segment_repaired(asset_id)
+		edge.condition = maxf(edge.condition, target)
+	else:
+		var node: WaterNode = water.nodes.get(asset_id)
+		if node == null:
+			return
+		was_down = not node.is_live()
+		if was_down:
+			node.state = &"ok"
+			node.restart_timer_min = 0.0
+		node.condition = maxf(node.condition, target)
+		water.topology_dirty = true
+	# The doc-05 job table may also be holding this asset (a pump/treatment/source
+	# failure doc 05 rolled itself, §2.9). A crew the player paid for and a crew
+	# the auto-dispatch sent must not both be working the same pipe.
+	var open: Dictionary = water.repairs.job_for_target(asset_id)
+	if not open.is_empty():
+		water.repairs.cancel(int(open["job_id"]))
+	water.rebuild_zones()
+	bus.emit(&"water_asset_repaired", {"asset": asset_id,
+			"target_kind": String(payload.get("target_kind", "")),
+			"kind": String(payload.get("kind", "")), "job_id": int(job["job_id"]),
+			"was_down": was_down, "condition": target})
 
 
 # ------------------------------------------------ doc 10 §2.13 road placement
@@ -7277,6 +7548,49 @@ func _restore_storm_prep(data: Dictionary) -> void:
 		_storm_prep_effects.append(effect)
 
 
+## **A save can carry a claim whose claimant is gone, and this is where the two
+## halves are finally in the same memory** (Wave 28, doc 05 §2.8, A91-D-146).
+##
+## `WaterEdge.owning_incident` is a doc-06 incident id, persisted in the water
+## section; the incidents themselves are persisted two sections later. A city
+## that was saved with a `water_main_break` open, and whose incident then went
+## terminal — FAILED or ABANDONED — before the save, restores with the segment
+## still naming an incident that is in nobody's roster. Doc 05 §2.8 then reads
+## that segment's held magnitude instead of its own fallback, forever, because
+## the only thing that ever cleared the field was a resolution that is never
+## coming.
+##
+## Measured on the player's own slot (doc 92 §69.1): **three** mains naming
+## `incident:1811`, `incident:2171`, `incident:2045`, and **zero**
+## `water_main_break` rows in `incidents.snapshot()`. Three held 0.80s, clamped
+## to §2.8's 0.50 cap, and a whole city under doc 02's 0.55 upgrade gate.
+##
+## `_release_finished_units` stops NEW ones being made. This is the sweep for
+## every save already written, and it is the honest kind of migration: it invents
+## nothing, it only drops a reference the roster cannot resolve. The break itself
+## is untouched — still broken, still leaking, still wanting the crew
+## `cmd_repair_water_asset` sends.
+func _reconcile_water_incident_holds() -> void:
+	if water == null or incidents == null:
+		return
+	var live: Dictionary = {}
+	for raw: Variant in incidents.snapshot():
+		live["incident:%d" % int((raw as Dictionary)["id"])] = true
+	var released := 0
+	for key: Variant in water.edges:
+		var edge: WaterEdge = water.edges[key]
+		if edge.owning_incident == "" or live.has(edge.owning_incident):
+			continue
+		water.release_segment_incident(String(key))
+		released += 1
+	# No event: the player-visible change is the zone's pressure, which the water
+	# overlay already draws, and this project counts a renderer as a consumer
+	# (`tests/test_event_matrix.gd`). What a new event here WOULD be is exactly
+	# the defect this wave is auditing for.
+	if released > 0:
+		water.topology_dirty = true
+
+
 ## Construction stage pulses for the renderer (doc 11 §5): a site under
 ## build/upgrade walks six visual stages, and the crane/site loop switches on
 ## each. One event per CHANGE only — a pulse every tick would be 240 events an
@@ -7332,6 +7646,12 @@ func _route_completed_jobs(completed: Array) -> void:
 			# never one, so a grid repair routed there would complete silently
 			# and the transformer would stay dead with the money spent.
 			_complete_grid_repair(job)
+		elif (job.get("payload", {}) as Dictionary).has("water_asset"):
+			# Wave 28, and for the identical reason one document over: a water
+			# main id is not a `sim_id`, so a water repair routed to
+			# `on_construction_completed` would return on its first line and the
+			# main would stay broken with the money spent.
+			_complete_water_repair(job)
 		elif not development.on_job_completed(job):
 			on_construction_completed(job)
 

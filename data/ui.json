@@ -610,6 +610,30 @@
 				}
 			},
 			{
+				"_comment": "Wave 28 (report 98 sec 73 RR-224). cmd_repair_water_asset's two events, given the reader that makes them worth emitting: the log's water filter. It is the same pairing this file already makes for cmd_repair_grid_component one document over. The ARRIVAL has a second reader in data/notifications.json -- the `water_asset_repaired` binding and its P3_routine event row -- which is what puts a banner in front of a player who is looking somewhere else; the DISPATCH has none, because a player who just pressed DIG IT UP is standing in S19, which already shows the crew and the ETA. key is the asset, so a main dug up twice in one session is two rows and not one -- a repair is a place and a decision.",
+				"type": "water_asset_repair_started",
+				"category": "water",
+				"notify_id": "water_asset_repair_started",
+				"state": "warning",
+				"key": "asset",
+				"args": {
+					"asset": "asset",
+					"cost": "@money:cost",
+					"time": "@time"
+				}
+			},
+			{
+				"type": "water_asset_repaired",
+				"category": "water",
+				"notify_id": "water_asset_repaired",
+				"state": "normal",
+				"key": "asset",
+				"args": {
+					"asset": "asset",
+					"time": "@time"
+				}
+			},
+			{
 				"_comment": "Doc 05's diagnostic half, logged — doc 91 §18.2's named exception, closed. Seven rows and four sentences: the three `*_failed` types share one notify_id because a failed pump, plant and source are the same sentence and the same job. `water_tank_low` is here and NOT in data/notifications.json: a tank drawing on reserve belongs in the ledger, not on a lock screen.",
 				"type": "water_capacity_shortage",
 				"category": "water",
@@ -905,7 +929,7 @@
 				}
 			},
 			{
-				"_comment": "Wave 25, doc 03 \u00a72.8b (report 98 \u00a769 RR-210). The other direction of the same pipeline: `development_phase_charged` above is what a phase COST, this is what it FOUND. One row per credited phase \u2014 three per block, at the completion of CLEARING, GRADING and UTILITY_CORRIDOR \u2014 filed under `economy` beside the charge it partly offsets, and keyed on `block_id` so the row carries `Jump to it`. `amount` is the find's whole VALUE, cash and yard material together, because that is what the crews turned up; the split is the toast's business and the balance's. `material` resolves through `ui_land_works_material_*` for the reason `phase` resolves through `ui_land_phase_*`: `utility_corridor spoil` is not a sentence.",
+				"_comment": "Wave 25, doc 03 §2.8b (report 98 §69 RR-210). The other direction of the same pipeline: `development_phase_charged` above is what a phase COST, this is what it FOUND. One row per credited phase — three per block, at the completion of CLEARING, GRADING and UTILITY_CORRIDOR — filed under `economy` beside the charge it partly offsets, and keyed on `block_id` so the row carries `Jump to it`. `amount` is the find's whole VALUE, cash and yard material together, because that is what the crews turned up; the split is the toast's business and the balance's. `material` resolves through `ui_land_works_material_*` for the reason `phase` resolves through `ui_land_phase_*`: `utility_corridor spoil` is not a sentence.",
 				"type": "land_works_find",
 				"category": "economy",
 				"notify_id": "land_works",
@@ -919,7 +943,7 @@
 				}
 			},
 			{
-				"_comment": "Wave 25, ruling 93 \u00a7AZ3 \u2014 the materials yard SPENDING itself. Without this row the yard is a number that silently makes an invoice smaller, which is the one thing a ledger may never do: the player would see `road_install $6,340` where doc 03 \u00a72.8 publishes $7,500 and have nowhere to find the missing $1,160. It fires only when the yard actually had something in it, so a city that has never developed a block never sees it.",
+				"_comment": "Wave 25, ruling 93 §AZ3 — the materials yard SPENDING itself. Without this row the yard is a number that silently makes an invoice smaller, which is the one thing a ledger may never do: the player would see `road_install $6,340` where doc 03 §2.8 publishes $7,500 and have nowhere to find the missing $1,160. It fires only when the yard actually had something in it, so a city that has never developed a block never sees it.",
 				"type": "land_works_stockpile_spent",
 				"category": "economy",
 				"notify_id": "land_works_yard",
@@ -1069,7 +1093,7 @@
 				}
 			},
 			{
-				"_comment": "Wave 19 \u2014 doc 03 \u00a72.5b's commissions board (report 98 \u00a760 RR-170). FOUR rows and not seven: `contract_accepted` and `contract_progress` are the player's own tap, and the band they tapped it on is already showing them; `contract_withdrawn` is an offer nobody took. These four are the ones that happen while the player is looking somewhere else, which is doc 93's own test for whether an event owes the log a line. `client` resolves through `@lookup:` with an EMPTY prefix because the payload already carries a string-table key rather than a bare id \u2014 the board is authored in `data/contracts.json` and its copy is authored in the string table, and the event is the one place the two meet.",
+				"_comment": "Wave 19 — doc 03 §2.5b's commissions board (report 98 §60 RR-170). FOUR rows and not seven: `contract_accepted` and `contract_progress` are the player's own tap, and the band they tapped it on is already showing them; `contract_withdrawn` is an offer nobody took. These four are the ones that happen while the player is looking somewhere else, which is doc 93's own test for whether an event owes the log a line. `client` resolves through `@lookup:` with an EMPTY prefix because the payload already carries a string-table key rather than a bare id — the board is authored in `data/contracts.json` and its copy is authored in the string table, and the event is the one place the two meet.",
 				"type": "contract_offered",
 				"category": "economy",
 				"notify_id": "contract_offered",
@@ -1726,7 +1750,10 @@
 		"max_issue_chips": 3,
 		"commit_requires_button": true,
 		"_max_run_tiles": "§2.7's drag-path tools (roads, water mains) commit ONE run as ONE command and ONE bill, so a stroke has to have an end. 48 tiles is three land blocks of frontage — long enough that no ordinary street or main is two commands, short enough that a thumb sliding off the display quotes $86,400 of street rather than $250,000 of avenue. It is a safety rail on the GESTURE and not a rule about roads: the player commits and sweeps again. `PathTool` truncates the far end of the L at this length, so the preview is always exactly the run the commit lays.",
-		"max_run_tiles": 48
+		"max_run_tiles": 48,
+		"_site_scan": "Wave 28 fix (doc 12 D-127). The build sheet answers `where CAN this go` by running the ghost's own preflight over a WINDOW, so these are the size of the window and how many origins it hands the shell to paint. They are effort numbers, not rules: a 10-tile radius is 441 previews, which is a 16x16 land block plus its neighbours' frontage -- far enough to contain the answer for a component whose main tap radius is 8, and small enough to recompute inside one placement session on a phone. site_rows caps only what the overlay DRAWS; the count and the histogram are over the whole window. BuildController.SITE_SCAN_RADIUS_MAX (20) is the hard ceiling whatever this says.",
+		"site_scan_radius_tiles": 10,
+		"site_rows": 32
 	},
 	"thresholds": {
 		"grid_normal_pct": 95,
@@ -2088,5 +2115,10 @@
 	"transformer": {
 		"_comment": "S18 (doc 12 sec 2.25, Wave 25). One number: how many customer rows the panel draws before it caps the list and says how many it kept back. It is a LAYOUT decision and not a rule of the grid, which is why it lives here rather than in doc 04 -- doc 92 sec 65.1 measures a grown city's widest transformer feeding 17 buildings, and 17 rows at 48 dp is 816 dp of list on a 915 dp display.",
 		"max_customer_rows": 8
+	},
+	"water": {
+		"_comment": "S19 (doc 12 sec 2.26, Wave 28) -- the `transformer` block above, one utility over, and deliberately the same two shapes of number so the two panels can never drift. `max_customer_rows`: doc 92 sec 69.1 measures the player's own zone serving 89 buildings, and 89 rows at 48 dp is eleven screens; eight rows is 384 dp, which is what keeps sec 2.5's chain and the verbs above the fold on a 915 dp display. `max_break_rows`: a zone with more than four OPEN breaks has already said everything the list can say, and the panel's MAINS OPEN block is a shopping list, not a census. Both are LAYOUT and not rules of doc 05, which is why they are here and not in data/water.json. WaterPanelModel.MAX_CUSTOMER_ROWS_DEFAULT / MAX_BREAK_ROWS_DEFAULT are the fallbacks for a config that has lost this block, and tests/test_water_chain.gd pins that these values are the ones the model actually reads.",
+		"max_customer_rows": 8,
+		"max_break_rows": 4
 	}
 }
