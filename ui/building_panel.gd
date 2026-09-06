@@ -423,6 +423,30 @@ func _build_actions() -> void:
 		_power = body.get_node_or_null("PowerSection") as VBoxContainer
 		return
 	_build_progress(body)
+
+	# --- Wave 29: doc 12 §2.9a / D-129's LOT row ---------------------------
+	# **DIRECTLY UNDER THE UPGRADE BLOCK, because that is the sentence it
+	# finishes.** The first cut put it below the two utility rows — "it is about
+	# the GROUND, not about a service" — which is true and was still wrong: on a
+	# 412×915 screen the panel is already taller than the viewport by the time it
+	# reaches POWER, and the screenshot of the lot-locked state showed the row was
+	# never on it. A door the player has to scroll past the whole panel to find is
+	# the shape doc 91 keeps filing, one step short of not building it.
+	#
+	# Here it reads as what it is: `Upgrade to Level 2` says what comes next, and
+	# `LOT-LOCKED · it can only reach level 2 of 6` says why that is the last one —
+	# with the neighbour named and `Fix this →` on the same screenful.
+	#
+	# It draws on the five growing archetypes only (doc 93 §BE4) and is invisible
+	# on the other nine: a house is 1×1 at every rung, and a row saying so on
+	# nineteen of the founding city's thirty-four buildings would be exactly the
+	# clutter the player asked us to take OFF this panel in Wave 25.
+	_lot = VBoxContainer.new()
+	_lot.name = "LotSection"
+	_lot.add_theme_constant_override(&"separation", int(_spacing))
+	_lot.visible = false
+	body.add_child(_lot)
+
 	_actions = VBoxContainer.new()
 	_actions.name = "Actions"
 	_actions.add_theme_constant_override(&"separation", int(_spacing))
@@ -527,19 +551,6 @@ func _build_actions() -> void:
 	_water_row.add_theme_constant_override(&"separation", int(_spacing))
 	_water_row.visible = false
 	body.add_child(_water_row)
-
-	# --- Wave 29: doc 12 §2.9a / D-128's LOT row ---------------------------
-	# BELOW the two utility rows, because it is not about a service — it is about
-	# the GROUND, which is the one fact on this panel that never changes after
-	# placement. It draws on the five growing archetypes only (doc 93 §BE4) and
-	# is invisible on the other nine: a house is 1×1 at every rung, and a row
-	# saying so on nineteen of the founding city's thirty-four buildings would
-	# be the clutter the player asked us to take OFF this panel in Wave 25.
-	_lot = VBoxContainer.new()
-	_lot.name = "LotSection"
-	_lot.add_theme_constant_override(&"separation", int(_spacing))
-	_lot.visible = false
-	body.add_child(_lot)
 
 	# --- Wave 17: doc 12 §2.9 D-70's POWER section -------------------------
 	# Below the water block for the same reason the water block is below the

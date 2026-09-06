@@ -435,6 +435,23 @@ the founding city's thirty-four buildings. That is D-116's rule applied again: a
 row that always says the same thing is clutter, and Wave 25 was spent taking
 clutter *off* this panel.
 
+**It sits directly under the UPGRADE block, because that is the sentence it
+finishes.** The first cut put it below the two utility rows — *"it is about the
+ground, not about a service"* — which is true and was still wrong: on a 412×915
+screen the panel is already taller than the viewport by the time it reaches
+POWER, and the screenshot of the lot-locked state showed the row was simply not
+on it. Here the two read as one thought: `Upgrade to Level 2` says what comes
+next, and `LOT-LOCKED · it can only reach level 2 of 6` says why that is the
+last one, with the neighbour named and `Fix this →` on the same screenful.
+
+**It is still below the fold on a 412 dp screen**, because the upgrade block's
+own requirement checklist fills the viewport on its own, and that is an open
+question this row does not answer: shortening or collapsing that checklist is a
+§2.9 decision of its own. `tests/test_lot_reservation.gd::
+test_the_panel_actually_draws_the_lot_row_and_wires_its_button` mounts the real
+S5 and asserts the section is drawn and the button carries the neighbour's id —
+because a row a screenshot cannot reach still has to be provably built (A91-D-150).
+
 `BuildController.building_view()` gains `lot` (the reservation) beside the
 existing `footprint` (now explicitly the BUILT extent), plus `lot_block` — the
 plain-data block `BuildingPanel._render_lot` binds and computes nothing from.

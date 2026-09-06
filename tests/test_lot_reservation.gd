@@ -363,6 +363,60 @@ func test_the_panel_shows_the_lot_and_routes_the_neighbour() -> void:
 			"the remedy is a PLACE: go and look at what is standing on your lot")
 
 
+## **The row is BUILT, not merely modelled.** The view model above is plain data;
+## this mounts the real S5 and asserts `BuildingPanel` actually draws the section
+## and wires the button — which is the half A91-D-150 was filed for (a model with
+## a passing unit test and no caller looks exactly like a shipped feature).
+##
+## It is asserted here rather than photographed because on a 412×915 screen the
+## panel is taller than the viewport by the time it reaches this row: the upgrade
+## block's own requirement checklist fills the screen on its own. The row sits
+## directly under that block — the sentence it finishes — and the player scrolls.
+func test_the_panel_actually_draws_the_lot_row_and_wires_its_button() -> void:
+	var sim := CitySim.boot_from_files()
+	var packed: PackedScene = load("res://game/ui/ui_root.tscn")
+	var root: UIRoot = packed.instantiate()
+	root.apply_content_scale = false
+	(Engine.get_main_loop() as SceneTree).root.add_child(root)
+	root.initialize()
+	var controller := BuildController.new(sim, RequirementFormatter.new(root.config))
+	var panel := root.get_node_or_null(
+			"SafeArea/PanelLayer/BuildingPanel") as BuildingPanel
+	assert_true(panel != null, "S5 is in the scene")
+	panel.setup(root.config, controller)
+
+	# A store holding its whole lot: the section draws, and there is no button.
+	panel.show_building("STR-001")
+	var section := panel.get_node_or_null("%s/LotSection" % panel.body_path())
+	assert_true(section != null, "the LOT section exists in the panel body")
+	assert_true((section as Control).visible, "…and a grower draws it")
+	assert_true(panel.lot_fix_button() == null, "nothing to fix, so no door")
+
+	# A house never grows, so the row is not drawn at all.
+	panel.show_building("H-001")
+	assert_false((section as Control).visible,
+			"a flat archetype draws no lot row — doc 12 D-116's rule")
+
+	# Now box a store in and assert the door appears and carries the neighbour.
+	var boxed: Building = sim.buildings["STR-005"]
+	var record: Dictionary = sim.building_record("STR-005")
+	var lot: Vector2i = record.get("footprint", Vector2i.ONE)
+	sim.world.grid.remove_building(boxed.id, boxed.origin, lot)
+	sim.world.grid.stamp_building(boxed.id, boxed.origin, Vector2i.ONE)
+	record["footprint"] = Vector2i.ONE
+	var blocker := String(sim.cmd_place_building("house",
+			boxed.origin + Vector2i(1, 0))["payload"]["sim_id"])
+	panel.show_building("STR-005")
+	assert_true((section as Control).visible)
+	var button := panel.lot_fix_button()
+	assert_true(button != null, "a lot-locked building gets its `Fix this →`")
+	assert_eq(button.tooltip_text, blocker,
+			"…and the button names the neighbour standing on its ground")
+
+	(Engine.get_main_loop() as SceneTree).root.remove_child(root)
+	root.free()
+
+
 func test_every_lot_string_the_panel_can_ask_for_exists() -> void:
 	var table: Dictionary = StarterCityLoader.read_json("res://data/strings.en.json")
 	for key in ["ui_building_lot_title", "ui_building_lot_reserved",
