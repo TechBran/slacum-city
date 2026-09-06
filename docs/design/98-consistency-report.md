@@ -11595,7 +11595,15 @@ The census, on the three cities that exist:
 | city | buildings | growers | **lot-locked** | reserved tiles |
 |---|---|---|---|---|
 | founding `data/starter_city.json` | 34 | 8 | **0** | 77 → 109 |
-| benchmark `tests/fixtures/bench_city.json` | 1,500 | 332 | **206** | 3,213 (unchanged) |
+| benchmark `tests/fixtures/bench_city.json` | 1,500 | 328 | **206** | 3,213 (unchanged) |
+| **the player's own** `tests/fixtures/player_save_0903` | 89 | 17 | **10** | 251 |
+
+The player's city is counted through the real `SaveService`
+(`tools/measure_lots.gd --saves=… --slot=0`) and is the only one of the three
+that migrates on the **restore** path. Its ten are 8 stores and both power
+plants; the stores are two tight parades of four along a street, each blocked by
+the next one and by the kerb — the layout a human builds, which neither authored
+city contains.
 
 The benchmark's 206 decompose **exactly**: 202 stores — its 95 L1 plus its 107 L2
 stores, every single one — plus both power plants and both construction yards.

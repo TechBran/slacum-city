@@ -20,6 +20,13 @@ extends SceneTree
 ##       -- [--city=res://tests/fixtures/bench_city.json] [--list] [--sites]
 ##
 ##   --city=PATH   boot a different city (default `data/starter_city.json`)
+##   --saves=DIR   INSTEAD of an authored city: load a real slot out of DIR
+##                 through the real `SaveService`, into a private `user://`.
+##                 This is how the PLAYER's own city is counted —
+##                 `tests/fixtures/player_save_0903` — and it is the only one of
+##                 the three that exercises the restore path's migration rather
+##                 than the boot path's.
+##   --slot=N      which slot `--saves` loads (default 0)
 ##   --list        one line per lot-locked building, with its blockers
 ##   --sites       the placement-density half: how many legal sites each growing
 ##                 archetype has, at its LOT and at its old level-1 footprint
@@ -34,12 +41,27 @@ func _initialize() -> void:
 	var iso := UserDirIsolation.new().begin()
 	var args := OS.get_cmdline_user_args()
 	var city := STARTER_CITY
+	var saves := ""
+	var slot := 0
 	for raw in args:
 		var arg := String(raw)
 		if arg.begins_with("--city="):
 			city = arg.substr(7)
-	var sim := _boot(city)
-	print("city: %s" % city)
+		elif arg.begins_with("--saves="):
+			saves = arg.substr(8)
+		elif arg.begins_with("--slot="):
+			slot = int(arg.substr(7))
+	var sim: CitySim = null
+	if saves != "":
+		sim = _load(saves, slot, iso)
+		if sim == null:
+			iso.end()
+			quit(2)
+			return
+		print("city: %s (slot %d, through the real SaveService)" % [saves, slot])
+	else:
+		sim = _boot(city)
+		print("city: %s" % city)
 	print("")
 	_ladders(sim)
 	print("")
@@ -51,6 +73,52 @@ func _initialize() -> void:
 		_sites(sim)
 	iso.end()
 	quit(0)
+
+
+## **The player's own city, through the real `SaveService`** — the only one of
+## the three cities counted here that reaches `migrate_lots` by the RESTORE path
+## rather than by boot, which is the path every phone in the world will take.
+##
+## The slot is copied into this process's private `user://` (already isolated by
+## `UserDirIsolation`) rather than read in place, because `SaveService` writes —
+## a load can promote a legacy file and roll a generation — and a measurement
+## must not edit the fixture it is measuring.
+func _load(saves: String, slot: int, iso: UserDirIsolation) -> CitySim:
+	var dest := iso.user_dir.path_join("saves")
+	DirAccess.make_dir_recursive_absolute(dest)
+	if _copy_tree(saves, dest) == 0:
+		printerr("measure_lots: nothing copied out of " + saves)
+		return null
+	var sim := CitySim.boot_from_files(1337)
+	var service := SaveService.new()
+	root.add_child(service)
+	var ok := service.load_slot(sim, slot)
+	root.remove_child(service)
+	service.free()
+	if not ok:
+		printerr("measure_lots: slot %d did not load out of %s" % [slot, saves])
+		return null
+	return sim
+
+
+func _copy_tree(source: String, dest: String) -> int:
+	var dir := DirAccess.open(source)
+	if dir == null:
+		return 0
+	var copied := 0
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		var from := source.path_join(entry)
+		var to := dest.path_join(entry)
+		if dir.current_is_dir():
+			DirAccess.make_dir_recursive_absolute(to)
+			copied += _copy_tree(from, to)
+		elif DirAccess.copy_absolute(from, to) == OK:
+			copied += 1
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return copied
 
 
 func _boot(city: String) -> CitySim:

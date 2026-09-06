@@ -14210,6 +14210,15 @@ did not.
 |---|---|---|---|---|---|
 | founding | 34 | 8 | **0** | 77 → **109** | 32 |
 | benchmark | 1,500 | 328 | **206** | 3,213 (unchanged) | 0 |
+| **the player's own** | 89 | 17 | **10** | **251** | 25 |
+
+The player's save (`tests/fixtures/player_save_0903`, slot 0, counted through the
+real `SaveService`) is the only one of the three that migrates on the **restore**
+path rather than at boot, and it is the only one that shows the shape a human
+actually builds: its ten are 8 stores and both power plants, and the stores are
+two tight parades of four along a street, each blocked by the next and by the
+kerb. 7 of its 17 growers still got their whole lot, which is why it has 25 tiles
+of apron where the benchmark city has none.
 
 The founding city's +32 decomposes exactly: 5 stores × 3, the plant +7, the yard
 +5, and `WTR-2` (a tank) +5.

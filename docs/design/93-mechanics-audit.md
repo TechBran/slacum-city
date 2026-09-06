@@ -7491,7 +7491,15 @@ keeps filing.
 | city | buildings | growers | **lot-locked after migration** |
 |---|---|---|---|
 | founding (`data/starter_city.json`) | 34 | 8 | **0** |
-| benchmark (`tests/fixtures/bench_city.json`) | 1,500 | 332 | **206** |
+| benchmark (`tests/fixtures/bench_city.json`) | 1,500 | 328 | **206** |
+| **the player's own** (`tests/fixtures/player_save_0903`, slot 0) | 89 | 17 | **10** |
+
+The player's city is the only one of the three that reaches `migrate_lots` by the
+**restore** path — the path every phone in the world takes — and it is counted
+through the real `SaveService` (`tools/measure_lots.gd --saves=… --slot=0`). Its
+ten are 8 stores and both power plants. The stores are two tight parades of four
+along a street, each blocked by the next one and by the kerb (`E_ROAD`), which is
+exactly the layout a player builds and which no authored city contains.
 
 The benchmark city's 206 decompose exactly: **202 stores = its 95 L1 + 107 L2
 stores, every single one of them**, plus both power plants and both construction
