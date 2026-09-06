@@ -2907,8 +2907,17 @@ func _population_inputs() -> Array:
 func archetype_top_level(archetype: String) -> int:
 	var top := catalog.max_level_of(archetype)
 	if archetype == WATER_SHELL_ARCHETYPE:
-		top = mini(top, 5 if water.data.flag("levels_4_5_enabled") else 3)
+		top = mini(top, water_ladder_ceiling())
 	return top
+
+
+## **Doc 05's `levels_4_5_enabled` gate, in ONE place.** Three functions need it —
+## [archetype_top_level], [water_variant_top_level] and [_water_node_top_level] —
+## and before this it was written out three times. A flag with three spellings is
+## a flag that gets flipped in two of them (C-17's scattering); this is the
+## reader, and `data/water.json` is still the store.
+func water_ladder_ceiling() -> int:
+	return 5 if water.data.flag("levels_4_5_enabled") else 3
 
 
 ## The ground `archetype` reserves for life (doc 02 §2.3a). Every placement, every
@@ -2947,7 +2956,7 @@ func water_variant_top_level(variant: String) -> int:
 		top = maxi(top, int(entry))
 	if top <= 0:
 		top = 1
-	return mini(top, 5 if water.data.flag("levels_4_5_enabled") else 3)
+	return mini(top, water_ladder_ceiling())
 
 
 ## The ground one doc-05 component reserves for life — the componentwise max of
@@ -8178,7 +8187,7 @@ func _water_node_top_level(node: WaterNode) -> int:
 		top = maxi(top, int(entry))
 	if top <= 0:
 		top = node.level
-	return mini(top, 5 if water.data.flag("levels_4_5_enabled") else 3)
+	return mini(top, water_ladder_ceiling())
 
 
 ## The tallest rung a `water_facility` shell may reach: the SMALLEST of its
